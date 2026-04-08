@@ -15,8 +15,8 @@ const SUBJECTS = {
 
 const QUESTIONS_PER_TEST = 25;
 
-const SUPABASE_URL = '';
-const SUPABASE_KEY = '';
+// const SUPABASE_URL = '';
+// const SUPABASE_KEY = '';
 const ADMIN_ID = 2014973670;
 
 // Data papkalarini yaratish
