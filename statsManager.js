@@ -218,6 +218,45 @@ async function deleteUserTest(testId, creatorId) {
   } catch { return false; }
 }
 
+// ──Update user classname──────────────────────────────────────────────────────────
+
+// Guruh nomini Supabase'ga saqlash
+async function updateUserClass(telegramId, className) {
+  try {
+    const { error } = await supabase
+      .from('users')
+      .update({ class_name: className })
+      .eq('telegram_id', telegramId);
+    
+    if (error) {
+      console.error('Supabase update xatosi:', error.message);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error('updateUserClass xatosi:', e.message);
+    return false;
+  }
+}
+
+// Foydalanuvchining guruhini bazadan olish
+async function getUserClass(telegramId) {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('class_name')
+      .eq('telegram_id', telegramId)
+      .single();
+      
+    if (error) return null;
+    return data?.class_name || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+
+
 module.exports = {
   loadAllOfficialTests,
   saveOfficialTest,
@@ -231,4 +270,6 @@ module.exports = {
   getUserTest,
   getUserCreatedTests,
   deleteUserTest,
+  updateUserClass,
+  getUserClass
 };

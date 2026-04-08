@@ -16,7 +16,7 @@ const SUBJECTS = {
 const QUESTIONS_PER_TEST = 25;
 
 const SUPABASE_URL = 'https://wsvzggnhotzhmvugeyil.supabase.co';
-const SUPABASE_KEY = 'sb_secret_nZQcnSza0XFCGy_4k1o8rw_zmJ_ISg';
+const SUPABASE_KEY = 'sb_secret_nZQcnSza0XFCGy_4k1o8rw_zmJ_ISgM';
 const ADMIN_ID = 2014973670;
 
 // Data papkalarini yaratish
