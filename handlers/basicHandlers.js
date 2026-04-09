@@ -9,7 +9,9 @@ const {
   userNameCache, States, clearState,
   safeEdit, backToMainKb,
 } = require('../utils');
-const { getFormattedSchedule, getEmptyRoomsText } = require('../edupageApi');
+// IMPORTLAR YANGILANDI:
+const { getFormattedSchedule, getEmptyRoomsText, getRawSchedule } = require('../edupageApi');
+const { generateScheduleImage } = require('../scheduleImage');
 
 // Sahifalash uchun vaqtinchalik xotira
 const roomsPaginationCache = new Map();
@@ -94,7 +96,6 @@ async function cmdStart(ctx) {
   }
   if (cleared) await ctx.reply('🔄 Tugallanmagan test tozalandi. Yangi boshlashingiz mumkin!');
 
-  // Deep-link
   const args = (ctx.message.text || '').split(' ');
   if (args.length > 1) {
     const param = args[1];
@@ -246,18 +247,40 @@ async function cmdJadval(ctx) {
   );
 }
 
+// BU YER TO'LIQ RASMLI JADVAL YUBORISHGA O'ZGARTIRILDI
 async function cmdHafta(ctx) {
   const className = await statsManager.getUserClass(ctx.from.id);
   if (!className) return ctx.reply('⚠️ Avval <code>/setclass</code> komandasidan foydalaning.', { parse_mode: 'HTML' });
 
-  const msg = await ctx.reply('⏳ Haftalik dars jadvali olinmoqda...');
-  const scheduleText = await getFormattedSchedule(className, null);
+  const msg = await ctx.reply('⏳ Haftalik dars jadvali rasmga olinmoqda. Iltimos kuting...');
 
-  await ctx.telegram.editMessageText(
-    ctx.chat.id, msg.message_id, undefined,
-    `🎓 <b>Haftalik Jadval: ${className}</b>\n\n${scheduleText}`,
-    { parse_mode: 'HTML' },
-  );
+  try {
+    const schedule = await getRawSchedule(className);
+    if (!schedule || Object.keys(schedule).length === 0) {
+      await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '📭 Ushbu guruh uchun jadval topilmadi.');
+      return;
+    }
+
+    const imageBuffer = await generateScheduleImage(className, schedule);
+
+    await ctx.replyWithPhoto(
+      { source: imageBuffer },
+      { 
+        caption: `🎓 <b>Haftalik Jadval: ${className}</b>\n\n📌 <i>Siz ham o'z jadvalingizni bilishni istasangiz, botdan foydalaning.</i>`, 
+        parse_mode: 'HTML' 
+      }
+    );
+    await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+
+  } catch (error) {
+    console.error('Rasm yasashda xatolik:', error);
+    await ctx.telegram.editMessageText(
+      ctx.chat.id, 
+      msg.message_id, 
+      undefined, 
+      '❌ Jadval rasmini tayyorlashda texnik xatolik yuz berdi. Iltimos keyinroq urinib ko\'ring.'
+    );
+  }
 }
 
 // ─── Bo'sh xonalar ────────────────────────────────────────────────────────────
@@ -280,10 +303,8 @@ async function cbBoshXona(ctx) {
   let dayIdx = (tzDate.getDay() + 6) % 7;
   let offsetDays = 0;
 
-  // Yakshanba → dushanba
   if (dayIdx === 6) { offsetDays = 1; dayIdx = 0; }
   else {
-    // Agar para o'tib ketgan bo'lsa → ertangi kun
     const nowMins = tzDate.getHours() * 60 + tzDate.getMinutes();
     const periodEnd = { 1: 590, 2: 680, 3: 770, 4: 890, 5: 980, 6: 1070 };
     if (nowMins > (periodEnd[periodNum] ?? 1440)) {
