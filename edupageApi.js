@@ -1,6 +1,6 @@
 'use strict';
 const https = require('https');
-
+const fs = require('fs');
 const DAY_NAMES = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba"];
 const PERIOD_TIMES = {
   1: { start: "08:30", end: "09:50" }, 2: { start: "10:00", end: "11:20" },
@@ -12,11 +12,20 @@ const CURRENT_WEEK = 91;
 
 let globalTimetableCache = null;
 let globalCacheTime = 0;
-const CACHE_DURATION = 60 * 60 * 1000;
+const CACHE_DURATION = 60 * 60 * 1000; // Hozircha kesh o'chiq
+
+// Soxta brauzer ma'lumotlari (Bloklanmaslik uchun)
+const FAKE_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/javascript, */*; q=0.01',
+  'Accept-Language': 'uz,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+  'Connection': 'keep-alive'
+};
 
 function httpGet(options) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('GET timeout')), 15000);
+    // Timeout 30 soniyaga oshirildi
+    const timer = setTimeout(() => reject(new Error('GET timeout')), 30000); 
     https.get(options, (res) => {
       clearTimeout(timer);
       resolve(res.headers['set-cookie'] || []);
@@ -26,7 +35,8 @@ function httpGet(options) {
 
 function httpPost(options, payload) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('POST timeout')), 15000);
+    // Timeout 30 soniyaga oshirildi
+    const timer = setTimeout(() => reject(new Error('POST timeout')), 30000);
     const req = https.request(options, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
@@ -41,37 +51,63 @@ function httpPost(options, payload) {
   });
 }
 
-async function getEdupageCookie(className, week = CURRENT_WEEK) {
-  const cookies = await httpGet({
-    hostname: 'tsue.edupage.org',
-    path: `/timetable/view.php?num=${week}&class=${encodeURIComponent(className)}`,
-    method: 'GET',
-    headers: { 'User-Agent': 'Mozilla/5.0' },
-  });
-  return cookies.map(c => c.split(';')[0]).join('; ');
+async function getEdupageCookie(className, week = CURRENT_WEEK, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const cookies = await httpGet({
+        hostname: 'tsue.edupage.org',
+        path: `/timetable/view.php?num=${week}&class=${encodeURIComponent(className)}`,
+        method: 'GET',
+        headers: FAKE_HEADERS,
+      });
+      return cookies.map(c => c.split(';')[0]).join('; ');
+    } catch (err) {
+      console.log(`[DEBUG] Cookie xatosi (${i + 1}-urinish): ${err.message}`);
+      if (i === retries - 1) throw err;
+      await new Promise(r => setTimeout(r, 2000)); // 2 soniya kutib qayta urinish
+    }
+  }
 }
 
-async function fetchRawTimetable(cookieString, week = CURRENT_WEEK) {
+async function fetchRawTimetable(cookieString, week = CURRENT_WEEK, retries = 3) {
   const payload = JSON.stringify({ __args: [null, week.toString()], __gsh: '00000000' });
-  return httpPost({
-    hostname: 'tsue.edupage.org',
-    path: '/timetable/server/regulartt.js?__func=regularttGetData',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json; charset=UTF-8',
-      'Content-Length': Buffer.byteLength(payload),
-      'User-Agent': 'Mozilla/5.0',
-      'Origin': 'https://tsue.edupage.org',
-      'Cookie': cookieString,
-    },
-  }, payload);
+  
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await httpPost({
+        hostname: 'tsue.edupage.org',
+        path: '/timetable/server/regulartt.js?__func=regularttGetData',
+        method: 'POST',
+        headers: {
+          ...FAKE_HEADERS,
+          'Content-Type': 'application/json; charset=UTF-8',
+          'Content-Length': Buffer.byteLength(payload),
+          'Origin': 'https://tsue.edupage.org',
+          'Referer': 'https://tsue.edupage.org/timetable/',
+          'Cookie': cookieString,
+        },
+      }, payload);
+    } catch (err) {
+      console.log(`[DEBUG] POST xatosi (${i + 1}-urinish): ${err.message}`);
+      if (i === retries - 1) throw err;
+      await new Promise(r => setTimeout(r, 2000)); // 2 soniya kutib qayta urinish
+    }
+  }
 }
 
 async function getTimetableData(className) {
   const now = Date.now();
-  if (globalTimetableCache && (now - globalCacheTime < CACHE_DURATION)) return globalTimetableCache;
+  if (globalTimetableCache && (now - globalCacheTime < CACHE_DURATION)) {
+    console.log('[DEBUG] Ma\'lumot keshdan olinmoqda...');
+    return globalTimetableCache;
+  }
+  
+  console.log(`[DEBUG] "${className}" uchun Cookie so'ralmoqda...`);
   const cookie = await getEdupageCookie(className, CURRENT_WEEK);
+  
+  console.log(`[DEBUG] Raw ma'lumot yuklanmoqda...`);
   const raw = await fetchRawTimetable(cookie, CURRENT_WEEK);
+  
   if (raw?.r?.dbiAccessorRes) {
     globalTimetableCache = raw;
     globalCacheTime = now;
@@ -106,16 +142,23 @@ function parseSchedule(raw, className) {
   const { rooms, periods, subjects, teachers, classes, cards, lessonMap } = parseTables(raw);
 
   let classId = null;
-  if (classes[className]) {
-    classId = className;
+  const cleanClassName = className.toString().trim();
+  
+  if (classes[cleanClassName]) {
+    classId = cleanClassName;
   } else {
-    const classEntry = Object.entries(classes).find(([, name]) => name.trim().toUpperCase() === className.trim().toUpperCase());
+    const reqName = cleanClassName.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    const classEntry = Object.entries(classes).find(([, name]) => {
+      return name.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === reqName;
+    });
     if (classEntry) classId = classEntry[0];
   }
-  
+
   if (!classId) return null;
 
-  const schedule = {}; 
+  const schedule = {};
+  let totalLessons = 0;
+
   for (const card of cards) {
     const lesson = lessonMap[card.lessonid];
     if (!lesson || !(lesson.classids || []).includes(classId)) continue;
@@ -139,8 +182,11 @@ function parseSchedule(raw, className) {
         teacher: (lesson.teacherids || []).filter(Boolean).map(t => teachers[t] || t).join(', ') || '?',
         room: (card.classroomids || []).filter(Boolean).map(r => rooms[r] || r).join(', ') || '?',
       });
+      totalLessons++;
     }
   }
+  
+  console.log(`[DEBUG] ${cleanClassName} uchun ${totalLessons} ta dars yig'ildi.`);
   return schedule;
 }
 
@@ -179,15 +225,36 @@ async function getFormattedSchedule(className, dayIdx) {
 
 async function getRawSchedule(className) {
   try {
+    console.log(`[DEBUG] getRawSchedule boshlandi. Guruh: ${className}`);
     const raw = await getTimetableData(className);
-    if (!raw?.r?.dbiAccessorRes) return null;
-    return parseSchedule(raw, className);
-  } catch (e) { return null; }
+    
+    if (!raw || !raw?.r?.dbiAccessorRes) {
+      console.log(`[DEBUG] XATO: Edupage'dan yaroqli ma'lumot kelmadi!`);
+      return null;
+    }
+
+    // 1-QISM: Saytdan kelgan ASL (Raw) ma'lumotni saqlash (Agar API aynan nima yuborayotganini ko'rmoqchi bo'lsangiz)
+    fs.writeFileSync('debug_api_raw.json', JSON.stringify(raw, null, 2), 'utf8');
+    console.log(`[DEBUG] 💾 Sayt javobi 'debug_api_raw.json' fayliga saqlandi.`);
+
+    const schedule = parseSchedule(raw, className);
+
+    // 2-QISM: Biz ajratib olgan TAYYOR jadvalni saqlash
+    if (schedule) {
+      fs.writeFileSync('debug_parsed_schedule.json', JSON.stringify(schedule, null, 2), 'utf8');
+      console.log(`[DEBUG] 💾 Tayyor jadval 'debug_parsed_schedule.json' fayliga saqlandi.`);
+    }
+
+    return schedule;
+  } catch (e) { 
+    console.error(`[DEBUG] getRawSchedule ichida catch ishladi: ${e.message}`);
+    return null; 
+  }
 }
 
 function parseRoomLocation(xona) {
-  const slashMatch  = xona.match(/^(\d+)\/(\d+)/);
-  const dashMatch   = xona.match(/^(\d+)-.*?(\d)(\d{2})/);
+  const slashMatch = xona.match(/^(\d+)\/(\d+)/);
+  const dashMatch = xona.match(/^(\d+)-.*?(\d)(\d{2})/);
   const normalMatch = xona.match(/^(\d)(\d{2})/);
   if (slashMatch) return { bino: slashMatch[1] === '1' ? '4-bino' : `${slashMatch[1]}-bino`, qavat: `${slashMatch[2].charAt(0)}-qavat` };
   if (dashMatch) return { bino: `${dashMatch[1]}-bino`, qavat: `${dashMatch[2]}-qavat` };
@@ -212,7 +279,7 @@ async function getEmptyRoomsText(className, dayIdx, periodNum, offsetDays = 0) {
       .map(([, name]) => name.trim().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'));
 
     if (emptyRooms.length === 0) return [`⚠️ <b>${periodNum}-para</b> uchun barcha xonalar band!`];
-    
+
     const grouped = {};
     for (const xona of emptyRooms) {
       const { bino, qavat } = parseRoomLocation(xona);
@@ -224,7 +291,7 @@ async function getEmptyRoomsText(className, dayIdx, periodNum, offsetDays = 0) {
     if (offsetDays > 0) tzDate.setDate(tzDate.getDate() + offsetDays);
     const dateStr = `${String(tzDate.getDate()).padStart(2, '0')}.${String(tzDate.getMonth() + 1).padStart(2, '0')}.${tzDate.getFullYear()}`;
     const header = `✅ <b>${dateStr}, ${DAY_NAMES[dayIdx]}</b>\n📚 <b>${periodNum}-para</b> — bo'sh xonalar:\n`;
-    
+
     const sortedBinos = Object.keys(grouped).sort((a, b) => {
       if (a === 'Asosiy bino') return -1;
       if (b === 'Asosiy bino') return 1;

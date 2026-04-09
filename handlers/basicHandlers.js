@@ -12,6 +12,7 @@ const {
 // IMPORTLAR YANGILANDI:
 const { getFormattedSchedule, getEmptyRoomsText, getRawSchedule } = require('../edupageApi');
 const { generateScheduleImage } = require('../scheduleImage');
+const { log } = require('console');
 
 // Sahifalash uchun vaqtinchalik xotira
 const roomsPaginationCache = new Map();
@@ -190,13 +191,20 @@ async function cmdSetClass(ctx) {
     return ctx.reply(
       '⚠️ Iltimos, guruh nomini komanda bilan birga kiriting:\n\n' +
       '👉 <code>/setclass MNP-80</code>\n' +
-      '👉 <code>/setclass MO-81/25</code>\n' +
-      '👉 <code>/setclass *3</code>',
+      '👉 <code>/setclass *675</code>',
       { parse_mode: 'HTML' },
     );
   }
 
-  const matchedGroup = findBestMatch(userInput);
+  let matchedGroup = null;
+  
+  // AQLLI TEKSHIRUV: Agar * bilan boshlansa (API ID), to'g'ridan-to'g'ri qabul qilamiz
+  if (userInput.startsWith('*')) {
+    matchedGroup = userInput;
+  } else {
+    // Aks holda groups.json dan qidiramiz
+    matchedGroup = findBestMatch(userInput);
+  }
 
   if (!matchedGroup) {
     return ctx.reply(
@@ -205,7 +213,7 @@ async function cmdSetClass(ctx) {
     );
   }
 
-  const isCorrected = normalize(userInput) !== normalize(matchedGroup);
+  const isCorrected = !userInput.startsWith('*') && (normalize(userInput) !== normalize(matchedGroup));
   const success = await statsManager.updateUserClass(ctx.from.id, matchedGroup);
 
   if (success) {
@@ -213,7 +221,7 @@ async function cmdSetClass(ctx) {
       ? `✅ Yozuvdagi xatolik avtomatik to'g'rilandi va guruhingiz saqlandi: <b>${matchedGroup}</b>`
       : `✅ Guruhingiz muvaffaqiyatli saqlandi: <b>${matchedGroup}</b>`;
     await ctx.reply(
-      msg + '\nEndi bot orqali jadvallarni to\'g\'ridan-to\'g\'ri ko\'rishingiz mumkin.',
+      msg + '\nEndi bot orqali jadvallarni ko\'rishingiz mumkin. /hafta ni bosing.',
       { parse_mode: 'HTML' },
     );
   } else {
@@ -256,6 +264,7 @@ async function cmdHafta(ctx) {
 
   try {
     const schedule = await getRawSchedule(className);
+    console.log('Jadval ma\'lumotlari olindi:', schedule);
     if (!schedule || Object.keys(schedule).length === 0) {
       await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '📭 Ushbu guruh uchun jadval topilmadi.');
       return;
