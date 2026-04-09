@@ -9,7 +9,7 @@ const botModule             = require('./bot');
 const storage               = require('./storage');
 const statsManager          = require('./statsManager');
 const { setMemoryDb }       = require('./keyboards');
-const { States, getState }  = require('./utils');
+const { States, getState, userNameCache}  = require('./utils');
 const { getFormattedSchedule } = require('./edupageApi'); // Jadval API
 
 // ─── Handlers ────────────────────────────────────────────────
@@ -102,7 +102,18 @@ async function main() {
   }
 
   setMemoryDb(botModule.memoryDb);
-
+// ==============================================================
+  // ISMLARNI XOTIRAGA TIKLASH (Reyting "Sirli talaba" bo'lmasligi uchun)
+  // ==============================================================
+  const allUsers = await statsManager.getAllUsers();
+  if (allUsers) {
+    for (const user of allUsers) {
+      // Baza ustunida ism qanday nomlangani (name, full_name, first_name) ga moslaymiz
+      const userName = user.name || user.full_name || user.first_name || 'Talaba';
+      userNameCache.set(user.telegram_id, userName);
+    }
+    console.log(`✅ ${allUsers.length} ta foydalanuvchi ismi reyting uchun xotiraga tiklandi.`);
+  }
   // ==============================================================
   // 1. RENDER UCHUN EXPRESS VEB-SERVER (Uyquga ketmasligi uchun)
   // ==============================================================

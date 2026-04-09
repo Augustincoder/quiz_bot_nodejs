@@ -144,8 +144,7 @@ async function getAllUsers() {
   try {
     const { data, error } = await supabase
       .from('users')
-      .select('telegram_id, class_name')
-      .not('class_name', 'is', null); // Faqat guruhi borlarni olamiz
+      .select('*'); // Barcha ma'lumotlarni (jumladan ismlarni ham) olamiz
     
     if (error) throw error;
     return data;
