@@ -139,12 +139,23 @@ async function registerUser(userId, fullName, username) {
   } catch { /* silent */ }
 }
 
+// statsManager.js ichiga qo'shing:
 async function getAllUsers() {
   try {
-    const { data } = await supabase.from('users').select('*');
-    return data || [];
-  } catch { return []; }
+    const { data, error } = await supabase
+      .from('users')
+      .select('telegram_id, class_name')
+      .not('class_name', 'is', null); // Faqat guruhi borlarni olamiz
+    
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Foydalanuvchilarni olishda xato:', err.message);
+    return null;
+  }
 }
+
+
 
 async function getTopUsers(limit = 10) {
   try {

@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { Markup } = require('telegraf');
 const statsManager = require('../statsManager');
-const { getMainKeyboard } = require('../keyboards');
+const { getMainKeyboard, getTimetableKeyboard } = require('../keyboards');
 const {
   activeTests, waitingRooms, pollChatMap,
   userNameCache, States, clearState,
@@ -197,7 +197,7 @@ async function cmdSetClass(ctx) {
   }
 
   let matchedGroup = null;
-  
+
   // AQLLI TEKSHIRUV: Agar * bilan boshlansa (API ID), to'g'ridan-to'g'ri qabul qilamiz
   if (userInput.startsWith('*')) {
     matchedGroup = userInput;
@@ -274,9 +274,9 @@ async function cmdHafta(ctx) {
 
     await ctx.replyWithPhoto(
       { source: imageBuffer },
-      { 
-        caption: `🎓 <b>Haftalik Jadval: ${className}</b>\n\n📌 <i>Siz ham o'z jadvalingizni bilishni istasangiz, botdan foydalaning.</i>`, 
-        parse_mode: 'HTML' 
+      {
+        caption: `🎓 <b>Haftalik Jadval: ${className}</b>\n\n📌 <i>Siz ham o'z jadvalingizni bilishni istasangiz, botdan foydalaning.</i>`,
+        parse_mode: 'HTML'
       }
     );
     await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
@@ -284,14 +284,40 @@ async function cmdHafta(ctx) {
   } catch (error) {
     console.error('Rasm yasashda xatolik:', error);
     await ctx.telegram.editMessageText(
-      ctx.chat.id, 
-      msg.message_id, 
-      undefined, 
+      ctx.chat.id,
+      msg.message_id,
+      undefined,
       '❌ Jadval rasmini tayyorlashda texnik xatolik yuz berdi. Iltimos keyinroq urinib ko\'ring.'
     );
   }
 }
+async function cmdTimetable(ctx) {
+  const className = await statsManager.getUserClass(ctx.from.id);
+  const status = className
+    ? `✅ Sizning guruhingiz: <b>${className}</b>`
+    : `⚠️ <b>Guruh tanlanmagan.</b> Iltimos, pastdagi "⚙️ Guruhni sozlash" tugmasini bosing va guruhingizni yozing.`;
 
+  const text = `🎓 <b>Dars jadvali bo'limi</b>\n\n${status}\n\n👇 Pastdagi tugmalardan foydalanib o'z dars jadvalingiz va bo'sh xonalarni kuzatib borishingiz mumkin.`;
+
+  await ctx.reply(text, { parse_mode: 'HTML', ...getTimetableKeyboard() });
+}
+
+async function cmdTimetableHelp(ctx) {
+  await ctx.reply(
+    '⚙️ <b>Guruhni qanday sozlash mumkin?</b>\n\n' +
+    'Jadvalni ko\'rish uchun guruhingizni quyidagicha kiritishingiz kerak:\n' +
+    '👉 <code>/setclass MNP-81</code>\n' +
+    'yoki\n' +
+    '👉 <code>/setclass *675</code>',
+    { parse_mode: 'HTML' }
+  );
+}
+
+async function cmdBackToMainReply(ctx) {
+  // Reply tugmalarni o'chirib, yana Asosiy inline menyuni ko'rsatamiz
+  await ctx.reply('🔙 Asosiy menyuga qaytilmoqda...', { reply_markup: { remove_keyboard: true } });
+  await cmdStart(ctx);
+}
 // ─── Bo'sh xonalar ────────────────────────────────────────────────────────────
 
 const PARA_KB = Markup.inlineKeyboard([
@@ -382,6 +408,12 @@ function register(bot) {
   bot.command('jadval', cmdJadval);
   bot.command('hafta', cmdHafta);
   bot.command('xonalar', cmdXonalar);
+  bot.command('timetable', cmdTimetable);
+  bot.hears('📅 Bugungi jadval', cmdJadval);
+  bot.hears('🖼 Haftalik jadval', cmdHafta);
+  bot.hears('🏢 Bo\'sh xonalar', cmdXonalar);
+  bot.hears('⚙️ Guruhni sozlash', cmdTimetableHelp);
+  bot.hears('🔙 Asosiy menyu', cmdBackToMainReply);
   bot.action('back_to_main', cbBackToMain);
   bot.action('ignore', ctx => ctx.answerCbQuery());
   bot.action(/^bosh_/, cbBoshXona);

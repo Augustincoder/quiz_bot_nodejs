@@ -1,6 +1,6 @@
 'use strict';
 const https = require('https');
-const fs = require('fs');
+
 const DAY_NAMES = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba"];
 const PERIOD_TIMES = {
   1: { start: "08:30", end: "09:50" }, 2: { start: "10:00", end: "11:20" },
@@ -12,9 +12,8 @@ const CURRENT_WEEK = 91;
 
 let globalTimetableCache = null;
 let globalCacheTime = 0;
-const CACHE_DURATION = 60 * 60 * 1000; // Hozircha kesh o'chiq
+const CACHE_DURATION = 60 * 60 * 1000; // 1 soat davomida xotirada saqlanadi (Tezlik uchun)
 
-// Soxta brauzer ma'lumotlari (Bloklanmaslik uchun)
 const FAKE_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   'Accept': 'application/json, text/javascript, */*; q=0.01',
@@ -24,7 +23,6 @@ const FAKE_HEADERS = {
 
 function httpGet(options) {
   return new Promise((resolve, reject) => {
-    // Timeout 30 soniyaga oshirildi
     const timer = setTimeout(() => reject(new Error('GET timeout')), 30000); 
     https.get(options, (res) => {
       clearTimeout(timer);
@@ -35,7 +33,6 @@ function httpGet(options) {
 
 function httpPost(options, payload) {
   return new Promise((resolve, reject) => {
-    // Timeout 30 soniyaga oshirildi
     const timer = setTimeout(() => reject(new Error('POST timeout')), 30000);
     const req = https.request(options, (res) => {
       let data = '';
@@ -62,16 +59,14 @@ async function getEdupageCookie(className, week = CURRENT_WEEK, retries = 3) {
       });
       return cookies.map(c => c.split(';')[0]).join('; ');
     } catch (err) {
-      console.log(`[DEBUG] Cookie xatosi (${i + 1}-urinish): ${err.message}`);
       if (i === retries - 1) throw err;
-      await new Promise(r => setTimeout(r, 2000)); // 2 soniya kutib qayta urinish
+      await new Promise(r => setTimeout(r, 2000));
     }
   }
 }
 
 async function fetchRawTimetable(cookieString, week = CURRENT_WEEK, retries = 3) {
   const payload = JSON.stringify({ __args: [null, week.toString()], __gsh: '00000000' });
-  
   for (let i = 0; i < retries; i++) {
     try {
       return await httpPost({
@@ -88,9 +83,8 @@ async function fetchRawTimetable(cookieString, week = CURRENT_WEEK, retries = 3)
         },
       }, payload);
     } catch (err) {
-      console.log(`[DEBUG] POST xatosi (${i + 1}-urinish): ${err.message}`);
       if (i === retries - 1) throw err;
-      await new Promise(r => setTimeout(r, 2000)); // 2 soniya kutib qayta urinish
+      await new Promise(r => setTimeout(r, 2000));
     }
   }
 }
@@ -98,16 +92,10 @@ async function fetchRawTimetable(cookieString, week = CURRENT_WEEK, retries = 3)
 async function getTimetableData(className) {
   const now = Date.now();
   if (globalTimetableCache && (now - globalCacheTime < CACHE_DURATION)) {
-    console.log('[DEBUG] Ma\'lumot keshdan olinmoqda...');
     return globalTimetableCache;
   }
-  
-  console.log(`[DEBUG] "${className}" uchun Cookie so'ralmoqda...`);
   const cookie = await getEdupageCookie(className, CURRENT_WEEK);
-  
-  console.log(`[DEBUG] Raw ma'lumot yuklanmoqda...`);
   const raw = await fetchRawTimetable(cookie, CURRENT_WEEK);
-  
   if (raw?.r?.dbiAccessorRes) {
     globalTimetableCache = raw;
     globalCacheTime = now;
@@ -127,12 +115,7 @@ function parseTables(raw) {
   const cards = findRows('cards');
 
   const subjects = Object.fromEntries(findRows('subjects').map(s => [
-    s.id,
-    {
-      name: s.name || s.short,
-      color: s.color || '#CCCCCC',
-      weight: parseInt(s.contract_weight) || 1
-    }
+    s.id, { name: s.name || s.short, color: s.color || '#CCCCCC', weight: parseInt(s.contract_weight) || 1 }
   ]));
 
   return { rooms, periods, subjects, teachers, classes, cards, lessonMap };
@@ -148,17 +131,13 @@ function parseSchedule(raw, className) {
     classId = cleanClassName;
   } else {
     const reqName = cleanClassName.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    const classEntry = Object.entries(classes).find(([, name]) => {
-      return name.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === reqName;
-    });
+    const classEntry = Object.entries(classes).find(([, name]) => name.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === reqName);
     if (classEntry) classId = classEntry[0];
   }
 
   if (!classId) return null;
 
   const schedule = {};
-  let totalLessons = 0;
-
   for (const card of cards) {
     const lesson = lessonMap[card.lessonid];
     if (!lesson || !(lesson.classids || []).includes(classId)) continue;
@@ -174,19 +153,13 @@ function parseSchedule(raw, className) {
       if (!schedule[d][pNum]) schedule[d][pNum] = [];
 
       const subjData = subjects[lesson.subjectid] || { name: '?', color: '#CCCCCC', weight: 1 };
-
       schedule[d][pNum].push({
-        subject: subjData.name,
-        color: subjData.color,
-        weight: subjData.weight,
+        subject: subjData.name, color: subjData.color, weight: subjData.weight,
         teacher: (lesson.teacherids || []).filter(Boolean).map(t => teachers[t] || t).join(', ') || '?',
         room: (card.classroomids || []).filter(Boolean).map(r => rooms[r] || r).join(', ') || '?',
       });
-      totalLessons++;
     }
   }
-  
-  console.log(`[DEBUG] ${cleanClassName} uchun ${totalLessons} ta dars yig'ildi.`);
   return schedule;
 }
 
@@ -225,31 +198,10 @@ async function getFormattedSchedule(className, dayIdx) {
 
 async function getRawSchedule(className) {
   try {
-    console.log(`[DEBUG] getRawSchedule boshlandi. Guruh: ${className}`);
     const raw = await getTimetableData(className);
-    
-    if (!raw || !raw?.r?.dbiAccessorRes) {
-      console.log(`[DEBUG] XATO: Edupage'dan yaroqli ma'lumot kelmadi!`);
-      return null;
-    }
-
-    // 1-QISM: Saytdan kelgan ASL (Raw) ma'lumotni saqlash (Agar API aynan nima yuborayotganini ko'rmoqchi bo'lsangiz)
-    fs.writeFileSync('debug_api_raw.json', JSON.stringify(raw, null, 2), 'utf8');
-    console.log(`[DEBUG] 💾 Sayt javobi 'debug_api_raw.json' fayliga saqlandi.`);
-
-    const schedule = parseSchedule(raw, className);
-
-    // 2-QISM: Biz ajratib olgan TAYYOR jadvalni saqlash
-    if (schedule) {
-      fs.writeFileSync('debug_parsed_schedule.json', JSON.stringify(schedule, null, 2), 'utf8');
-      console.log(`[DEBUG] 💾 Tayyor jadval 'debug_parsed_schedule.json' fayliga saqlandi.`);
-    }
-
-    return schedule;
-  } catch (e) { 
-    console.error(`[DEBUG] getRawSchedule ichida catch ishladi: ${e.message}`);
-    return null; 
-  }
+    if (!raw || !raw?.r?.dbiAccessorRes) return null;
+    return parseSchedule(raw, className);
+  } catch (e) { return null; }
 }
 
 function parseRoomLocation(xona) {

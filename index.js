@@ -2,6 +2,7 @@
 
 const { Telegraf, session } = require('telegraf');
 const express               = require('express');
+const cron                  = require('node-cron'); // CRON: Ertalabki xabarlar uchun
 
 const { BOT_TOKEN }         = require('./config');
 const botModule             = require('./bot');
@@ -9,6 +10,7 @@ const storage               = require('./storage');
 const statsManager          = require('./statsManager');
 const { setMemoryDb }       = require('./keyboards');
 const { States, getState }  = require('./utils');
+const { getFormattedSchedule } = require('./edupageApi'); // Jadval API
 
 // ─── Handlers ────────────────────────────────────────────────
 const basicHandlers  = require('./handlers/basicHandlers');
@@ -20,7 +22,6 @@ const quizGame       = require('./handlers/quizGame');
 // ─── Bot ─────────────────────────────────────────────────────
 const bot = new Telegraf(BOT_TOKEN);
 
-// Session middleware (FSM uchun)
 bot.use(session({
   defaultSession: () => ({ state: null, data: {} }),
 }));
@@ -33,12 +34,9 @@ statsHandlers.register(bot);
 quizGame.register(bot);
 
 // ─── Global message handler (FSM router) ─────────────────────
-// Barcha text/document xabarlarni holat bo'yicha yo'naltiradi
 bot.on('message', async (ctx, next) => {
   const state = getState(ctx);
   if (!state) return next();
-
-  const { ADMIN_ID } = require('./config');
 
   // UGC test yaratish
   if (state === States.CREATE_SUBJECT) {
@@ -79,26 +77,21 @@ bot.on('message', async (ctx, next) => {
   return next();
 });
 
-// ─── Poll javob ───────────────────────────────────────────────
 bot.on('poll_answer', async (ctx) => {
   await quizGame.handlePollAnswer(ctx.pollAnswer, ctx.telegram);
 });
 
-// ─── Xatoliklar ───────────────────────────────────────────────
 bot.catch((err, ctx) => {
   console.error(`Bot xatosi [${ctx?.updateType}]:`, err.message);
 });
 
 // ─── Main ─────────────────────────────────────────────────────
 async function main() {
-  // 1) Rasmiy testlarni yuklash
   console.log('📦 Testlar yuklanmoqda...');
   botModule.memoryDb = storage.initStorage();
 
-  // Agar Supabase sozlangan bo'lsa, undan ham yukla
   try {
     const dbTests = await statsManager.loadAllOfficialTests();
-    // JSON + Supabase ni merge qilamiz (Supabase ustunlik qiladi)
     for (const [subj, tests] of Object.entries(dbTests)) {
       if (!botModule.memoryDb[subj]) botModule.memoryDb[subj] = {};
       Object.assign(botModule.memoryDb[subj], tests);
@@ -108,14 +101,55 @@ async function main() {
     console.warn('⚠️ Supabase testlari yuklanmadi:', e.message);
   }
 
-  // Keyboards uchun memoryDb ulash
   setMemoryDb(botModule.memoryDb);
 
-  // 2) Express veb-server (Render.com uchun)
+  // ==============================================================
+  // 1. RENDER UCHUN EXPRESS VEB-SERVER (Uyquga ketmasligi uchun)
+  // ==============================================================
   const app  = express();
   const port = parseInt(process.env.PORT || '8080', 10);
-  app.get('/', (_, res) => res.send('Bot va Testlar muvaffaqiyatli ishlamoqda! 🚀'));
-  app.listen(port, () => console.log(`🌐 Web server: http://0.0.0.0:${port}`));
+  app.get('/', (_, res) => res.send('Bot 100% aktiv va ishlab turibdi! 🚀'));
+  app.listen(port, () => console.log(`🌐 Web server ishga tushdi (Port: ${port})`));
+
+  // ==============================================================
+  // 2. AVTOMATIK JADVAL YUBORISH (Node-Cron)
+  // Har kuni soat 07:30 da (Dushanbadan Shanbagacha)
+  // ==============================================================
+  cron.schedule('30 07 * * 1-6', async () => {
+    console.log('⏰ Avtomatik dars jadvali tarqatish boshlandi...');
+    try {
+      // statsManager orqali barcha userlarni olamiz
+      const allUsers = await statsManager.getAllUsers(); 
+      if (!allUsers) return;
+
+      const date = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
+      const dayOfWeek = (date.getDay() + 6) % 7; 
+
+      if (dayOfWeek === 6) return; // Yakshanba kuni yuborilmaydi
+
+      let sentCount = 0;
+      for (const user of allUsers) {
+        if (user.class_name) {
+          try {
+            const scheduleText = await getFormattedSchedule(user.class_name, dayOfWeek);
+            if (!scheduleText.includes('Jadval topilmadi') && !scheduleText.includes('xatolik')) {
+               await bot.telegram.sendMessage(
+                 user.telegram_id, 
+                 `🌤 <b>Xayrli tong! Bugungi darsingiz:</b>\n\n🎓 <b>Guruh: ${user.class_name}</b>\n${scheduleText}`,
+                 { parse_mode: 'HTML' }
+               );
+               sentCount++;
+               // Telegram spam-limitiga (sekundiga 30 ta) tushmaslik uchun ozgina kutamiz
+               await new Promise(r => setTimeout(r, 50)); 
+            }
+          } catch (e) { /* Xatolikni inkor qilamiz */ }
+        }
+      }
+      console.log(`✅ Avtomatik jadval ${sentCount} ta talabaga yuborildi!`);
+    } catch (error) {
+      console.error('Avtomatik jadval tarqatishda xatolik:', error);
+    }
+  }, { timezone: "Asia/Tashkent" });
 
   // 3) Bot polling
   await bot.telegram.deleteWebhook({ drop_pending_updates: true });
@@ -128,6 +162,5 @@ main().catch(err => {
   process.exit(1);
 });
 
-// Graceful stop
 process.once('SIGINT',  () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));

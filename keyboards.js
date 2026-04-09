@@ -40,11 +40,11 @@ function getBlocksKeyboard(subjectKey, page = 0) {
   const cacheKey = `${subjectKey}:${page}`;
   if (blocksKbCache.has(cacheKey)) return blocksKbCache.get(cacheKey);
 
-  const db          = _memoryDb || {};
+  const db = _memoryDb || {};
   const subjectTests = db[subjectKey] || {};
-  const testIds      = Object.keys(subjectTests).map(Number).sort((a, b) => a - b);
-  const totalPages   = Math.max(1, Math.ceil(testIds.length / ITEMS_PER_PAGE));
-  const current      = testIds.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
+  const testIds = Object.keys(subjectTests).map(Number).sort((a, b) => a - b);
+  const totalPages = Math.max(1, Math.ceil(testIds.length / ITEMS_PER_PAGE));
+  const current = testIds.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
 
   const buttons = [];
 
@@ -72,10 +72,27 @@ function getBlocksKeyboard(subjectKey, page = 0) {
   blocksKbCache.set(cacheKey, kb);
   return kb;
 }
+// Mavjud kodlaringiz oxiriga shuni qo'shing:
+
+function getTimetableKeyboard() {
+  return {
+    reply_markup: {
+      keyboard: [
+        ['📅 Bugungi jadval', '🖼 Haftalik jadval'],
+        ['🏢 Bo\'sh xonalar', '⚙️ Guruhni sozlash'],
+        ['🔙 Asosiy menyu']
+      ],
+      resize_keyboard: true,
+      is_persistent: true // Klaviaturani saqlab qoladi
+    }
+  };
+}
+
 
 module.exports = {
   getMainKeyboard,
   getBlocksKeyboard,
   invalidateBlocksCache,
   setMemoryDb,
+  getTimetableKeyboard
 };
