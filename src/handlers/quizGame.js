@@ -310,7 +310,7 @@ async function finishTest(chatId, telegram) {
   if (session.timerTask) { clearTimeout(session.timerTask); session.timerTask = null; }
 
   const tId = session.testId;
-  const tName = String(tId) === 'mock' ? '🎲 Aralash Test' : String(tId).startsWith('ugc_') ? `📝 ${session.blockName || 'Maxsus Test'}` : `${tId}-Blok`;
+  const tName = String(tId) === 'mock' ? '🎲 Aralash Test' : String(tId) === 'adaptive' ? '🎯 AI Adaptiv Test' : String(tId).startsWith('ugc_') ? `📝 ${session.blockName || 'Maxsus Test'}` : `${tId}-Blok`;
   const subjName = SUBJECTS[session.subjectKey] || session.subjectKey;
   const elapsed = Math.floor((Date.now() - session.startTime) / 1000);
   const mins = Math.floor(elapsed / 60).toString().padStart(2, '0');
@@ -319,8 +319,6 @@ async function finishTest(chatId, telegram) {
   let text, buttons = [];
 
   if (session.chatType === 'private') {
-    // FIX #1 (davomi): Xatolarni DB ga yozishdan OLDIN cache ga saqlaymiz.
-    // Bu cbReviewMistakes va cbAiExplainMistakes da race condition ni yo'q qiladi.
     lastMistakesCache.set(chatId, [...session.mistakes]);
 
     dbService.updateUserStats(chatId, session.correct, session.wrong, session.subjectKey, tId, session.mistakes).catch(e => console.error('Stats error:', e.message));
@@ -330,20 +328,33 @@ async function finishTest(chatId, telegram) {
     const pct = safePercent(session.correct, total);
     text = `🏁 *Test Yakunlandi!*\n\n📚 ${subjName} | ${tName}\n\n✅ To\'g\'ri: *${session.correct} ta*\n❌ Xato: *${session.wrong} ta*\n⏭ O\'tkazildi: *${skipped} ta*\n\n🎯 Natija: *${pct}%* — ${grade(pct)}\n${progressBar(parseInt(pct), 100)}\n\n⏱ Vaqt: *${mins}:${secs}*`;
 
+    global.pendingShelfSaves = global.pendingShelfSaves || new Map();
+    global.pendingShelfSaves.set(chatId, {
+      testId: tId,
+      testName: tName,
+      subject: session.subjectKey,
+      questions: session.testData?.questions || session.sessionQuestions || [],
+      progress: null
+    });
+
     if (session.mistakes.length) buttons.push([Markup.button.callback('❌ Xatolarni ko\'rish', 'review_mistakes')]);
 
     if (String(tId).startsWith('ugc_')) {
       const rawId = String(tId).replace('ugc_', '');
       buttons.push([Markup.button.callback('🔁 Qayta ishlash', `ugc_start_${rawId}`)]);
-      buttons.push([Markup.button.callback('🏠 Asosiy Menyu', 'post_main')]);
-    } else if (tId === 'mock') {
-      buttons.push([Markup.button.callback('🎲 Yana aralash', `mock_${session.subjectKey}`)]);
+      buttons.push([Markup.button.callback('📥 Javonga saqlash', `shelf_save_init`)]);
+      buttons.push([Markup.button.callback('🔙 Fanga qaytish', `post_subj_${session.subjectKey}`), Markup.button.callback('🏠 Asosiy', 'post_main')]);
+    } else if (tId === 'mock' || tId === 'adaptive') {
+      if (tId === 'mock') buttons.push([Markup.button.callback('🎲 Yana aralash', `mock_${session.subjectKey}`)]);
+      if (tId === 'adaptive') buttons.push([Markup.button.callback('🎯 Yana adaptiv', `adaptive_${session.subjectKey}`)]);
+      buttons.push([Markup.button.callback('📥 Javonga saqlash', `shelf_save_init`)]);
       buttons.push([Markup.button.callback('🔙 Fan menyusi', `post_subj_${session.subjectKey}`)]);
       buttons.push([Markup.button.callback('🏠 Asosiy Menyu', 'post_main')]);
     } else {
       buttons.push([Markup.button.callback('🔁 Qayta ishlash', `post_start_${session.subjectKey}_${tId}`)]);
-      const memDb = require('../core/bot').memoryDb;
+      const memDb = require('../core/bot').memoryDb || {};
       if ((memDb[session.subjectKey] || {})[tId + 1]) buttons.push([Markup.button.callback(`➡️ Keyingi (${tId + 1}-Blok)`, `post_start_${session.subjectKey}_${tId + 1}`)]);
+      buttons.push([Markup.button.callback('📥 Javonga saqlash', `shelf_save_init`)]);
       buttons.push([Markup.button.callback('🔙 Fan menyusi', `post_subj_${session.subjectKey}`)]);
       buttons.push([Markup.button.callback('🏠 Asosiy Menyu', 'post_main')]);
     }
@@ -444,11 +455,170 @@ async function cbAiExplainMistakes(ctx) {
 
   const explanation = await aiService.explainMistakesBatch(mistakes);
 
-  await safeEdit(ctx, `🤖 *AI Tutor Tahlili:*\n\n${explanation}`, Markup.inlineKeyboard([
-    [Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')]
-  ]));
+  await safeEdit(ctx, `🤖 <b>AI Tutor Tahlili:</b>\n\n${explanation}`, {
+    parse_mode: 'HTML',
+    ...Markup.inlineKeyboard([[Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')]])
+  });
+}
+// Testni darhol boshlamay, nechta xato ustida ishlashni so'raymiz
+async function cbAdaptiveTest(ctx) {
+  await ctx.answerCbQuery();
+  const subjectKey = parseSuffix(ctx.callbackQuery.data, 'adaptive_');
+  const subjName = SUBJECTS[subjectKey] || subjectKey;
+
+  await safeEdit(ctx, `🎯 <b>Adaptiv Test (${subjName})</b>\n\nXatolaringiz asosida nechta shaxsiy savol yechmoqchisiz?`, {
+    parse_mode: 'HTML',
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback('5 ta', `adp_run_${subjectKey}_5`), Markup.button.callback('10 ta', `adp_run_${subjectKey}_10`)],
+      [Markup.button.callback('15 ta', `adp_run_${subjectKey}_15`), Markup.button.callback('20 ta', `adp_run_${subjectKey}_20`)],
+      [Markup.button.callback('🔙 Fanga qaytish', `subj_${subjectKey}`)]
+    ])
+  });
 }
 
+// Tanlangandan keyin ishga tushadigan funksiya
+async function cbAdaptiveRun(ctx) {
+  await ctx.answerCbQuery();
+  const suffix = parseSuffix(ctx.callbackQuery.data, 'adp_run_'); // masalan: "moliyaviy_10"
+  const parts = suffix.split('_');
+  const count = parts.pop(); // oxirgisi "10"
+  const subjectKey = parts.join('_');
+  const subjName = SUBJECTS[subjectKey] || subjectKey;
+  const chatId = ctx.chat.id;
+
+  if (activeTests.has(chatId) || waitingRooms.has(chatId)) return ctx.answerCbQuery('⚠️ Avvalgi testni to\'xtating!', { show_alert: true });
+
+  // Xatolarni qidirish (Avvalgidek)
+  const stats = await dbService.getUserStats(ctx.from.id);
+  const history = stats.history || [];
+  let subjectMistakes = [];
+  for (const record of history) {
+    if ((record.subject === subjectKey || record.subjectKey === subjectKey) && record.mistakes) {
+      subjectMistakes.push(...record.mistakes);
+    }
+  }
+
+  if (subjectMistakes.length === 0) return ctx.answerCbQuery("🎉 Sizda bu fandan xatolar yo'q!", { show_alert: true });
+
+  const msg = await ctx.reply(`⏳ <i>AI Tutor "${subjName}" fanidan xatolaringizni tahlil qilib, ${count} ta maxsus test tuzmoqda...</i>`, { parse_mode: 'HTML' });
+
+  const aiService = require('../services/aiService');
+  const shuffledMistakes = subjectMistakes.sort(() => 0.5 - Math.random());
+
+  // AI ga count qismini uzatamiz
+  const adaptiveQuestions = await aiService.generateAdaptiveQuiz(subjName, shuffledMistakes, count);
+
+  if (!adaptiveQuestions || adaptiveQuestions.length === 0) {
+    return ctx.telegram.editMessageText(chatId, msg.message_id, undefined, "❌ AI test tuzishda xatolik yuz berdi.");
+  }
+
+  await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => { });
+  const testData = { questions: adaptiveQuestions, block_name: '🎯 Shaxsiy Adaptiv Test' };
+  await initAndStartTest(chatId, ctx.telegram, subjectKey, 'adaptive', testData, ctx.from.id, 'private');
+}
+// quizGame.js ichidagi cbStopTest:
+async function cbStopTest(ctx) {
+  try {
+    // Agar bu yozuv (/stop) orqali kelsa ctx.callbackQuery bo'lmaydi
+    if (ctx.callbackQuery) {
+      await ctx.answerCbQuery().catch(() => { });
+    }
+
+    const chatId = ctx.chat?.id || ctx.from?.id;
+    const session = activeTests.get(chatId);
+
+    if (!session) {
+      if (!ctx.callbackQuery) await safeDelete(ctx);
+      return;
+    }
+
+    if (session.timerTask) { clearTimeout(session.timerTask); session.timerTask = null; }
+
+    const tId = session.testId;
+    const tName = String(tId) === 'mock' ? '🎲 Aralash Test' : String(tId) === 'adaptive' ? '🎯 AI Adaptiv Test' : String(tId).startsWith('ugc_') ? `📝 ${session.blockName || 'Maxsus Test'}` : `${tId}-Blok`;
+
+    // 🎯 Progressni aniq saqlaymiz
+    global.pendingShelfSaves = global.pendingShelfSaves || new Map();
+    global.pendingShelfSaves.set(chatId, {
+      testId: tId,
+      testName: tName,
+      subject: session.subjectKey,
+      questions: session.testData?.questions || session.sessionQuestions || [],
+      progress: {
+        current_index: session.qIdx || 0, // Nechanchi savolda qolgani
+        correct: session.correct || 0,
+        mistakes: session.mistakes || []
+      }
+    });
+
+    activeTests.delete(chatId); // Testni to'xtatamiz
+
+    const text = `🛑 *Test to'xtatildi!*\n\nSiz *${tName}* testini *${session.qIdx}-savolida* to'xtatdingiz.\n\nBu testni keyinroq qolgan joyidan davom ettirish uchun shaxsiy javoningizga saqlab qo'yishingiz mumkin.`;
+    const buttons = [
+      [Markup.button.callback('📥 Javonga saqlash (Pauza)', `shelf_save_init`)],
+      [Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')]
+    ];
+
+    if (ctx.callbackQuery) {
+      await safeEdit(ctx, text, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
+    } else {
+      await ctx.reply(text, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
+    }
+  } catch (error) {
+    console.error("To'xtatishda xato:", error);
+  }
+}
+// YANGI: Javondan testni chala qolgan joyidan davom ettirish
+async function resumeTestFromShelf(ctx, savedTest) {
+  const chatId = ctx.chat.id;
+  const initiatorId = ctx.from.id;
+
+  if (activeTests.has(chatId) || waitingRooms.has(chatId)) {
+    return ctx.reply('⚠️ Avval joriy testni to\'xtating: /stop', backToMainKb());
+  }
+
+  await safeDelete(ctx);
+
+  const sessionQuestions = savedTest.questions;
+  const prog = savedTest.progress || { current_index: 0, correct: 0, mistakes: [] };
+  const wrongCount = prog.mistakes ? prog.mistakes.length : 0;
+
+  // Testni noldan emas, saqlangan holatdan davom ettirib yaratamiz
+  activeTests.set(chatId, {
+    chatType: 'private',
+    initiatorId: initiatorId,
+    subjectKey: savedTest.subject,
+    testId: savedTest.testId,
+    blockName: savedTest.testName,
+    sessionQuestions: sessionQuestions,
+    qIdx: prog.current_index || 0,
+    startTime: Date.now(),
+    pollId: null,
+    msgId: null,
+    timerTask: null,
+    correct: prog.correct || 0,
+    wrong: wrongCount,
+    mistakes: prog.mistakes || [],
+    consecutiveTimeouts: 0,
+    groupScores: {},
+    finished: false,
+    status: 'running'
+  });
+
+  const startMsg = (prog.current_index > 0)
+    ? `*${prog.current_index + 1}-savoldan davom etamiz!*`
+    : `*Test boshlanmoqda!*`;
+
+  await ctx.telegram.sendMessage(chatId, `🚀 *Javondagi test yuklandi...*\n\n📚 Fan: ${savedTest.subject}\n📝 Test: ${savedTest.testName}\n\n${startMsg}`, { parse_mode: 'Markdown' });
+
+  // 1.5 soniya kutib, keyingi (navbatdagi) savolni jo'natamiz
+  const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  await wait(1500);
+  await sendNextQuestion(chatId, ctx.telegram);
+}
+
+
+// register(bot) ichiga qo'shing:
 function register(bot) {
   bot.action('official_tests', cbOfficialTests);
   bot.action(/^subj_/, cbSubject);
@@ -467,6 +637,8 @@ function register(bot) {
   bot.action('post_main', cbPostMain);
   bot.action(/^post_subj_/, cbPostSubj);
   bot.action(/^post_start_/, cbPostStart);
+  // bot.action(/^adaptive_/, cbAdaptiveTest);  
+  bot.action(/^adp_run_/, cbAdaptiveRun);
 }
 
-module.exports = { register, finishTest, sendNextQuestion, handlePollAnswer, showUgcSubjectBlocks, startUgcTest };
+module.exports = { register, finishTest, sendNextQuestion, handlePollAnswer, showUgcSubjectBlocks, startUgcTest, resumeTestFromShelf, cbStopTest };

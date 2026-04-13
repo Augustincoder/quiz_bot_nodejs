@@ -23,7 +23,8 @@ const testCreation = require('./src/handlers/testCreation');
 const adminHandlers = require('./src/handlers/adminHandlers');
 const statsHandlers = require('./src/handlers/statsHandlers');
 const quizGame = require('./src/handlers/quizGame');
-
+const aiHandlers = require('./src/handlers/aiHandlers');
+const shelfHandlers = require('./src/handlers/shelfHandlers');
 // ─── Botni ishga tushirish ───────────────────────────────────
 const bot = new Telegraf(BOT_TOKEN);
 
@@ -39,7 +40,16 @@ testCreation.register(bot);
 adminHandlers.register(bot);
 statsHandlers.register(bot);
 quizGame.register(bot);
+aiHandlers.register(bot);
+shelfHandlers.register(bot);
 
+// Bot komandalarini ulash
+bot.command('start', (ctx) => startHandler.cbStart(ctx));
+bot.command('profile', (ctx) => profileHandler.cbProfile(ctx));
+bot.command('schedule', (ctx) => scheduleHandler.cbSchedule(ctx));
+bot.command('stop', (ctx) => {
+  return quizGame.cbStopTest(ctx);
+});
 // ─── Global Matnli Xabarlar (State Router) ───────────────────
 bot.on('message', async (ctx, next) => {
   const state = getState(ctx);
@@ -51,8 +61,25 @@ bot.on('message', async (ctx, next) => {
     if (ctx.message.document) return testCreation.onDocxFile(ctx);
     return testCreation.onQuestionMessage(ctx);
   }
+
   if (state === States.CREATE_AI_TEXT) {
     if (ctx.message.text) return testCreation.onAiTextInput(ctx);
+  }
+  if (state === States.CREATE_AI_QUESTIONS) {
+    if (ctx.message.text) return testCreation.onAiQuestionsInput(ctx);
+  }
+  // SHU QATORNI QO'SHING:
+  if (state === States.CREATE_AI_IMAGE) {
+    if (ctx.message.photo) return testCreation.onAiImageInput(ctx);
+  }
+  if (state === States.CREATE_AI_TEXT) {
+    if (ctx.message.text) return testCreation.onAiTextInput(ctx);
+  }
+  if (state === States.AI_ESSAY_ANALYSIS) {
+    if (ctx.message.text) return aiHandlers.onEssayInput(ctx);
+  }
+  if (state === States.CREATE_SHELF_FOLDER) {
+    if (ctx.message.text) return shelfHandlers.onNewFolderInput(ctx);
   }
   if (state === States.CREATE_AI_QUESTIONS) {
     if (ctx.message.text) return testCreation.onAiQuestionsInput(ctx);

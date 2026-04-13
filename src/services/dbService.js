@@ -180,9 +180,54 @@ async function updateUserTestQuestions(testId, creatorId, newQuestions) {
     return false; 
   }
 }
+// ==========================================
+// YANGI: JAVON (SHELF) BILAN ISHLASH
+// ==========================================
+
+// Foydalanuvchining butun javonini olish
+async function getUserShelf(userId) {
+    const stats = await getUserStats(userId);
+    return stats.shelf || {}; 
+    // Format: { "Asosiy": [...testlar], "Ertangi imtihonga": [...testlar] }
+}
+
+// Javonga test saqlash (yoki chala progressni saqlash)
+async function saveTestToShelf(userId, folderName, testInfo) {
+    try {
+        const stats = await getUserStats(userId);
+        let shelf = stats.shelf || {};
+        
+        // Agar papka yo'q bo'lsa, yaratamiz
+        if (!shelf[folderName]) shelf[folderName] = [];
+
+        // Duplikatni tekshirish (Shu test avval saqlanganmi?)
+        const isExist = shelf[folderName].find(t => String(t.testId) === String(testInfo.testId));
+        if (isExist) return 'exist'; // Allaqachon bor
+
+        // Testni qo'shish
+        shelf[folderName].push({
+            testId: testInfo.testId,
+            testName: testInfo.testName,
+            subject: testInfo.subject,
+            questions: testInfo.questions, // AI testlar yo'qolmasligi uchun savollar saqlanadi
+            saved_at: new Date().toISOString(),
+            progress: testInfo.progress || null // Agar chala to'xtatgan bo'lsa, o'sha joyi saqlanadi
+        });
+
+        // Supabase ga yangilash
+        const { error } = await supabase.from('user_stats').update({ shelf }).eq('user_id', String(userId));
+        if (error) throw error;
+        
+        return 'saved';
+    } catch (e) {
+        console.error('Javonga saqlashda xato:', e);
+        return 'error';
+    }
+}
+
 
 module.exports = {
   loadAllOfficialTests, saveOfficialTest, getUserStats, updateUserStats, getUserRank,
   registerUser, getAllUsers, getTopUsers, saveUserTest, getUserTest, getUserCreatedTests,
-  deleteUserTest, updateUserClass, getUserClass, updateUserTestQuestions
+  deleteUserTest, updateUserClass, getUserClass, updateUserTestQuestions, getUserShelf, saveTestToShelf
 };

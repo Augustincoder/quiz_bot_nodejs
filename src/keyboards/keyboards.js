@@ -18,8 +18,14 @@ function getMainKeyboard() {
       Markup.button.callback('📂 Mening Testlarim', 'my_tests'),
     ],
     [
+      Markup.button.callback('✍️ AI Tutor: Yozma matn tahlili', 'ai_essay_menu'), // <-- YANGI TUGMA
+    ],
+    [
       Markup.button.callback('📊 Statistikam', 'show_stats'),
       Markup.button.callback('🏆 Reyting', 'show_leaderboard'),
+    ],
+    [
+      Markup.button.callback('📚 Mening Javonim', 'my_shelf'), // <-- YANGI TUGMA
     ],
     [Markup.button.callback('💬 Adminga Murojaat', 'contact_admin')],
   ]);

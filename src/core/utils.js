@@ -53,6 +53,11 @@ const States = {
 // AI test yaratish
   CREATE_AI_TEXT:           'create:ai_text',
   CREATE_AI_QUESTIONS:      'create:ai_questions',
+  // AI insho tahlili
+  AI_ESSAY_ANALYSIS:        'ai:essay_analysis',
+// AI test yaratish uchun rasm
+  CREATE_AI_IMAGE:          'create:ai_image',
+  CREATE_SHELF_FOLDER:      'create:shelf_folder',
 };
 
 // ─── Klaviatura yordamchilari ────────────────────────────────

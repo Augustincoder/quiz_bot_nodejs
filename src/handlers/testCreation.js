@@ -1,9 +1,9 @@
 'use strict';
 
-const fs           = require('fs');
-const path         = require('path');
-const { Markup }   = require('telegraf');
-
+const fs = require('fs');
+const path = require('path');
+const { Markup } = require('telegraf');
+const os = require('os');
 const dbService = require('../services/dbService');
 const {
   States, setState, clearState, updateData, getData, getState,
@@ -13,9 +13,9 @@ const {
 
 const AI_WARNING_TEXT = `\n\n⚠️ *Eslatma:* _Bu javoblar tezkor AI modellarida tayyorlanmoqda va xatolar ehtimolligi bor. Rasmiy imtihonga tayyorlanayotganlar yoki Pro modellar uchun adminga murojaat qiling:_ @AvazovM`;
 
-// FIX #5: Input uzunligi chegaralari — juda uzun nomlar tugma layoutini buzadi.
+// Input uzunligi chegaralari
 const MAX_SUBJECT_LEN = 50;
-const MAX_BLOCK_LEN   = 50;
+const MAX_BLOCK_LEN = 50;
 
 // ─── TUGMALAR GENERATORI ─────────────────────────────────────
 function questionsSummaryKb() {
@@ -106,7 +106,7 @@ async function cbEditAddQ(ctx) {
 async function cbCreateTest(ctx) {
   clearState(ctx);
   await ctx.answerCbQuery();
-  const tests    = await dbService.getUserCreatedTests(ctx.from.id);
+  const tests = await dbService.getUserCreatedTests(ctx.from.id);
   const subjects = {};
   for (const t of tests) {
     if (!subjects[t.subject]) subjects[t.subject] = [];
@@ -115,10 +115,6 @@ async function cbCreateTest(ctx) {
 
   const buttons = [];
   if (Object.keys(subjects).length > 0) {
-    // FIX #6: Dekorativ "header" tugma 'ignore' action ga bog'langan edi,
-    // lekin handler ro'yxatga olinmagan. Endi callback_data yo'q, faqat matn.
-    // Telegraf da "header" uchun to'g'ri yo'l — uni `ignore` ga bog'lash va
-    // register da uni ro'yxatdan o'tkazish (pastda register ga qo'shildi).
     buttons.push([Markup.button.callback('── Mavjud fanlaringiz ──', 'ignore')]);
     for (const [subj, subTests] of Object.entries(subjects)) {
       buttons.push([Markup.button.callback(`📁 ${subj}  •  ${subTests.length} ta blok`, `ct_exist_${subTests[0].id}`)]);
@@ -140,7 +136,7 @@ async function cbCtNew(ctx) {
 
 async function cbCtExist(ctx) {
   await ctx.answerCbQuery();
-  const refId    = parseSuffix(ctx.callbackQuery.data, 'ct_exist_');
+  const refId = parseSuffix(ctx.callbackQuery.data, 'ct_exist_');
   const testData = await dbService.getUserTest(refId);
   if (!testData) return;
   await updateData(ctx, { subject: testData.subject });
@@ -151,7 +147,6 @@ async function cbCtExist(ctx) {
 async function onSubjectInput(ctx) {
   const subject = (ctx.message.text || '').trim();
   if (subject.length < 2) return ctx.reply('⚠️ Fan nomi kamida 2 ta harf bo\'lishi kerak:');
-  // FIX #5: Maksimal uzunlik tekshiruvi qo'shildi.
   if (subject.length > MAX_SUBJECT_LEN) return ctx.reply(`⚠️ Fan nomi ${MAX_SUBJECT_LEN} ta belgidan oshmasligi kerak:`);
   await updateData(ctx, { subject });
   setState(ctx, States.CREATE_NAME);
@@ -161,7 +156,6 @@ async function onSubjectInput(ctx) {
 async function onNameInput(ctx) {
   const name = (ctx.message.text || '').trim();
   if (!name) return ctx.reply('⚠️ Blok nomini kiriting:');
-  // FIX #5: Maksimal uzunlik tekshiruvi qo'shildi.
   if (name.length > MAX_BLOCK_LEN) return ctx.reply(`⚠️ Blok nomi ${MAX_BLOCK_LEN} ta belgidan oshmasligi kerak:`);
   await updateData(ctx, { block_name: name });
   setState(ctx, States.CREATE_FORMAT);
@@ -187,7 +181,7 @@ async function cbFmt(ctx) {
   await updateData(ctx, patch);
 
   const backBtnAction = data.is_editing ? 'back_to_edit_dash' : 'cancel_creation';
-  const backBtnText   = data.is_editing ? '🔙 Orqaga' : '❌ Bekor qilish';
+  const backBtnText = data.is_editing ? '🔙 Orqaga' : '❌ Bekor qilish';
 
   if (fmt === 'ai') {
     await safeEdit(ctx, `🤖 *AI Smart Quiz*\n\nQaysi rejimdan foydalanasiz?`, {
@@ -195,6 +189,7 @@ async function cbFmt(ctx) {
       ...Markup.inlineKeyboard([
         [Markup.button.callback('📄 Matndan test yasash', 'ai_mode_text')],
         [Markup.button.callback('❓ Savollardan test yasash', 'ai_mode_questions')],
+        [Markup.button.callback('📸 Rasmdan test yasash', 'ai_mode_image')],
         [Markup.button.callback(backBtnText, backBtnAction)]
       ])
     });
@@ -206,11 +201,62 @@ async function cbFmt(ctx) {
 }
 
 
-// ─── 2. AI VA SAVOL QABUL QILISH MANTIQI ─────────────────────
+// ─── 2. AI YORDAMCHI FUNKSIYALARI (GLOBAL) ─────────────────────
+
+// Matn va savollar soni nisbatini tekshirish (1 savol = 8 so'z)
+function validateAiRequest(text, requestedCount) {
+  if (requestedCount === 'auto') return { valid: true };
+
+  const wordCount = text.trim().split(/\s+/).length;
+  const count = parseInt(requestedCount, 10);
+  const minWordsRequired = count * 8;
+
+  if (wordCount < minWordsRequired) {
+    return {
+      valid: false,
+      message: `⚠️ <b>Matn juda qisqa!</b>\n\nSiz ${count} ta savol so'radingiz, lekin matnda atigi ${wordCount} ta so'z bor. Sifatli test chiqishi uchun kamida ${minWordsRequired} ta so'z bo'lishi kerak.\n\nIltimos, uzunroq matn yuboring yoki kamroq savol so'rang.`
+    };
+  }
+  return { valid: true };
+}
+
+// Sanoqni so'rash menyusi
+async function promptQuestionCount(ctx) {
+  await safeEdit(ctx, `🔢 <b>Nechta savol tuzamiz?</b>\n\nO'zingizga kerakli savollar sonini tanlang yoki AI o'zi matnga qarab munosib miqdorda tuzsin.`, {
+    parse_mode: 'HTML',
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback('5 ta', 'ai_cnt_5'), Markup.button.callback('10 ta', 'ai_cnt_10')],
+      [Markup.button.callback('15 ta', 'ai_cnt_15'), Markup.button.callback('20 ta', 'ai_cnt_20')],
+      [Markup.button.callback('🤖 Matnga mos (Avto)', 'ai_cnt_auto')],
+      [Markup.button.callback('🔙 Orqaga', 'fmt_ai')]
+    ])
+  });
+}
+
+// Sanoq tanlanganda ishlaydigan funksiya
+async function cbAiCount(ctx) {
+  await ctx.answerCbQuery();
+  const count = parseSuffix(ctx.callbackQuery.data, 'ai_cnt_');
+  const data = await getData(ctx);
+  const mode = data.ai_mode_pending;
+
+  await updateData(ctx, { ai_count: count });
+  const countText = count === 'auto' ? "munosib miqdorda" : `aniq <b>${count} ta</b>`;
+
+  if (mode === 'text') {
+    setState(ctx, States.CREATE_AI_TEXT);
+    await safeEdit(ctx, `📄 <b>Matndan test yasash</b>\n\nO'quv matnini (konspektni) shu yerga yuboring. AI ${countText} savol tuzib beradi.${AI_WARNING_TEXT}`, { parse_mode: 'HTML' });
+  } else if (mode === 'image') {
+    setState(ctx, States.CREATE_AI_IMAGE);
+    await safeEdit(ctx, `📸 <b>Rasmdan test yasash</b>\n\nKitob yoki matn rasmini yuboring. AI ${countText} savol tuzib beradi.${AI_WARNING_TEXT}`, { parse_mode: 'HTML' });
+  }
+}
+
+// ─── AI INPUT HANDLERLARI ──────────────────────────────────────
 async function cbAiModeText(ctx) {
   await ctx.answerCbQuery();
-  setState(ctx, States.CREATE_AI_TEXT);
-  await safeEdit(ctx, `📄 *Matndan test yasash*\n\nO'quv matnini (konspektni) shu yerga yuboring.` + AI_WARNING_TEXT, { parse_mode: 'Markdown' });
+  await updateData(ctx, { ai_mode_pending: 'text' });
+  await promptQuestionCount(ctx);
 }
 
 async function cbAiModeQuestions(ctx) {
@@ -219,12 +265,22 @@ async function cbAiModeQuestions(ctx) {
   await safeEdit(ctx, `❓ *Savollardan test yasash*\n\nOchiq savollarni ro'yxat qilib yuboring.` + AI_WARNING_TEXT, { parse_mode: 'Markdown' });
 }
 
+async function cbAiModeImage(ctx) {
+  await ctx.answerCbQuery();
+  await updateData(ctx, { ai_mode_pending: 'image' });
+  await promptQuestionCount(ctx);
+}
+
 async function onAiTextInput(ctx) {
   const text = ctx.message.text;
-  if (!text || text.length < 30) return ctx.reply("⚠️ Matn juda qisqa.");
-  const msg = await ctx.reply("⏳ *AI matnni tahlil qilmoqda...*", { parse_mode: 'Markdown' });
+  const data = await getData(ctx);
+
+  const validation = validateAiRequest(text, data.ai_count);
+  if (!validation.valid) return ctx.reply(validation.message, { parse_mode: 'HTML' });
+
+  const msg = await ctx.reply("⏳ <i>AI matnni tahlil qilmoqda...</i>", { parse_mode: 'HTML' });
   const aiService = require('../services/aiService');
-  const generatedQuestions = await aiService.generateQuizFromText(text);
+  const generatedQuestions = await aiService.generateQuizFromText(text, data.ai_count);
   await processAiResult(ctx, msg.message_id, generatedQuestions);
 }
 
@@ -235,6 +291,39 @@ async function onAiQuestionsInput(ctx) {
   const aiService = require('../services/aiService');
   const generatedQuestions = await aiService.generateOptionsForQuestions(text);
   await processAiResult(ctx, msg.message_id, generatedQuestions);
+}
+
+async function onAiImageInput(ctx) {
+  const photoArray = ctx.message.photo;
+  if (!photoArray || photoArray.length === 0) return ctx.reply("⚠️ Iltimos, kitob yoki matnning rasmini yuboring.");
+
+  const msg = await ctx.reply("⏳ *AI rasmni o'qimoqda va test tuzmoqda...*", { parse_mode: 'Markdown' });
+
+  const photo = photoArray[photoArray.length - 1];
+  const fileLink = await ctx.telegram.getFileLink(photo.file_id);
+  const filePath = path.join(os.tmpdir(), `ai_img_${Date.now()}.jpg`);
+
+  try {
+    const https = require('https');
+    await new Promise((resolve, reject) => {
+      const file = fs.createWriteStream(filePath);
+      https.get(fileLink.href, res => {
+        res.pipe(file);
+        file.on('finish', () => { file.close(); resolve(); });
+      }).on('error', reject);
+    });
+
+    const aiService = require('../services/aiService');
+    const data = await getData(ctx);
+    const generatedQuestions = await aiService.generateQuizFromImage(filePath, 'image/jpeg', data.ai_count);
+
+    await processAiResult(ctx, msg.message_id, generatedQuestions);
+  } catch (e) {
+    console.error("Rasm qabul qilishda xato:", e);
+    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, "❌ Rasmni o'qishda xatolik yuz berdi.");
+  } finally {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  }
 }
 
 async function processAiResult(ctx, msgId, generatedQuestions) {
@@ -252,6 +341,7 @@ async function processAiResult(ctx, msgId, generatedQuestions) {
   );
 }
 
+// ─── 2.5 BOSHQA FORMATLAR (DOCX, TEXT, QUIZ) ──────────────────
 async function onDocxFile(ctx) {
   const data = await getData(ctx);
   const doc = ctx.message.document;
@@ -324,17 +414,16 @@ async function cbPreviewQuestion(ctx) {
   if (validIdx > 0) nav.push(Markup.button.callback('⬅️ Oldingi', `preview_q_${validIdx - 1}`));
   if (validIdx < questions.length - 1) nav.push(Markup.button.callback('Keyingi ➡️', `preview_q_${validIdx + 1}`));
 
-  await safeEdit(ctx, text, { parse_mode: 'Markdown', ...Markup.inlineKeyboard([
-    nav,
-    [Markup.button.callback('🗑 Shu savolni o\'chirish', `del_q_${validIdx}`)],
-    [Markup.button.callback('🔙 Orqaga qaytish', 'preview_back')]
-  ]) });
+  await safeEdit(ctx, text, {
+    parse_mode: 'Markdown', ...Markup.inlineKeyboard([
+      nav,
+      [Markup.button.callback('🗑 Shu savolni o\'chirish', `del_q_${validIdx}`)],
+      [Markup.button.callback('🔙 Orqaga qaytish', 'preview_back')]
+    ])
+  });
 }
 
 async function cbDeleteQuestion(ctx) {
-  // FIX #7: answerCbQuery har doim birinchi chaqirilishi kerak.
-  // Avval faqat idx to'g'ri bo'lganda chaqirilardi — noto'g'ri idx da
-  // callback timeout xatosi kelib chiqishi mumkin edi.
   await ctx.answerCbQuery();
 
   const idx = parseInt(parseSuffix(ctx.callbackQuery.data, 'del_q_'), 10);
@@ -344,7 +433,6 @@ async function cbDeleteQuestion(ctx) {
   if (idx >= 0 && idx < questions.length) {
     questions.splice(idx, 1);
     await updateData(ctx, { questions });
-    // answerCbQuery yuqorida chaqirilgani sababli bu yerda yana chaqirmаymiz
   }
 
   if (questions.length === 0) return cbPreviewBack(ctx);
@@ -357,7 +445,7 @@ async function cbPreviewBack(ctx) {
   const data = await getData(ctx);
   if (data.is_editing) return showEditDashboard(ctx);
 
-  await safeEdit(ctx, `✅ *Holat*\nJami savollar: *${(data.questions||[]).length} ta*`, { parse_mode: 'Markdown', ...questionsSummaryKb() });
+  await safeEdit(ctx, `✅ *Holat*\nJami savollar: *${(data.questions || []).length} ta*`, { parse_mode: 'Markdown', ...questionsSummaryKb() });
 }
 
 
@@ -451,36 +539,36 @@ async function cbConfirmDelete(ctx) {
 
 
 function register(bot) {
-  bot.action('create_test',          cbCreateTest);
-  bot.action('ct_new',               cbCtNew);
-  bot.action(/^ct_exist_/,           cbCtExist);
-  bot.action(/^fmt_/,                cbFmt);
+  bot.action('create_test', cbCreateTest);
+  bot.action('ct_new', cbCtNew);
+  bot.action(/^ct_exist_/, cbCtExist);
+  bot.action(/^fmt_/, cbFmt);
   bot.action('finish_test_creation', cbFinishCreation);
-  bot.action('cancel_creation',      cbCancelCreation);
+  bot.action('cancel_creation', cbCancelCreation);
 
-  bot.action('my_tests',             cbMyTests);
-  bot.action(/^manage_subj_/,        cbManageSubj);
-  bot.action(/^manage_test_/,        cbManageTest);
-  bot.action(/^delete_test_/,        cbDeleteTest);
-  bot.action(/^confirm_delete_/,     cbConfirmDelete);
+  bot.action('my_tests', cbMyTests);
+  bot.action(/^manage_subj_/, cbManageSubj);
+  bot.action(/^manage_test_/, cbManageTest);
+  bot.action(/^delete_test_/, cbDeleteTest);
+  bot.action(/^confirm_delete_/, cbConfirmDelete);
 
-  bot.action(/^edit_test_/,          cbEditTest);
-  bot.action('back_to_edit_dash',    cbBackToEditDash);
-  bot.action('edit_add_q',           cbEditAddQ);
+  bot.action(/^edit_test_/, cbEditTest);
+  bot.action('back_to_edit_dash', cbBackToEditDash);
+  bot.action('edit_add_q', cbEditAddQ);
 
-  bot.action(/^preview_q_/,          cbPreviewQuestion);
-  bot.action(/^del_q_/,              cbDeleteQuestion);
-  bot.action('preview_back',         cbPreviewBack);
+  bot.action(/^preview_q_/, cbPreviewQuestion);
+  bot.action(/^del_q_/, cbDeleteQuestion);
+  bot.action('preview_back', cbPreviewBack);
 
-  bot.action('ai_mode_text',         cbAiModeText);
-  bot.action('ai_mode_questions',    cbAiModeQuestions);
+  bot.action('ai_mode_text', cbAiModeText);
+  bot.action('ai_mode_questions', cbAiModeQuestions);
+  bot.action('ai_mode_image', cbAiModeImage);
+  bot.action(/^ai_cnt_/, cbAiCount);
 
-  // FIX #6: Dekorativ "header" tugma uchun no-op handler ro'yxatdan o'tkazildi.
-  // Ro'yxatdan o'tkazilmagan callback_data Telegraf da warning chiqaradi.
-  bot.action('ignore',               ctx => ctx.answerCbQuery());
+  bot.action('ignore', ctx => ctx.answerCbQuery());
 }
 
 module.exports = {
   register, onSubjectInput, onNameInput, onDocxFile, onQuestionMessage,
-  onAiTextInput, onAiQuestionsInput
+  onAiTextInput, onAiQuestionsInput, onAiImageInput
 };
