@@ -14,8 +14,6 @@ const { getFormattedSchedule, getEmptyRoomsText, getRawSchedule } = require('../
 const { generateScheduleImage } = require('../scheduleImage');
 const { log } = require('console');
 
-// Sahifalash uchun vaqtinchalik xotira
-const roomsPaginationCache = new Map();
 
 // ─── Guruhlar ro'yxatini yuklash ──────────────────────────────────────────────
 let VALID_GROUPS = [];
@@ -229,173 +227,11 @@ async function cmdSetClass(ctx) {
   }
 }
 
-async function cmdJadval(ctx) {
-  const className = await statsManager.getUserClass(ctx.from.id);
-
-  if (!className) {
-    return ctx.reply(
-      '⚠️ Avval guruhingizni saqlashingiz kerak!\n\n' +
-      'Iltimos, botga guruhingizni yuboring:\n' +
-      '👉 <code>/setclass MI-21</code>',
-      { parse_mode: 'HTML' },
-    );
-  }
-
-  const msg = await ctx.reply('⏳ Dars jadvali olinmoqda...');
-
-  const date = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
-  const dayOfWeek = (date.getDay() + 6) % 7;
-
-  const scheduleText = await getFormattedSchedule(className, dayOfWeek < 6 ? dayOfWeek : 0);
-
-  await ctx.telegram.editMessageText(
-    ctx.chat.id, msg.message_id, undefined,
-    `🎓 <b>Guruh: ${className}</b>\n\n${scheduleText}\n\n<i>Barcha kunlarni ko'rish uchun /hafta bosing</i>`,
-    { parse_mode: 'HTML' },
-  );
-}
-
-// BU YER TO'LIQ RASMLI JADVAL YUBORISHGA O'ZGARTIRILDI
-async function cmdHafta(ctx) {
-  const className = await statsManager.getUserClass(ctx.from.id);
-  if (!className) return ctx.reply('⚠️ Avval <code>/setclass</code> komandasidan foydalaning.', { parse_mode: 'HTML' });
-
-  const msg = await ctx.reply('⏳ Haftalik dars jadvali rasmga olinmoqda. Iltimos kuting...');
-
-  try {
-    const schedule = await getRawSchedule(className);
-    console.log('Jadval ma\'lumotlari olindi:', schedule);
-    if (!schedule || Object.keys(schedule).length === 0) {
-      await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '📭 Ushbu guruh uchun jadval topilmadi.');
-      return;
-    }
-
-    const imageBuffer = await generateScheduleImage(className, schedule);
-
-    await ctx.replyWithPhoto(
-      { source: imageBuffer },
-      {
-        caption: `🎓 <b>Haftalik Jadval: ${className}</b>\n\n📌 <i>Siz ham o'z jadvalingizni bilishni istasangiz, botdan foydalaning.</i>`,
-        parse_mode: 'HTML'
-      }
-    );
-    await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
-
-  } catch (error) {
-    console.error('Rasm yasashda xatolik:', error);
-    await ctx.telegram.editMessageText(
-      ctx.chat.id,
-      msg.message_id,
-      undefined,
-      '❌ Jadval rasmini tayyorlashda texnik xatolik yuz berdi. Iltimos keyinroq urinib ko\'ring.'
-    );
-  }
-}
-async function cmdTimetable(ctx) {
-  const className = await statsManager.getUserClass(ctx.from.id);
-  const status = className
-    ? `✅ Sizning guruhingiz: <b>${className}</b>`
-    : `⚠️ <b>Guruh tanlanmagan.</b> Iltimos, pastdagi "⚙️ Guruhni sozlash" tugmasini bosing va guruhingizni yozing.`;
-
-  const text = `🎓 <b>Dars jadvali bo'limi</b>\n\n${status}\n\n👇 Pastdagi tugmalardan foydalanib o'z dars jadvalingiz va bo'sh xonalarni kuzatib borishingiz mumkin.`;
-
-  await ctx.reply(text, { parse_mode: 'HTML', ...getTimetableKeyboard() });
-}
-
-async function cmdTimetableHelp(ctx) {
-  await ctx.reply(
-    '⚙️ <b>Guruhni qanday sozlash mumkin?</b>\n\n' +
-    'Jadvalni ko\'rish uchun guruhingizni quyidagicha kiritishingiz kerak:\n' +
-    '👉 <code>/setclass MNP-81</code>\n' +
-    'yoki\n' +
-    '👉 <code>/setclass *675</code>',
-    { parse_mode: 'HTML' }
-  );
-}
 
 async function cmdBackToMainReply(ctx) {
   // Reply tugmalarni o'chirib, yana Asosiy inline menyuni ko'rsatamiz
   await ctx.reply('🔙 Asosiy menyuga qaytilmoqda...', { reply_markup: { remove_keyboard: true } });
   await cmdStart(ctx);
-}
-// ─── Bo'sh xonalar ────────────────────────────────────────────────────────────
-
-const PARA_KB = Markup.inlineKeyboard([
-  [Markup.button.callback('1-para  08:30–09:50', 'bosh_1'), Markup.button.callback('2-para  10:00–11:20', 'bosh_2')],
-  [Markup.button.callback('3-para  11:30–12:50', 'bosh_3'), Markup.button.callback('4-para  13:30–14:50', 'bosh_4')],
-  [Markup.button.callback('5-para  15:00–16:20', 'bosh_5'), Markup.button.callback('6-para  16:30–17:50', 'bosh_6')],
-]);
-
-async function cmdXonalar(ctx) {
-  await ctx.reply('🏢 Qaysi para uchun bo\'sh xonalarni ko\'rmoqchisiz?', PARA_KB);
-}
-
-async function cbBoshXona(ctx) {
-  await ctx.answerCbQuery();
-  const periodNum = parseInt(ctx.callbackQuery.data.split('_')[1]);
-
-  const tzDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
-  let dayIdx = (tzDate.getDay() + 6) % 7;
-  let offsetDays = 0;
-
-  if (dayIdx === 6) { offsetDays = 1; dayIdx = 0; }
-  else {
-    const nowMins = tzDate.getHours() * 60 + tzDate.getMinutes();
-    const periodEnd = { 1: 590, 2: 680, 3: 770, 4: 890, 5: 980, 6: 1070 };
-    if (nowMins > (periodEnd[periodNum] ?? 1440)) {
-      offsetDays = 1;
-      dayIdx = (dayIdx + 1) % 7;
-      if (dayIdx === 6) { offsetDays = 2; dayIdx = 0; }
-    }
-  }
-
-  const DAY_NAMES_LOCAL = ['Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba'];
-  await ctx.editMessageText(
-    `⏳ <b>${DAY_NAMES_LOCAL[dayIdx]}</b> kungi <b>${periodNum}-para</b> uchun bo'sh xonalar qidirilmoqda...`,
-    { parse_mode: 'HTML' },
-  );
-
-  const className = await statsManager.getUserClass(ctx.from.id) || '*3';
-  const pages = await getEmptyRoomsText(className, dayIdx, periodNum, offsetDays);
-
-  roomsPaginationCache.set(ctx.from.id, pages);
-
-  await ctx.editMessageText(pages[0], {
-    parse_mode: 'HTML',
-    ...buildRoomPageKb(0, pages.length),
-  });
-}
-
-async function cbRoomPage(ctx) {
-  await ctx.answerCbQuery();
-  const targetPage = parseInt(ctx.callbackQuery.data.split('_')[1]);
-  const pages = roomsPaginationCache.get(ctx.from.id);
-
-  if (!pages?.[targetPage]) {
-    return ctx.reply("⚠️ Ma'lumot eskirgan, iltimos /xonalar komandasini qaytadan yozing.");
-  }
-
-  await ctx.editMessageText(pages[targetPage], {
-    parse_mode: 'HTML',
-    ...buildRoomPageKb(targetPage, pages.length),
-  });
-}
-
-function buildRoomPageKb(current, total) {
-  const nav = [];
-  if (current > 0) nav.push(Markup.button.callback('⬅️ Oldingi', `roompage_${current - 1}`));
-  if (total > 1) nav.push(Markup.button.callback(`${current + 1} / ${total}`, 'ignore'));
-  if (current < total - 1) nav.push(Markup.button.callback('Keyingi ➡️', `roompage_${current + 1}`));
-
-  const rows = [];
-  if (nav.length) rows.push(nav);
-  rows.push([Markup.button.callback('🔙 Orqaga', 'back_to_rooms_menu')]);
-  return Markup.inlineKeyboard(rows);
-}
-
-async function cbBackToRoomsMenu(ctx) {
-  await ctx.answerCbQuery();
-  await ctx.editMessageText('🏢 Qaysi para uchun bo\'sh xonalarni ko\'rmoqchisiz?', PARA_KB);
 }
 
 // ─── Ro'yxatdan o'tish ────────────────────────────────────────────────────────
@@ -405,20 +241,10 @@ function register(bot) {
   bot.command('stop', cmdStop);
   bot.command('menu', cmdMenu);
   bot.command('setclass', cmdSetClass);
-  bot.command('jadval', cmdJadval);
-  bot.command('hafta', cmdHafta);
-  bot.command('xonalar', cmdXonalar);
-  bot.command('timetable', cmdTimetable);
-  bot.hears('📅 Bugungi jadval', cmdJadval);
-  bot.hears('🖼 Haftalik jadval', cmdHafta);
-  bot.hears('🏢 Bo\'sh xonalar', cmdXonalar);
   bot.hears('⚙️ Guruhni sozlash', cmdTimetableHelp);
   bot.hears('🔙 Asosiy menyu', cmdBackToMainReply);
   bot.action('back_to_main', cbBackToMain);
   bot.action('ignore', ctx => ctx.answerCbQuery());
-  bot.action(/^bosh_/, cbBoshXona);
-  bot.action('back_to_rooms_menu', cbBackToRoomsMenu);
-  bot.action(/^roompage_/, cbRoomPage);
 }
 
 module.exports = { register };

@@ -1,78 +1,71 @@
 'use strict';
 
 const { Telegraf, session } = require('telegraf');
-const express               = require('express');
-const cron                  = require('node-cron'); // CRON: Ertalabki xabarlar uchun
+const express = require('express');
+const cron = require('node-cron');
+const fs = require('fs');
+const path = require('path');
 
-const { BOT_TOKEN }         = require('./config');
-const botModule             = require('./bot');
-const storage               = require('./storage');
-const statsManager          = require('./statsManager');
-const { setMemoryDb }       = require('./keyboards');
-const { States, getState, userNameCache}  = require('./utils');
-const { getFormattedSchedule } = require('./edupageApi'); // Jadval API
+// ─── Infratuzilma va Xizmatlar ───────────────────────────────
+const { BOT_TOKEN, DATA_DIR, SUBJECTS } = require('./src/config/config');
+const storage = require('./src/core/storage');
+const botModule = require('./src/core/bot');
+const dbService = require('./src/services/dbService');
+const scheduleService = require('./src/services/scheduleService');
+const { setMemoryDb } = require('./src/keyboards/keyboards');
+const { States, getState, userNameCache } = require('./src/core/utils');
 
-// ─── Handlers ────────────────────────────────────────────────
-const basicHandlers  = require('./handlers/basicHandlers');
-const testCreation   = require('./handlers/testCreation');
-const adminHandlers  = require('./handlers/adminHandlers');
-const statsHandlers  = require('./handlers/statsHandlers');
-const quizGame       = require('./handlers/quizGame');
+// ─── Boshqaruvchilar (Handlers) ──────────────────────────────
+const startHandler = require('./src/handlers/startHandler');
+const profileHandler = require('./src/handlers/profileHandler');
+const scheduleHandler = require('./src/handlers/scheduleHandler');
+const testCreation = require('./src/handlers/testCreation');
+const adminHandlers = require('./src/handlers/adminHandlers');
+const statsHandlers = require('./src/handlers/statsHandlers');
+const quizGame = require('./src/handlers/quizGame');
 
-// ─── Bot ─────────────────────────────────────────────────────
+// ─── Botni ishga tushirish ───────────────────────────────────
 const bot = new Telegraf(BOT_TOKEN);
 
 bot.use(session({
   defaultSession: () => ({ state: null, data: {} }),
 }));
 
-// ─── Handler ro'yxati ────────────────────────────────────────
-basicHandlers.register(bot);
+// ─── Handlerlarni ulash ──────────────────────────────────────
+startHandler.register(bot);
+profileHandler.register(bot);
+scheduleHandler.register(bot);
 testCreation.register(bot);
 adminHandlers.register(bot);
 statsHandlers.register(bot);
 quizGame.register(bot);
 
-// ─── Global message handler (FSM router) ─────────────────────
+// ─── Global Matnli Xabarlar (State Router) ───────────────────
 bot.on('message', async (ctx, next) => {
   const state = getState(ctx);
   if (!state) return next();
 
-  // UGC test yaratish
-  if (state === States.CREATE_SUBJECT) {
-    if (ctx.message.text) return testCreation.onSubjectInput(ctx);
-  }
-  if (state === States.CREATE_NAME) {
-    if (ctx.message.text) return testCreation.onNameInput(ctx);
-  }
+  if (state === States.CREATE_SUBJECT) { if (ctx.message.text) return testCreation.onSubjectInput(ctx); }
+  if (state === States.CREATE_NAME) { if (ctx.message.text) return testCreation.onNameInput(ctx); }
   if (state === States.CREATE_QUESTIONS) {
     if (ctx.message.document) return testCreation.onDocxFile(ctx);
     return testCreation.onQuestionMessage(ctx);
   }
-
-  // Admin rasmiy test
-  if (state === States.ADM_CREATE_TEST_ID) {
-    if (ctx.message.text) return adminHandlers.onAdmTestId(ctx);
+  if (state === States.CREATE_AI_TEXT) {
+    if (ctx.message.text) return testCreation.onAiTextInput(ctx);
   }
+  if (state === States.CREATE_AI_QUESTIONS) {
+    if (ctx.message.text) return testCreation.onAiQuestionsInput(ctx);
+  }
+  if (state === States.ADM_CREATE_TEST_ID) { if (ctx.message.text) return adminHandlers.onAdmTestId(ctx); }
   if (state === States.ADM_CREATE_CONTENT) {
     if (ctx.message.document) return adminHandlers.onAdmDocxContent(ctx);
-    if (ctx.message.text)     return adminHandlers.onAdmTextContent(ctx);
+    if (ctx.message.text) return adminHandlers.onAdmTextContent(ctx);
   }
 
-  // Admin broadcast
-  if (state === States.ADMIN_BROADCAST) {
-    if (ctx.message.text) return adminHandlers.onBroadcastMessage(ctx);
-  }
-
-  // Admin reply
-  if (state === States.ADMIN_REPLY) {
-    if (ctx.message.text) return adminHandlers.onReplyMessage(ctx);
-  }
-
-  // Foydalanuvchi murojaat
-  if (state === States.USER_CONTACT) {
-    if (ctx.message.text) return adminHandlers.onContactMessage(ctx);
-  }
+  if (state === States.ADMIN_BROADCAST) { if (ctx.message.text) return adminHandlers.onBroadcastMessage(ctx); }
+  if (state === States.ADMIN_REPLY) { if (ctx.message.text) return adminHandlers.onReplyMessage(ctx); }
+  if (state === States.USER_CONTACT) { if (ctx.message.text) return adminHandlers.onContactMessage(ctx); }
 
   return next();
 });
@@ -85,84 +78,104 @@ bot.catch((err, ctx) => {
   console.error(`Bot xatosi [${ctx?.updateType}]:`, err.message);
 });
 
-// ─── Main ─────────────────────────────────────────────────────
+// ─── Asosiy ishga tushirish funksiyasi ───────────────────────
 async function main() {
   console.log('📦 Testlar yuklanmoqda...');
   botModule.memoryDb = storage.initStorage();
 
+  // 1. Supabase'dan testlarni yuklash
   try {
-    const dbTests = await statsManager.loadAllOfficialTests();
+    const dbTests = await dbService.loadAllOfficialTests();
     for (const [subj, tests] of Object.entries(dbTests)) {
       if (!botModule.memoryDb[subj]) botModule.memoryDb[subj] = {};
       Object.assign(botModule.memoryDb[subj], tests);
     }
-    console.log('✅ Supabase testlari ham yuklandi.');
+    console.log('✅ Supabase rasmiy testlari yuklandi.');
   } catch (e) {
     console.warn('⚠️ Supabase testlari yuklanmadi:', e.message);
   }
 
+  // 2. Local JSON papkadagi testlarni yuklash (Eski testlarni yo'qotmaslik uchun)
+  try {
+    for (const subj of Object.keys(SUBJECTS)) {
+      const subjDir = path.join(DATA_DIR, subj);
+      if (fs.existsSync(subjDir)) {
+        const files = fs.readdirSync(subjDir).filter(f => f.endsWith('.json'));
+        if (!botModule.memoryDb[subj]) botModule.memoryDb[subj] = {};
+
+        for (const file of files) {
+          const testId = parseInt(file.replace('test_', '').replace('.json', ''), 10);
+          const questions = JSON.parse(fs.readFileSync(path.join(subjDir, file), 'utf8'));
+
+          // Agar bu test Supabase'dan kelmagan bo'lsa, xotiraga qo'shamiz
+          if (!botModule.memoryDb[subj][testId]) {
+            botModule.memoryDb[subj][testId] = {
+              test_id: testId,
+              range: `1-${questions.length}`,
+              questions: questions
+            };
+          }
+        }
+      }
+    }
+    console.log('✅ Local JSON testlar ham muvaffaqiyatli o\'qildi.');
+  } catch (e) {
+    console.warn('⚠️ Local testlarni o\'qishda xatolik:', e.message);
+  }
+
   setMemoryDb(botModule.memoryDb);
-// ==============================================================
-  // ISMLARNI XOTIRAGA TIKLASH (Reyting "Sirli talaba" bo'lmasligi uchun)
-  // ==============================================================
-  const allUsers = await statsManager.getAllUsers();
+
+  // Ismlarni xotiraga tiklash (Reyting uchun)
+  const allUsers = await dbService.getAllUsers();
   if (allUsers) {
     for (const user of allUsers) {
-      // Baza ustunida ism qanday nomlangani (name, full_name, first_name) ga moslaymiz
       const userName = user.name || user.full_name || user.first_name || 'Talaba';
       userNameCache.set(user.telegram_id, userName);
     }
-    console.log(`✅ ${allUsers.length} ta foydalanuvchi ismi reyting uchun xotiraga tiklandi.`);
+    console.log(`✅ ${allUsers.length} ta foydalanuvchi ismi xotiraga tiklandi.`);
   }
-  // ==============================================================
-  // 1. RENDER UCHUN EXPRESS VEB-SERVER (Uyquga ketmasligi uchun)
-  // ==============================================================
-  const app  = express();
+
+  // Web Server
+  const app = express();
   const port = parseInt(process.env.PORT || '8080', 10);
   app.get('/', (_, res) => res.send('Bot 100% aktiv va ishlab turibdi! 🚀'));
   app.listen(port, () => console.log(`🌐 Web server ishga tushdi (Port: ${port})`));
 
-  // ==============================================================
-  // 2. AVTOMATIK JADVAL YUBORISH (Node-Cron)
-  // Har kuni soat 07:30 da (Dushanbadan Shanbagacha)
-  // ==============================================================
+  // Avtomatik Dars Jadvali tarqatish
   cron.schedule('30 07 * * 1-6', async () => {
     console.log('⏰ Avtomatik dars jadvali tarqatish boshlandi...');
     try {
-      // statsManager orqali barcha userlarni olamiz
-      const allUsers = await statsManager.getAllUsers(); 
-      if (!allUsers) return;
+      const users = await dbService.getAllUsers();
+      if (!users) return;
 
       const date = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
-      const dayOfWeek = (date.getDay() + 6) % 7; 
-
-      if (dayOfWeek === 6) return; // Yakshanba kuni yuborilmaydi
+      const dayOfWeek = (date.getDay() + 6) % 7;
+      if (dayOfWeek === 6) return;
 
       let sentCount = 0;
-      for (const user of allUsers) {
+      for (const user of users) {
         if (user.class_name) {
           try {
-            const scheduleText = await getFormattedSchedule(user.class_name, dayOfWeek);
+            const scheduleText = await scheduleService.fetchTodaySchedule(user.class_name, dayOfWeek);
             if (!scheduleText.includes('Jadval topilmadi') && !scheduleText.includes('xatolik')) {
-               await bot.telegram.sendMessage(
-                 user.telegram_id, 
-                 `🌤 <b>Xayrli tong! Bugungi darsingiz:</b>\n\n🎓 <b>Guruh: ${user.class_name}</b>\n${scheduleText}`,
-                 { parse_mode: 'HTML' }
-               );
-               sentCount++;
-               // Telegram spam-limitiga (sekundiga 30 ta) tushmaslik uchun ozgina kutamiz
-               await new Promise(r => setTimeout(r, 50)); 
+              await bot.telegram.sendMessage(
+                user.telegram_id,
+                `🌤 <b>Xayrli tong! Bugungi darsingiz:</b>\n\n🎓 <b>Guruh: ${user.class_name}</b>\n${scheduleText}`,
+                { parse_mode: 'HTML' }
+              );
+              sentCount++;
+              await new Promise(r => setTimeout(r, 50));
             }
-          } catch (e) { /* Xatolikni inkor qilamiz */ }
+          } catch (e) { }
         }
       }
       console.log(`✅ Avtomatik jadval ${sentCount} ta talabaga yuborildi!`);
     } catch (error) {
-      console.error('Avtomatik jadval tarqatishda xatolik:', error);
+      console.error('Avtomatik jadval xatoligi:', error);
     }
   }, { timezone: "Asia/Tashkent" });
 
-  // 3) Bot polling
+  // Botni yurgizish
   await bot.telegram.deleteWebhook({ drop_pending_updates: true });
   console.log('🤖 Bot ishga tushdi...');
   await bot.launch();
@@ -173,5 +186,5 @@ main().catch(err => {
   process.exit(1);
 });
 
-process.once('SIGINT',  () => bot.stop('SIGINT'));
+process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));

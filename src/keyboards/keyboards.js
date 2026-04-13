@@ -1,7 +1,6 @@
 'use strict';
 
 const { Markup } = require('telegraf');
-const statsManager = require('./statsManager');
 
 const ITEMS_PER_PAGE = 5;
 
@@ -72,7 +71,6 @@ function getBlocksKeyboard(subjectKey, page = 0) {
   blocksKbCache.set(cacheKey, kb);
   return kb;
 }
-// Mavjud kodlaringiz oxiriga shuni qo'shing:
 
 function getTimetableKeyboard() {
   return {
@@ -87,7 +85,6 @@ function getTimetableKeyboard() {
     }
   };
 }
-
 
 module.exports = {
   getMainKeyboard,

@@ -5,7 +5,7 @@ const fs   = require('fs');
 
 // Load environment variables from .env (if present)
 // Note: `.env` is gitignored; use `.env.example` as a template.
-require('dotenv').config({ path: path.join(__dirname, '.env') });
+require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 
 function env(name, fallback = undefined) {
   const v = process.env[name];
@@ -23,7 +23,7 @@ function envInt(name, fallback) {
 
 const BOT_TOKEN = env('BOT_TOKEN', '');
 
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = path.join(__dirname, '../../data');
 
 const SUBJECTS = {
   korporativ: '🎓 Korporativ Boshqaruv',
@@ -38,7 +38,7 @@ const QUESTIONS_PER_TEST_ENV = envInt('QUESTIONS_PER_TEST', QUESTIONS_PER_TEST);
 const SUPABASE_URL = env('SUPABASE_URL', '');
 const SUPABASE_KEY = env('SUPABASE_KEY', '');
 const ADMIN_ID = envInt('ADMIN_ID', 2014973670);
-
+const GEMINI_API_KEY = env('GEMINI_API_KEY', '');
 if (!BOT_TOKEN) {
   throw new Error(
     'BOT_TOKEN is missing. Create a .env file (see .env.example) and set BOT_TOKEN=...'
@@ -60,4 +60,5 @@ module.exports = {
   SUPABASE_URL,
   SUPABASE_KEY,
   ADMIN_ID,
+  GEMINI_API_KEY,
 };

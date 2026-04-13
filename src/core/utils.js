@@ -12,9 +12,6 @@ const leaderboardCache    = { text: null, ts: 0 };
 const LEADERBOARD_TTL     = 120_000;     // ms
 
 // ─── FSM helpers (session-tabanlı) ──────────────────────────
-// ctx.session.state  → joriy holat nomi
-// ctx.session.data   → holat ma'lumotlari
-
 function setState(ctx, stateName) {
   ctx.session.state = stateName;
 }
@@ -53,6 +50,9 @@ const States = {
   ADM_CREATE_TEST_ID:       'adm_create:test_id',
   ADM_CREATE_FORMAT:        'adm_create:format',
   ADM_CREATE_CONTENT:       'adm_create:content',
+// AI test yaratish
+  CREATE_AI_TEXT:           'create:ai_text',
+  CREATE_AI_QUESTIONS:      'create:ai_questions',
 };
 
 // ─── Klaviatura yordamchilari ────────────────────────────────
@@ -108,9 +108,10 @@ async function safeDelete(ctx) {
 async function getUserName(bot, userId) {
   if (userNameCache.has(userId)) return userNameCache.get(userId);
 
-  const statsManager = require('./statsManager');
+  // DIQQAT: MANZIL O'ZGARDI
+  const dbService = require('../services/dbService');
   try {
-    const users = await statsManager.getAllUsers();
+    const users = await dbService.getAllUsers();
     const found = users.find(u => u.telegram_id === String(userId));
     if (found?.full_name) {
       userNameCache.set(userId, found.full_name);
