@@ -1,140 +1,130 @@
 'use strict';
 
-const { Markup }   = require('telegraf');
-const { SUBJECTS } = require('../config/config');
-const dbService    = require('../services/dbService');
-const {
-  safeEdit, backToMainKb, progressBar, safePercent, grade,
-  parseSuffix, getUserName, leaderboardCache, LEADERBOARD_TTL,
-} = require('../core/utils');
+const dbService = require('../services/dbService');
+const { safeEdit, backToMainKb } = require('../core/utils');
+const { Markup } = require('telegraf');
 
-async function cbShowLeaderboard(ctx) {
-  await ctx.answerCbQuery();
-  const now = Date.now();
+// 1. Asosiy Statistika Dashbaord'i
+async function cbStatsMenu(ctx) {
+  try {
+    await ctx.answerCbQuery().catch(() => { });
+    const userId = ctx.from.id;
 
-  if (leaderboardCache && leaderboardCache.text && now - leaderboardCache.ts < LEADERBOARD_TTL) {
-    return safeEdit(ctx, leaderboardCache.text,
-      Markup.inlineKeyboard([[Markup.button.callback('🔙 Asosiy Menyu', 'back_to_main')]]));
+    // Bazadan ma'lumotlarni olish
+    const stats = await dbService.getUserStats(userId);
+    const rank = await dbService.getUserRank(userId);
+
+    const totalTests = stats.tests_completed || 0;
+    const correct = stats.total_correct || 0;
+    const wrong = stats.total_wrong || 0;
+    const totalAnswers = correct + wrong;
+    const accuracy = totalAnswers > 0 ? Math.round((correct / totalAnswers) * 100) : 0;
+
+    const text = `📊 *Shaxsiy Statistika va Reyting*
+
+Bu yerda sizning butun o'quv tarixingiz va o'sish ko'rsatkichlaringiz jamlangan.
+
+━━━━━━━━━━━━━━━━
+📈 *Umumiy ko'rsatkichlar:*
+🎯 *Aniqlik:* ${accuracy}%
+✅ *To'g'ri javoblar:* ${correct} ta
+❌ *Xato javoblar:* ${wrong} ta
+📝 *Tugallangan testlar:* ${totalTests} ta
+
+🏆 *Sizning Reytingdagi o'rningiz:* ${rank !== 'N/A' ? rank + '-o\'rin' : 'Hali aniqlanmadi'}
+━━━━━━━━━━━━━━━━
+
+💡 *Maslahat:* Reytingda ko'tarilish uchun "Adaptiv Test" larni ko'proq ishlang. Bu orqali ham bilimingiz, ham ballingiz tezroq oshadi.`;
+
+    const buttons = [
+      [Markup.button.callback('🏆 Top-10 Reyting (Leaderboard)', 'stats_leaderboard')],
+      [Markup.button.callback('📜 O\'tgan testlar tarixi', 'stats_history')],
+      [Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')]
+    ];
+
+    await safeEdit(ctx, text, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
+  } catch (e) {
+    console.error(e);
+    await ctx.answerCbQuery("❌ Xatolik yuz berdi.", { show_alert: true });
   }
-
-  await safeEdit(ctx, '⏳ Reyting yuklanmoqda...');
-  const top = await dbService.getTopUsers(10);
-
-  let text;
-  if (!top.length) {
-    text = '🏆 *TOP REYTING*\n\n' + 'Hozircha hech kim yo\'q.\n' + 'Test ishlang va birinchi o\'ringa chiqing!';
-  } else {
-    const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
-    const names  = await Promise.allSettled(top.map(u => getUserName(ctx.telegram, u.user_id)));
-    const lines = top.map((user, i) => {
-      const display = names[i].status === 'fulfilled' ? names[i].value : 'Sirli Talaba';
-      return (`${medals[i] ?? '🔸'} *${display}*\n` + `      ✅ ${user.correct}  📝 ${user.completed} test`);
-    });
-    text = '🏆 *TOP 10 TALABALAR*\n\n' + lines.join('\n\n');
-  }
-
-  if (leaderboardCache) {
-    leaderboardCache.text = text;
-    leaderboardCache.ts   = now;
-  }
-
-  await safeEdit(ctx, text, Markup.inlineKeyboard([[Markup.button.callback('🔙 Asosiy Menyu', 'back_to_main')]]));
 }
 
-async function cbShowStats(ctx) {
-  await ctx.answerCbQuery();
-  if (ctx.chat.type !== 'private') return ctx.answerCbQuery('📊 Statistika faqat shaxsiy chatda ko\'rsatiladi!', { show_alert: true });
+// 2. Top 10 Reyting doskasi
+async function cbLeaderboard(ctx) {
+  try {
+    await ctx.answerCbQuery("🏆 Top-10 yuklanmoqda...").catch(() => { });
+    const topUsers = await dbService.getTopUsers(10);
 
-  const stats = await dbService.getUserStats(ctx.from.id);
-  const rank  = await dbService.getUserRank(ctx.from.id);
-  const total = stats.total_correct + stats.total_wrong;
-  const pct   = safePercent(stats.total_correct, total);
-
-  const buttons = [];
-  if ((stats.history || []).length) buttons.push([Markup.button.callback('📜 Test tarixim', 'hist_page_0')]);
-  buttons.push([Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')]);
-
-  await safeEdit(ctx,
-    `📊 *Shaxsiy Statistika*\n\n` +
-    `🏆 Reyting: *${rank}-o\'rin*\n\n` +
-    `✅ To\'g\'ri: *${stats.total_correct} ta*\n❌ Xato: *${stats.total_wrong} ta*\n` +
-    `📝 Testlar: *${(stats.history || []).length} ta*\n\n` +
-    `🎯 O\'zlashtirish: *${pct}%*\n${progressBar(parseInt(pct), 100, 20)}`,
-    Markup.inlineKeyboard(buttons),
-  );
-}
-
-async function cbHistPage(ctx) {
-  await ctx.answerCbQuery();
-  const page    = parseInt(parseSuffix(ctx.callbackQuery.data, 'hist_page_'), 10);
-  const stats   = await dbService.getUserStats(ctx.from.id);
-  const history = stats.history || [];
-
-  if (!history.length) return safeEdit(ctx, '📜 Tarix bo\'sh. Hali test ishlamadingiz.', backToMainKb());
-
-  const totalPages = Math.max(1, Math.ceil(history.length / 5));
-  const p          = Math.max(0, Math.min(page, totalPages - 1));
-  const chunk      = history.slice(p * 5, (p + 1) * 5);
-
-  const buttons = chunk.map((item, i) => {
-    const tId   = String(item.test_id);
-    const label = tId === 'mock' ? '🎲 Aralash' : tId.startsWith('ugc_') ? '📝 Maxsus' : `${tId}-Blok`;
-    const subj = SUBJECTS[item.subject] || item.subject;
-    const tot  = item.correct + (item.wrong || 0);
-    const pct  = Math.round(safePercent(item.correct, tot));
-    return [Markup.button.callback(`${String(item.date).slice(0, 10)} | ${subj} ${label} | ${item.correct}/${tot} (${pct}%)`, `hist_det_${p * 5 + i}`)];
-  });
-
-  const nav = [];
-  if (p > 0) nav.push(Markup.button.callback('⬅️ Oldingi', `hist_page_${p - 1}`));
-  if (p < totalPages-1) nav.push(Markup.button.callback('Keyingi ➡️', `hist_page_${p + 1}`));
-  if (nav.length) buttons.push(nav);
-  buttons.push([Markup.button.callback('🔙 Statistikaga', 'show_stats')]);
-
-  await safeEdit(ctx, `📜 *Test Tarixi* (${p + 1}/${totalPages})\n\nBatafsil ko\'rish uchun tanlang:`, Markup.inlineKeyboard(buttons));
-}
-
-async function cbHistDetail(ctx) {
-  await ctx.answerCbQuery();
-  const idx     = parseInt(parseSuffix(ctx.callbackQuery.data, 'hist_det_'), 10);
-  const stats   = await dbService.getUserStats(ctx.from.id);
-  const history = stats.history || [];
-
-  if (idx >= history.length) return ctx.answerCbQuery('❌ Ma\'lumot topilmadi!', { show_alert: true });
-
-  const item  = history[idx];
-  const tId   = String(item.test_id);
-  const label = tId === 'mock' ? '🎲 Aralash' : tId.startsWith('ugc_') ? '📝 Maxsus' : `${tId}-Blok`;
-  const tot   = item.correct + (item.wrong || 0);
-  const pct   = safePercent(item.correct, tot);
-
-  const parts = [
-    `📅 *Sana:* ${String(item.date).slice(0, 10)}\n📚 *Fan:* ${SUBJECTS[item.subject] || item.subject}\n📝 *Test:* ${label}\n\n` +
-    `✅ To\'g\'ri: *${item.correct}* ❌ Xato: *${item.wrong || 0}*\n🎯 Natija: *${pct}%*\n${progressBar(parseInt(pct), 100)}`,
-  ];
-
-  const mistakes = item.mistakes || [];
-  if (mistakes.length) {
-    parts.push(`📑 *Xatolar (${mistakes.length} ta):*`);
-    for (let i = 0; i < Math.min(mistakes.length, 15); i++) {
-      parts.push(`*${i + 1}.* ${mistakes[i].question}\n❌ ${mistakes[i].wrong_ans}\n✅ ${mistakes[i].correct_ans}`);
+    if (!topUsers || topUsers.length === 0) {
+      return safeEdit(ctx, "🏆 Hozircha reyting bo'sh. Birinchi bo'lish imkoniyati sizda!", backToMainKb());
     }
-    if (mistakes.length > 15) parts.push(`_...va yana ${mistakes.length - 15} ta xato_`);
-  } else {
-    parts.push('🎉 *Bu testda xato qilmadingiz!*');
-  }
 
-  let text = parts.join('\n\n');
-  if (text.length > 4000) text = text.slice(0, 3900) + '\n\n_(Matn kesildi)_';
+    let text = `🏆 *Kuchlilar O'nligi (Top-10)*\n\n━━━━━━━━━━━━━━━━\n`;
+    const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
 
-  await safeEdit(ctx, text, Markup.inlineKeyboard([[Markup.button.callback('🔙 Tarixga', `hist_page_${Math.floor(idx / 5)}`)]]));
+    // Ismlarni olish
+    const allUsers = await dbService.getAllUsers();
+    const userMap = {};
+    if (allUsers) {
+      allUsers.forEach(u => userMap[u.telegram_id] = u.full_name || 'Talaba');
+    }
+
+    topUsers.forEach((user, index) => {
+      const name = userMap[user.user_id] || 'Maxfiy Talaba';
+      const medal = medals[index] || '🔸';
+      text += `${medal} *${name}* — ${user.correct} ball\n`;
+    });
+
+    text += `━━━━━━━━━━━━━━━━\n💡 _Ballar faqat topilgan to'g'ri javoblar soniga qarab hisoblanadi._`;
+
+    await safeEdit(ctx, text, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Orqaga', 'stats_menu')]])
+    });
+
+  } catch (e) { console.error(e); }
 }
 
+// 3. Shaxsiy Testlar Tarixi
+async function cbHistory(ctx) {
+  try {
+    await ctx.answerCbQuery().catch(() => { });
+    const stats = await dbService.getUserStats(ctx.from.id);
+    const history = stats.history || [];
+
+    if (history.length === 0) {
+      return safeEdit(ctx, "📜 *Testlar tarixi*\n\nSiz hali hech qanday testni yakunlamagansiz. O'quv tarixingiz hozircha bo'sh.", {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Orqaga', 'stats_menu')]])
+      });
+    }
+
+    let text = `📜 *So'nggi testlar tarixi*\n\n`;
+    const limit = Math.min(history.length, 5); // Oxirgi 5 ta testni ko'rsatamiz tiqilinch bo'lmasligi uchun
+
+    for (let i = 0; i < limit; i++) {
+      const h = history[i];
+      const dateStr = String(h.date).slice(0, 10);
+      text += `*${i + 1}. Fan:* ${h.subject}\n✅ ${h.correct} ta to'g'ri | ❌ ${h.wrong} ta xato\n📅 ${dateStr}\n\n`;
+    }
+
+    if (history.length > 5) {
+      text += `_...va yana ${history.length - 5} ta avvalgi testlar._`;
+    }
+
+    await safeEdit(ctx, text, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Orqaga', 'stats_menu')]])
+    });
+
+  } catch (e) { console.error(e); }
+}
+
+// 4. Asosiy botga ro'yxatdan o'tkazish
 function register(bot) {
-  bot.action('show_leaderboard', cbShowLeaderboard);
-  bot.action('show_stats',       cbShowStats);
-  bot.action(/^hist_page_/,      cbHistPage);
-  bot.action(/^hist_det_/,       cbHistDetail);
+  bot.action('stats_menu', cbStatsMenu);
+  bot.action('stats_leaderboard', cbLeaderboard);
+  bot.action('stats_history', cbHistory);
 }
 
-module.exports = { register };
+module.exports = { register, cbStatsMenu, cbLeaderboard, cbHistory };

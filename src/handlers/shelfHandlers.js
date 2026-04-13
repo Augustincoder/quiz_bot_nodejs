@@ -29,7 +29,17 @@ async function cbShelfSaveInit(ctx) {
         buttons.push([Markup.button.callback('➕ Yangi papka yaratish', 'sh_new_folder')]);
         buttons.push([Markup.button.callback('❌ Bekor qilish', 'sh_cancel')]);
 
-        await safeEdit(ctx, `📥 *Javonga saqlash*\n\nTest: *${pendingTest.testName}*\n\n⬇️ Qaysi papkaga saqlaymiz?`, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
+        const text = `📥 *Javonga saqlash*
+
+📝 Test: *${pendingTest.testName}*
+📚 Fan: *${pendingTest.subject}*
+
+*Qaysi papkaga saqlaymiz?*
+_Yangi papka nomiga misol: "Ertangi imtihon", "Korporativ 3-blok", "Takrorlash uchun"_
+
+💡 *Maslahat:* Papkani imtihon sanasi yoki mavzu bo'yicha nomlasangiz, keyinchalik tez topasiz.`;
+
+        await safeEdit(ctx, text, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
     } catch (error) {
         console.error("cbShelfSaveInit xatosi:", error);
         await ctx.answerCbQuery("❌ Tizimda xatolik yuz berdi.", { show_alert: true }).catch(() => { });
@@ -109,8 +119,24 @@ async function cbMyShelf(ctx) {
         const folders = Object.keys(shelf || {});
 
         if (folders.length === 0) {
-            return safeEdit(ctx, `📚 *Sizning Javoningiz bo'sh*\n\nTestlarni ishlash jarayonida "Javonga saqlash" tugmasi orqali bu yerda o'z kutubxonangizni yaratishingiz mumkin.`,
-                Markup.inlineKeyboard([[Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')]]));
+            const emptyText = `📚 *Sizning Javoningiz*
+
+Hozircha bu yerda hech narsa yo'q — lekin bu oson hal bo'ladi!
+
+*Javon nima uchun kerak?*
+✓ Test ishlayotganda to'xtatib, keyinroq davom eting
+✓ Sevimlilaringizni papkalarga tartiblang
+✓ AI tomonidan yaratilgan testlarni yo'qotmang
+✓ Imtihon oldidan tezkor takrorlash qiling
+
+━━━━━━━━━━━━━━━━
+*Qanday saqlash mumkin?*
+Test yakunlangach yoki /stop orqali to'xtatganda "📥 Javonga saqlash" tugmasi paydo bo'ladi.`;
+
+            return safeEdit(ctx, emptyText, {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([[Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')]])
+            });
         }
 
         const buttons = [];
@@ -142,7 +168,6 @@ async function cbOpenFolder(ctx) {
         await safeEdit(ctx, `📁 *Papka:* ${folderName}\n\nSaqlangan testlar:`, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
     } catch (e) { console.error(e); }
 }
-
 async function cbViewTest(ctx) {
     try {
         await ctx.answerCbQuery().catch(() => { });
@@ -154,17 +179,31 @@ async function cbViewTest(ctx) {
         const shelf = await dbService.getUserShelf(ctx.from.id);
         const test = (shelf[folderName] || [])[idx];
 
-        if (!test) return safeEdit(ctx, "❌ Test topilmadi.", Markup.inlineKeyboard([[Markup.button.callback('🔙 Javonga', 'my_shelf')]]));
+        if (!test) return safeEdit(ctx, "❌ Test topilmadi yoki o'chirilgan.", Markup.inlineKeyboard([[Markup.button.callback('🔙 Javonga', 'my_shelf')]]));
 
         const qCount = test.questions ? test.questions.length : 0;
-        let progressText = "Noldan boshlanadi";
-        let resumeBtnText = "▶️ Boshlash";
+        let progressText = "▶️ Hali boshlanmagan (Noldan boshlanadi)";
+        let resumeBtnText = "▶️ Testni Boshlash";
 
         if (test.progress && test.progress.current_index > 0) {
             const mCount = test.progress.mistakes ? test.progress.mistakes.length : 0;
-            progressText = `${test.progress.current_index}-savolga kelgan.\n(✅ ${test.progress.correct} to'g'ri | ❌ ${mCount} xato)`;
+            progressText = `⏳ ${test.progress.current_index}-savolga kelgan.\n(✅ ${test.progress.correct} to'g'ri | ❌ ${mCount} xato)`;
             resumeBtnText = "▶️ Qolgan joyidan davom etish";
         }
+
+        const text = `📝 *Test Tafsilotlari*
+
+🔖 *Test nomi:* ${test.testName}
+📚 *Fan:* ${test.subject}
+🔢 *Jami savollar:* ${qCount} ta
+
+━━━━━━━━━━━━━━━━
+📊 *Hozirgi holat:*
+${progressText}
+📅 *Saqlangan sana:* ${String(test.saved_at).slice(0, 10)}
+━━━━━━━━━━━━━━━━
+
+💡 *Maslahat:* Testni qolgan joyidan davom ettirganingizda, oldingi natijalaringiz (to'g'ri/xatolar) saqlanib qoladi va test vaqti asabingizni buzmaydi.`;
 
         const buttons = [
             [Markup.button.callback(resumeBtnText, `sh_run_${folderName}_${idx}`)],
@@ -172,7 +211,7 @@ async function cbViewTest(ctx) {
             [Markup.button.callback('🔙 Papkaga qaytish', `sh_open_${folderName}`)]
         ];
 
-        await safeEdit(ctx, `📝 *Test:* ${test.testName}\n📚 *Fan:* ${test.subject}\n🔢 *Savollar:* ${qCount} ta\n📊 *Holat:* ${progressText}\n📅 *Saqlangan:* ${String(test.saved_at).slice(0, 10)}\n\nNima qilamiz?`, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
+        await safeEdit(ctx, text, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
     } catch (e) { console.error(e); }
 }
 

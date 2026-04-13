@@ -12,22 +12,20 @@ const blocksKbCache = new Map();
 
 function getMainKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback('📚 Rasmiy Testlar', 'official_tests')],
+    // 1-qator: Asosiy o'quv jarayonlari
+    [
+      Markup.button.callback('📚 Rasmiy Testlar', 'official_tests'),
+      Markup.button.callback('🤖 AI Tutor', 'ai_tutor_menu')
+    ],
+    // 2-qator: Shaxsiy kutubxona va yaratish
     [
       Markup.button.callback('📝 Test Yaratish', 'create_test'),
-      Markup.button.callback('📂 Mening Testlarim', 'my_tests'),
+      Markup.button.callback('📖 Mening Javonim', 'my_shelf')
     ],
+    // 3-qator: Kengaytirilgan statistika
     [
-      Markup.button.callback('✍️ AI Tutor: Yozma matn tahlili', 'ai_essay_menu'), // <-- YANGI TUGMA
-    ],
-    [
-      Markup.button.callback('📊 Statistikam', 'show_stats'),
-      Markup.button.callback('🏆 Reyting', 'show_leaderboard'),
-    ],
-    [
-      Markup.button.callback('📚 Mening Javonim', 'my_shelf'), // <-- YANGI TUGMA
-    ],
-    [Markup.button.callback('💬 Adminga Murojaat', 'contact_admin')],
+      Markup.button.callback('📊 Statistika va Reyting', 'stats_menu')
+    ]
   ]);
 }
 
@@ -70,6 +68,9 @@ function getBlocksKeyboard(subjectKey, page = 0) {
     if (page < totalPages - 1) nav.push(Markup.button.callback('Keyingi ➡️', `page_${subjectKey}_${page + 1}`));
     if (nav.length) buttons.push(nav);
     buttons.push([Markup.button.callback('🎲 Aralash (Mock Exam)', `mock_${subjectKey}`)]);
+    buttons.push([
+      Markup.button.callback('🎯 AI Adaptiv Test', `adaptive_${subjectKey}`)
+    ]);
   }
   buttons.push([Markup.button.callback('🔙 Fanlarga qaytish', 'official_tests')]);
 

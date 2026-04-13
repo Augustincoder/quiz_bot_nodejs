@@ -466,8 +466,51 @@ async function cbAdaptiveTest(ctx) {
   const subjectKey = parseSuffix(ctx.callbackQuery.data, 'adaptive_');
   const subjName = SUBJECTS[subjectKey] || subjectKey;
 
-  await safeEdit(ctx, `🎯 <b>Adaptiv Test (${subjName})</b>\n\nXatolaringiz asosida nechta shaxsiy savol yechmoqchisiz?`, {
-    parse_mode: 'HTML',
+  // Xatolarni birinchi bo'lib tekshiramiz
+  const stats = await require('../services/dbService').getUserStats(ctx.from.id);
+  const history = stats.history || [];
+  let subjectMistakes = [];
+  for (const record of history) {
+    if ((record.subject === subjectKey || record.subjectKey === subjectKey) && record.mistakes) {
+      subjectMistakes.push(...record.mistakes);
+    }
+  }
+
+  // UX: Agar xato bo'lmasa, ruhlantiruvchi xabar!
+  if (subjectMistakes.length === 0) {
+    const emptyText = `🎉 *Ajoyib! ${subjName} bo'yicha hozircha xatolaringiz topilmadi.*
+
+Bu yaxshi emas, bu zo'r! Lekin bu shuni anglatadiki, moslashuvchi test uchun material yo'q.
+
+*Nima qilish mumkin?*
+✅ Rasmiy test bloklarini ishlang
+✅ Aralash (Mock Exam) yechib ko'ring
+✅ Xatolar to'plangach, bu sahifaga qaytib keling`;
+
+    return safeEdit(ctx, emptyText, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Fanga qaytish', `subj_${subjectKey}`)]])
+    });
+  }
+
+  const mistakeCount = subjectMistakes.length;
+  const topicCount = Math.max(1, Math.floor(mistakeCount / 2)); // Taxminiy mavzular soni
+
+  const text = `🎯 *Moslashuvchi (Adaptiv) Test*
+
+Bu test siz uchun maxsus tayyor — avvalgi testlardagi xatolaringiz tahlil qilinib, aynan shu mavzular bo'yicha yangi savollar yaratiladi.
+
+━━━━━━━━━━━━━━━━
+📊 *${subjName} bo'yicha holatingiz:*
+❌ Topilgan xatolar: *${mistakeCount} ta*
+📌 Qamrab olinadigan mavzular: taxminan *${topicCount} ta*
+━━━━━━━━━━━━━━━━
+
+*Nechta savol ishlaylik?*
+💡 _Maslahat: 10-15 ta savol — diqqatni jamlash uchun optimal. Bir seansda ko'p savol qilsangiz, charchoq ortib, natija pasayib ketishi mumkin._`;
+
+  await safeEdit(ctx, text, {
+    parse_mode: 'Markdown',
     ...Markup.inlineKeyboard([
       [Markup.button.callback('5 ta', `adp_run_${subjectKey}_5`), Markup.button.callback('10 ta', `adp_run_${subjectKey}_10`)],
       [Markup.button.callback('15 ta', `adp_run_${subjectKey}_15`), Markup.button.callback('20 ta', `adp_run_${subjectKey}_20`)],
@@ -637,8 +680,8 @@ function register(bot) {
   bot.action('post_main', cbPostMain);
   bot.action(/^post_subj_/, cbPostSubj);
   bot.action(/^post_start_/, cbPostStart);
-  // bot.action(/^adaptive_/, cbAdaptiveTest);  
+  bot.action(/^adaptive_/, cbAdaptiveTest);
   bot.action(/^adp_run_/, cbAdaptiveRun);
 }
 
-module.exports = { register, finishTest, sendNextQuestion, handlePollAnswer, showUgcSubjectBlocks, startUgcTest, resumeTestFromShelf, cbStopTest };
+module.exports = { register, finishTest, sendNextQuestion, handlePollAnswer, showUgcSubjectBlocks, startUgcTest, resumeTestFromShelf, cbStopTest, cbReviewMistakes, cbAiExplainMistakes, cbAdaptiveTest, cbAdaptiveRun };

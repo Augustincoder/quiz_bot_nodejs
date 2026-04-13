@@ -184,7 +184,23 @@ async function cbFmt(ctx) {
   const backBtnText = data.is_editing ? '🔙 Orqaga' : '❌ Bekor qilish';
 
   if (fmt === 'ai') {
-    await safeEdit(ctx, `🤖 *AI Smart Quiz*\n\nQaysi rejimdan foydalanasiz?`, {
+    const aiText = `🤖 *AI Smart Quiz*
+
+Quyidagi usullardan birini tanlang:
+📄 *Matndan test* — Konspekt yoki kitob matnini yuboring
+📸 *Rasmdan test* — Kitob sahifasini rasmga oling
+❓ *Savollardan* — Ochiq savollar ro'yxatini yuboring
+
+━━━━━━━━━━━━━━━━
+💡 *Eng yaxshi natija uchun:*
+- Matn kamida 150-200 so'z bo'lsin
+- 10 ta savol so'rasangiz — kamida 80 so'z kerak
+- Rasmda matn aniq ko'rinsin, qiya yoki xira bo'lmasin
+- Darslik paragrafini yoki ma'ruza konspektini yuboring
+
+⚠️ *Eslatma:* Bu yerda yaratilgan savollar AI tomonidan tayyorlanadi — xatoliklar bo'lishi mumkin. Muhim imtihon oldidan rasmiy test bloklarini ham tekshiring.`;
+
+    await safeEdit(ctx, aiText, {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([
         [Markup.button.callback('📄 Matndan test yasash', 'ai_mode_text')],
