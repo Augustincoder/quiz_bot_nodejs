@@ -43,6 +43,7 @@ const statsHandlers = require("./src/handlers/statsHandlers");
 const quizGame = require("./src/handlers/quizGame");
 const aiHandlers = require("./src/handlers/aiHandlers");
 const shelfHandlers = require("./src/handlers/shelfHandlers");
+const aiTestsHandlers = require("./src/handlers/aiTestsHandlers");
 // ─── Botni ishga tushirish ───────────────────────────────────
 const bot = new Telegraf(BOT_TOKEN);
 
@@ -75,6 +76,7 @@ statsHandlers.register(bot);
 quizGame.register(bot);
 aiHandlers.register(bot);
 shelfHandlers.register(bot);
+aiTestsHandlers.register(bot);
 
 // Bot komandalarini ulash
 bot.command("start", (ctx) => startHandler.cbStart(ctx));

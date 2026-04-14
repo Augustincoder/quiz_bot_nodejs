@@ -1,70 +1,72 @@
 "use strict";
 
-const dbService = require("../services/dbService");
-const { safeEdit, backToMainKb } = require("../core/utils");
 const { Markup } = require("telegraf");
+const dbService = require("../services/dbService");
+const {
+  safeEdit,
+  backToMainKb,
+  progressBar,
+  escapeHtml,
+} = require("../core/utils");
 
-// 1. Asosiy Statistika Dashbaord'i
+const ITEMS_PER_PAGE = 5;
+
+// ─── 1. STATS DASHBOARD ──────────────────────────────────────
+
 async function cbStatsMenu(ctx) {
+  await ctx.answerCbQuery().catch(() => {});
   try {
-    await ctx.answerCbQuery().catch(() => {});
-    const userId = ctx.from.id;
+    const [stats, rank] = await Promise.all([
+      dbService.getUserStats(ctx.from.id),
+      dbService.getUserRank(ctx.from.id),
+    ]);
 
-    // Bazadan ma'lumotlarni olish
-    const stats = await dbService.getUserStats(userId);
-    const rank = await dbService.getUserRank(userId);
-
-    const totalTests = stats.tests_completed || 0;
     const correct = stats.total_correct || 0;
     const wrong = stats.total_wrong || 0;
     const totalAnswers = correct + wrong;
     const accuracy =
       totalAnswers > 0 ? Math.round((correct / totalAnswers) * 100) : 0;
+    const completed = stats.tests_completed || 0;
+    const rankLabel = rank !== "N/A" ? `${rank}-o'rin` : "Hali aniqlanmadi";
 
-    const text = `📊 *Shaxsiy Statistika va Reyting*
-
-Bu yerda sizning butun o'quv tarixingiz va o'sish ko'rsatkichlaringiz jamlangan.
-
-━━━━━━━━━━━━━━━━
-📈 *Umumiy ko'rsatkichlar:*
-🎯 *Aniqlik:* ${accuracy}%
-✅ *To'g'ri javoblar:* ${correct} ta
-❌ *Xato javoblar:* ${wrong} ta
-📝 *Tugallangan testlar:* ${totalTests} ta
-
-🏆 *Sizning Reytingdagi o'rningiz:* ${rank !== "N/A" ? rank + "-o'rin" : "Hali aniqlanmadi"}
-━━━━━━━━━━━━━━━━
-
-💡 *Maslahat:* Reytingda ko'tarilish uchun "Adaptiv Test" larni ko'proq ishlang. Bu orqali ham bilimingiz, ham ballingiz tezroq oshadi.`;
-
-    const buttons = [
-      [
-        Markup.button.callback(
-          "🏆 Top-10 Reyting (Leaderboard)",
-          "stats_leaderboard",
-        ),
-      ],
-      [Markup.button.callback("📜 O'tgan testlar tarixi", "stats_history")],
-      [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
-    ];
-
-    await safeEdit(ctx, text, {
-      parse_mode: "Markdown",
-      ...Markup.inlineKeyboard(buttons),
-    });
+    await safeEdit(
+      ctx,
+      `📊 <b>Shaxsiy Statistika</b>\n\n` +
+        `━━━━━━━━━━━━━━━━\n` +
+        `🎯 Aniqlik:            <b>${accuracy}%</b>\n` +
+        `${progressBar(accuracy, 100)}\n` +
+        `✅ To'g'ri javoblar:   <b>${correct} ta</b>\n` +
+        `❌ Xato javoblar:      <b>${wrong} ta</b>\n` +
+        `📝 Yakunlangan testlar:<b>${completed} ta</b>\n` +
+        `━━━━━━━━━━━━━━━━\n` +
+        `🏆 Reytingdagi o'rin: <b>${rankLabel}</b>\n\n` +
+        `<i>💡 Reyting uchun ko'proq to'g'ri javob bering.</i>`,
+      {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("🏆 Top-10 Reyting", "stats_leaderboard")],
+          [Markup.button.callback("📜 O'tgan testlar", "stats_history_0")],
+          [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
+        ]),
+      },
+    );
   } catch (e) {
-    console.error(e);
+    console.error("cbStatsMenu error:", e.message);
     await ctx.answerCbQuery("❌ Xatolik yuz berdi.", { show_alert: true });
   }
 }
 
-// 2. Top 10 Reyting doskasi
-async function cbLeaderboard(ctx) {
-  try {
-    await ctx.answerCbQuery("🏆 Top-10 yuklanmoqda...").catch(() => {});
-    const topUsers = await dbService.getTopUsers(10);
+// ─── 2. LEADERBOARD ──────────────────────────────────────────
 
-    if (!topUsers || topUsers.length === 0) {
+async function cbLeaderboard(ctx) {
+  await ctx.answerCbQuery("🏆 Top-10 yuklanmoqda...").catch(() => {});
+  try {
+    const [topUsers, allUsers] = await Promise.all([
+      dbService.getTopUsers(10),
+      dbService.getAllUsers(),
+    ]);
+
+    if (!topUsers?.length) {
       return safeEdit(
         ctx,
         "🏆 Hozircha reyting bo'sh. Birinchi bo'lish imkoniyati sizda!",
@@ -72,61 +74,51 @@ async function cbLeaderboard(ctx) {
       );
     }
 
-    let text = `🏆 *Kuchlilar O'nligi (Top-10)*\n\n━━━━━━━━━━━━━━━━\n`;
-    const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
-
-    // Ismlarni olish
-    const allUsers = await dbService.getAllUsers();
     const userMap = {};
-    if (allUsers) {
-      allUsers.forEach(
-        (u) => (userMap[u.telegram_id] = u.full_name || "Talaba"),
-      );
-    }
+    (allUsers || []).forEach(
+      (u) => (userMap[u.telegram_id] = u.full_name || "Talaba"),
+    );
 
-    topUsers.forEach((user, index) => {
-      const name = userMap[user.user_id] || "Maxfiy Talaba";
-      const medal = medals[index] || "🔸";
-      text += `${medal} *${name}* — ${user.correct} ball\n`;
+    const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
+    const lines = topUsers.map((user, i) => {
+      const name = escapeHtml(userMap[user.user_id] || "Maxfiy Talaba");
+      return `${medals[i] ?? "🔸"} <b>${name}</b> — ${user.correct} ball`;
     });
 
-    text += `━━━━━━━━━━━━━━━━\n💡 _Ballar faqat topilgan to'g'ri javoblar soniga qarab hisoblanadi._`;
-
-    await safeEdit(ctx, text, {
-      parse_mode: "Markdown",
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback("🔙 Orqaga", "stats_menu")],
-      ]),
-    });
+    await safeEdit(
+      ctx,
+      `🏆 <b>Kuchlilar O'nligi (Top-10)</b>\n\n━━━━━━━━━━━━━━━━\n` +
+        lines.join("\n") +
+        `\n━━━━━━━━━━━━━━━━\n<i>💡 Ballar to'g'ri javoblar soniga qarab hisoblanadi.</i>`,
+      {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("🔙 Orqaga", "stats_menu")],
+        ]),
+      },
+    );
   } catch (e) {
-    console.error(e);
+    console.error("cbLeaderboard error:", e.message);
   }
 }
 
-// 3. Shaxsiy Testlar Tarixi
-// 3. Shaxsiy Testlar Tarixi (Sahifalangan)
-async function cbHistoryPage(ctx) {
-  try {
-    await ctx.answerCbQuery().catch(() => {});
+// ─── 3. TEST HISTORY (PAGINATED) ─────────────────────────────
 
-    // Qaysi sahifadaligini aniqlaymiz (Default: 0)
-    let page = 0;
-    if (
-      ctx.callbackQuery.data &&
-      ctx.callbackQuery.data.startsWith("stats_history_")
-    ) {
-      page = parseInt(ctx.callbackQuery.data.replace("stats_history_", ""), 10);
-    }
+async function cbHistoryPage(ctx) {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const raw = ctx.callbackQuery.data.replace("stats_history_", "");
+    const page = Math.max(0, parseInt(raw, 10) || 0);
 
     const stats = await dbService.getUserStats(ctx.from.id);
-    const history = stats.history || [];
+    const history = (stats.history || []).slice().reverse(); // newest first
 
-    if (history.length === 0) {
+    if (!history.length) {
       return safeEdit(
         ctx,
-        "📜 *Testlar tarixi*\n\nSiz hali hech qanday testni yakunlamagansiz. O'quv tarixingiz hozircha bo'sh.",
+        "📜 <b>Testlar tarixi</b>\n\nSiz hali hech qanday testni yakunlamagansiz.",
         {
-          parse_mode: "Markdown",
+          parse_mode: "HTML",
           ...Markup.inlineKeyboard([
             [Markup.button.callback("🔙 Orqaga", "stats_menu")],
           ]),
@@ -134,20 +126,15 @@ async function cbHistoryPage(ctx) {
       );
     }
 
-    // Eng oxirgi ishlangan testlar birinchi chiqishi uchun ro'yxatni teskari o'giramiz
-    const reversedHistory = [...history].reverse();
-
-    const itemsPerPage = 5; // Har bitta sahifada 5 tadan test ko'rinadi
-    const totalPages = Math.ceil(reversedHistory.length / itemsPerPage);
-    const currentItems = reversedHistory.slice(
-      page * itemsPerPage,
-      (page + 1) * itemsPerPage,
+    const totalPages = Math.ceil(history.length / ITEMS_PER_PAGE);
+    const safePage = Math.max(0, Math.min(page, totalPages - 1));
+    const currentItems = history.slice(
+      safePage * ITEMS_PER_PAGE,
+      (safePage + 1) * ITEMS_PER_PAGE,
     );
 
-    let text = `📜 *Sizning Test Tarixingiz* (Sahifa ${page + 1}/${totalPages})\nJami ishlangan testlar: ${reversedHistory.length} ta\n\n`;
-
-    currentItems.forEach((record, index) => {
-      const globalIndex = page * itemsPerPage + index + 1;
+    const lines = currentItems.map((record, idx) => {
+      const globalIdx = safePage * ITEMS_PER_PAGE + idx + 1;
       const date = new Date(record.date).toLocaleDateString("uz-UZ", {
         day: "2-digit",
         month: "2-digit",
@@ -158,46 +145,49 @@ async function cbHistoryPage(ctx) {
         totalAnswers > 0
           ? Math.round((record.correct / totalAnswers) * 100)
           : 0;
-
-      text += `*${globalIndex}. ${record.subject}* (${date})\n`;
-      text += `✅ To'g'ri: ${record.correct || 0} | ❌ Xato: ${record.wrong || 0} | 🎯 Natija: ${percent}%\n`;
-      text += `━━━━━━━━━━━━━━━━━━\n`;
+      const emoji = percent >= 75 ? "🟢" : percent >= 50 ? "🟡" : "🔴";
+      return (
+        `<b>${globalIdx}. ${escapeHtml(record.subject)}</b> <i>(${date})</i>\n` +
+        `${emoji} ✅ ${record.correct || 0}  ❌ ${record.wrong || 0}  🎯 <b>${percent}%</b>`
+      );
     });
 
-    // Navigatsiya (Sahifalash) tugmalari
-    const buttons = [];
     const navRow = [];
-
-    if (page > 0) {
+    if (safePage > 0)
       navRow.push(
-        Markup.button.callback("⬅️ Oldingi", `stats_history_${page - 1}`),
+        Markup.button.callback("⬅️ Oldingi", `stats_history_${safePage - 1}`),
       );
-    }
-    if (page < totalPages - 1) {
+    navRow.push(
+      Markup.button.callback(`${safePage + 1} / ${totalPages}`, "ignore"),
+    );
+    if (safePage < totalPages - 1)
       navRow.push(
-        Markup.button.callback("Keyingi ➡️", `stats_history_${page + 1}`),
+        Markup.button.callback("Keyingi ➡️", `stats_history_${safePage + 1}`),
       );
-    }
 
-    if (navRow.length > 0) buttons.push(navRow);
-
+    const buttons = [];
+    if (navRow.length > 1) buttons.push(navRow);
     buttons.push([Markup.button.callback("🔙 Orqaga", "stats_menu")]);
 
-    await safeEdit(ctx, text, {
-      parse_mode: "Markdown",
-      ...Markup.inlineKeyboard(buttons),
-    });
+    await safeEdit(
+      ctx,
+      `📜 <b>Test Tarixi</b>  <i>(${safePage + 1} / ${totalPages})</i>\n` +
+        `Jami: <b>${history.length} ta test</b>\n\n` +
+        lines.join("\n━━━━━━━━━━━\n"),
+      { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) },
+    );
   } catch (e) {
-    console.error(e);
+    console.error("cbHistoryPage error:", e.message);
   }
 }
 
-// 4. Asosiy botga ro'yxatdan o'tkazish
+// ─── REGISTER ────────────────────────────────────────────────
+
 function register(bot) {
   bot.action("stats_menu", cbStatsMenu);
   bot.action("stats_leaderboard", cbLeaderboard);
-  // Diqqat: Bu yerda Regex ishlatyapmiz, shunda stats_history_0, stats_history_1 hammasini ushlaydi
   bot.action(/^stats_history/, cbHistoryPage);
+  bot.action("ignore", (ctx) => ctx.answerCbQuery());
 }
 
 module.exports = { register, cbStatsMenu, cbLeaderboard, cbHistoryPage };

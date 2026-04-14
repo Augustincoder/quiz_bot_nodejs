@@ -191,6 +191,18 @@ async function getUserShelf(userId) {
     // Format: { "Asosiy": [...testlar], "Ertangi imtihonga": [...testlar] }
 }
 
+// Foydalanuvchining javonini yangilash
+async function updateUserShelf(userId, shelf) {
+    try {
+        const { error } = await supabase.from('user_stats').update({ shelf }).eq('user_id', String(userId));
+        if (error) throw error;
+        return true;
+    } catch (e) {
+        console.error('Javonni yangilashda xato:', e);
+        return false;
+    }
+}
+
 // Javonga test saqlash (yoki chala progressni saqlash)
 async function saveTestToShelf(userId, folderName, testInfo) {
     try {
@@ -229,5 +241,5 @@ async function saveTestToShelf(userId, folderName, testInfo) {
 module.exports = {
   loadAllOfficialTests, saveOfficialTest, getUserStats, updateUserStats, getUserRank,
   registerUser, getAllUsers, getTopUsers, saveUserTest, getUserTest, getUserCreatedTests,
-  deleteUserTest, updateUserClass, getUserClass, updateUserTestQuestions, getUserShelf, saveTestToShelf
+  deleteUserTest, updateUserClass, getUserClass, updateUserTestQuestions, getUserShelf, saveTestToShelf, updateUserShelf
 };

@@ -226,7 +226,7 @@ async function cbDeleteTest(ctx) {
         if (shelf[folderName]) {
             shelf[folderName].splice(idx, 1);
             if (shelf[folderName].length === 0) delete shelf[folderName];
-            await dbService.supabase.from('user_stats').update({ shelf }).eq('user_id', String(ctx.from.id));
+            await dbService.updateUserShelf(ctx.from.id, shelf);
         }
 
         ctx.callbackQuery.data = `sh_open_${folderName}`;
@@ -241,7 +241,7 @@ async function cbDeleteFolder(ctx) {
         const shelf = await dbService.getUserShelf(ctx.from.id);
         if (shelf[folderName]) {
             delete shelf[folderName];
-            await dbService.supabase.from('user_stats').update({ shelf }).eq('user_id', String(ctx.from.id));
+            await dbService.updateUserShelf(ctx.from.id, shelf);
         }
         await cbMyShelf(ctx);
     } catch (e) { console.error(e); }
