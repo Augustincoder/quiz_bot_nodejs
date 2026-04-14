@@ -2,8 +2,8 @@
 
 const dbService = require('../services/dbService');
 const { getMainKeyboard } = require('../keyboards/keyboards');
+const sessionService = require('../services/sessionService');
 const {
-  activeTests, waitingRooms, pollChatMap,
   userNameCache, clearState, safeEdit, backToMainKb,
 } = require('../core/utils');
 
@@ -19,12 +19,17 @@ async function cmdStart(ctx) {
   userNameCache.set(ctx.from.id, ctx.from.first_name ? `${ctx.from.first_name}${ctx.from.last_name ? ' ' + ctx.from.last_name : ''}` : 'Foydalanuvchi');
 
   let cleared = false;
-  if (waitingRooms.has(chatId)) { waitingRooms.delete(chatId); cleared = true; }
-  if (activeTests.has(chatId)) {
-    const sess = activeTests.get(chatId);
-    if (sess.timerTask) clearTimeout(sess.timerTask);
-    if (sess.pollId) pollChatMap.delete(sess.pollId);
-    activeTests.delete(chatId);
+  // YANGILANISH: Redis'dan kutish xonalarini o'qiymiz va tozalaymiz
+  const room = await sessionService.getWaitingRoom(chatId);
+  if (room) {
+    await sessionService.deleteWaitingRoom(chatId);
+    cleared = true;
+  }
+  // YANGILANISH: Redis'dan faol testlarni o'qiymiz va tozalaymiz
+  const session = await sessionService.getActiveTest(chatId);
+  if (session) {
+    if (session.pollId) await sessionService.deletePollChat(session.pollId);
+    await sessionService.deleteActiveTest(chatId);
     cleared = true;
   }
   if (cleared) await ctx.reply('🔄 Tugallanmagan test tozalandi. Yangi boshlashingiz mumkin!');
@@ -82,17 +87,22 @@ async function cmdStop(ctx) {
   const chatId = ctx.chat.id;
   const userId = ctx.from.id;
 
-  if (waitingRooms.has(chatId)) {
-    const room = waitingRooms.get(chatId);
+  // YANGILANISH: Redis'dan kutish xonalarini o'qiymiz
+  const sessionService = require('../services/sessionService');
+  const room = await sessionService.getWaitingRoom(chatId);
+  
+  if (room) {
     if (userId === room.initiatorId || ctx.chat.type === 'private') {
-      waitingRooms.delete(chatId);
+      await sessionService.deleteWaitingRoom(chatId);
       return ctx.reply('🛑 Test bekor qilindi.', backToMainKb());
     }
     return ctx.reply('⚠️ Faqat testni boshlagan kishi bekor qila oladi!');
   }
 
-  if (activeTests.has(chatId)) {
-    const session = activeTests.get(chatId);
+  // YANGILANISH: Redis'dan faol testlarni o'qiymiz
+  const session = await sessionService.getActiveTest(chatId);
+  
+  if (session) {
     if (ctx.chat.type !== 'private' && userId !== session.initiatorId) {
       return ctx.reply('⚠️ Faqat testni boshlagan kishi to\'xtata oladi!');
     }

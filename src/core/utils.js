@@ -1,15 +1,43 @@
 'use strict';
-
 const { Markup } = require('telegraf');
 
-// ─── Global mutable state ────────────────────────────────────
-const activeTests  = new Map();   // chatId → TestSession
-const waitingRooms = new Map();   // chatId → WaitingRoom
-const pollChatMap  = new Map();   // pollId → chatId
 
-const userNameCache       = new Map();   // userId → string
-const leaderboardCache    = { text: null, ts: 0 };
-const LEADERBOARD_TTL     = 120_000;     // ms
+// O'zini o'zi tozalaydigan xavfsiz Map
+class TTLMap {
+  constructor(ttlMs = 3600000) { // Default: 1 soat (3,600,000 ms)
+    this._map = new Map();
+    this._ttl = ttlMs;
+  }
+
+  set(key, value) {
+    const existing = this._map.get(key);
+    if (existing?.timer) clearTimeout(existing.timer);
+
+    const timer = setTimeout(() => this._map.delete(key), this._ttl);
+    timer.unref(); // Node.js to'xtashini bloklamasligi uchun
+
+    this._map.set(key, { value, timer });
+  }
+
+  get(key) { return this._map.get(key)?.value; }
+
+  has(key) { return this._map.has(key); }
+
+  delete(key) {
+    const existing = this._map.get(key);
+    if (existing?.timer) clearTimeout(existing.timer);
+    this._map.delete(key);
+  }
+}
+
+
+const activeTests = new Map();   // chatId → TestSession
+const waitingRooms = new Map();   // chatId → WaitingRoom
+const pollChatMap = new Map();   // pollId → chatId
+
+const userNameCache = new Map();   // userId → string
+const leaderboardCache = { text: null, ts: 0 };
+const LEADERBOARD_TTL = 120_000;     // ms
 
 // ─── FSM helpers (session-tabanlı) ──────────────────────────
 function setState(ctx, stateName) {
@@ -18,7 +46,7 @@ function setState(ctx, stateName) {
 
 function clearState(ctx) {
   ctx.session.state = null;
-  ctx.session.data  = {};
+  ctx.session.data = {};
 }
 
 async function updateData(ctx, patch) {
@@ -36,28 +64,28 @@ function getState(ctx) {
 // ─── State nomlari ───────────────────────────────────────────
 const States = {
   // Admin
-  ADMIN_BROADCAST:          'admin:broadcast',
-  ADMIN_REPLY:              'admin:reply',
+  ADMIN_BROADCAST: 'admin:broadcast',
+  ADMIN_REPLY: 'admin:reply',
   // User
-  USER_CONTACT:             'user:contact',
+  USER_CONTACT: 'user:contact',
   // UGC test yaratish
-  CREATE_SUBJECT:           'create:subject',
-  CREATE_NAME:              'create:name',
-  CREATE_FORMAT:            'create:format',
-  CREATE_QUESTIONS:         'create:questions',
+  CREATE_SUBJECT: 'create:subject',
+  CREATE_NAME: 'create:name',
+  CREATE_FORMAT: 'create:format',
+  CREATE_QUESTIONS: 'create:questions',
   // Admin test yaratish
-  ADM_CREATE_SUBJECT:       'adm_create:subject',
-  ADM_CREATE_TEST_ID:       'adm_create:test_id',
-  ADM_CREATE_FORMAT:        'adm_create:format',
-  ADM_CREATE_CONTENT:       'adm_create:content',
-// AI test yaratish
-  CREATE_AI_TEXT:           'create:ai_text',
-  CREATE_AI_QUESTIONS:      'create:ai_questions',
+  ADM_CREATE_SUBJECT: 'adm_create:subject',
+  ADM_CREATE_TEST_ID: 'adm_create:test_id',
+  ADM_CREATE_FORMAT: 'adm_create:format',
+  ADM_CREATE_CONTENT: 'adm_create:content',
+  // AI test yaratish
+  CREATE_AI_TEXT: 'create:ai_text',
+  CREATE_AI_QUESTIONS: 'create:ai_questions',
   // AI insho tahlili
-  AI_ESSAY_ANALYSIS:        'ai:essay_analysis',
-// AI test yaratish uchun rasm
-  CREATE_AI_IMAGE:          'create:ai_image',
-  CREATE_SHELF_FOLDER:      'create:shelf_folder',
+  AI_ESSAY_ANALYSIS: 'ai:essay_analysis',
+  // AI test yaratish uchun rasm
+  CREATE_AI_IMAGE: 'create:ai_image',
+  CREATE_SHELF_FOLDER: 'create:shelf_folder',
 };
 
 // ─── Klaviatura yordamchilari ────────────────────────────────
@@ -139,11 +167,11 @@ async function getUserName(bot, userId) {
 // ─── docx parse ─────────────────────────────────────────────
 async function parseDocxQuestions(filePath) {
   const mammoth = require('mammoth');
-  const result  = await mammoth.extractRawText({ path: filePath });
-  const text    = result.value;
+  const result = await mammoth.extractRawText({ path: filePath });
+  const text = result.value;
 
   const questions = [];
-  const blocks    = text.split(/\n\s*\n/);
+  const blocks = text.split(/\n\s*\n/);
 
   for (const block of blocks) {
     const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
@@ -211,4 +239,5 @@ module.exports = {
   getUserName,
   parseDocxQuestions,
   parseTextQuestions,
-};
+  TTLMap,
+  };

@@ -3,15 +3,15 @@
 const dbService = require('../services/dbService');
 const { States, setState, clearState, safeEdit, backToMainKb } = require('../core/utils');
 const { Markup } = require('telegraf');
-
+const { pendingShelfSaves } = require('../core/pendingStore');
 // ==========================================
 // 1. JAVONGA SAQLASH (SAVE) MANTIQI
 // ==========================================
 async function cbShelfSaveInit(ctx) {
     try {
         const chatId = ctx.chat?.id || ctx.from?.id;
-        global.pendingShelfSaves = global.pendingShelfSaves || new Map();
-        const pendingTest = global.pendingShelfSaves.get(chatId);
+        const pendingTest = pendingShelfSaves.get(chatId);
+
 
         if (!pendingTest) {
             return ctx.answerCbQuery("⚠️ Saqlash uchun test topilmadi yoki bu amaliyot eskirgan.", { show_alert: true }).catch(() => { });
@@ -77,8 +77,7 @@ async function cbShelfSaveFolder(ctx) {
 async function executeSave(ctx, folderName, msgId) {
     try {
         const chatId = ctx.chat?.id || ctx.from?.id;
-        global.pendingShelfSaves = global.pendingShelfSaves || new Map();
-        const pendingTest = global.pendingShelfSaves.get(chatId);
+        const pendingTest = pendingShelfSaves.get(chatId);
 
         if (!pendingTest) {
             clearState(ctx);
@@ -91,7 +90,7 @@ async function executeSave(ctx, folderName, msgId) {
         if (result === 'exist') {
             await ctx.telegram.editMessageText(chatId, msgId, undefined, `⚠️ Bu test *${folderName}* papkasida allaqachon mavjud!`, { parse_mode: 'Markdown', ...backToMainKb() }).catch(() => { });
         } else if (result === 'saved') {
-            global.pendingShelfSaves.delete(chatId);
+            pendingShelfSaves.delete(chatId);
             await ctx.telegram.editMessageText(chatId, msgId, undefined, `✅ Test *${folderName}* papkasiga saqlandi!`, { parse_mode: 'Markdown', ...backToMainKb() }).catch(() => { });
         } else {
             await ctx.telegram.editMessageText(chatId, msgId, undefined, "❌ Saqlashda xatolik yuz berdi.", backToMainKb()).catch(() => { });
