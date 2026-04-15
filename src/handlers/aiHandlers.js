@@ -51,7 +51,10 @@ _Kutmoqdamiz, matnni yuboring:_`;
 
         await safeEdit(ctx, text, {
             parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Orqaga', 'ai_tutor_menu')]])
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('🔙 Orqaga', 'ai_tutor_menu')],
+                [Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')],
+            ])
         });
     } catch (e) {
         console.error(e);
@@ -100,10 +103,10 @@ async function onEssayInput(ctx) {
 
 
 function register(bot) {
+    bot.action('ai_menu', cbAiTutorMenu);        // Main menu button
+    bot.action('ai_tutor_menu', cbAiTutorMenu);   // Back button from sub-screens
     bot.action('ai_essay_menu', cbAiEssayMenu);
-    bot.action('ai_tutor_menu', cbAiTutorMenu);
     bot.action('ai_essay_init', cbAiEssayInit);
-    
 }
 
 module.exports = { register, onEssayInput, cbAiTutorMenu, cbAiEssayInit };

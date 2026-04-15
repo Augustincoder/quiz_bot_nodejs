@@ -1,2 +1,13 @@
 {"level":"error","message":"Bot xatosi [callback_query]: next() called multiple times","stack":"Error: next() called multiple times\n    at execute (C:\\Users\\user\\Desktop\\bot_node\\node_modules\\telegraf\\lib\\composer.js:514:27)\n    at C:\\Users\\user\\Desktop\\bot_node\\node_modules\\telegraf\\lib\\composer.js:519:27\n    at C:\\Users\\user\\Desktop\\bot_node\\index.js:64:11\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async execute (C:\\Users\\user\\Desktop\\bot_node\\node_modules\\telegraf\\lib\\composer.js:518:17)\n    at async C:\\Users\\user\\Desktop\\bot_node\\node_modules\\telegraf\\lib\\composer.js:519:21\n    at async execute (C:\\Users\\user\\Desktop\\bot_node\\node_modules\\telegraf\\lib\\composer.js:518:17)\n    at async execute (C:\\Users\\user\\Desktop\\bot_node\\node_modules\\telegraf\\lib\\composer.js:518:17)\n    at async execute (C:\\Users\\user\\Desktop\\bot_node\\node_modules\\telegraf\\lib\\composer.js:518:17)\n    at async execute (C:\\Users\\user\\Desktop\\bot_node\\node_modules\\telegraf\\lib\\composer.js:518:17)","timestamp":"2026-04-14T18:45:13.406Z"}
 {"level":"error","message":"Bot xatosi [message]: Promise timed out after 90000 milliseconds","stack":"TimeoutError: Promise timed out after 90000 milliseconds\n    at Timeout._onTimeout (C:\\Users\\user\\Desktop\\bot_node\\node_modules\\p-timeout\\index.js:39:64)\n    at listOnTimeout (node:internal/timers:605:17)\n    at process.processTimers (node:internal/timers:541:7)","timestamp":"2026-04-14T21:16:59.876Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-04-15T20:17:26.819Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-04-15T20:17:41.315Z","userId":2014973670}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-04-15T20:19:48.372Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-04-15T20:19:55.535Z","userId":2014973670}
+{"level":"info","message":"contact:admin","timestamp":"2026-04-15T20:22:04.055Z","userId":2014973670}
+{"level":"info","message":"admin:reply","targetUserId":2014973670,"timestamp":"2026-04-15T20:22:15.730Z"}
+{"level":"info","message":"contact:admin","timestamp":"2026-04-15T20:22:38.157Z","userId":2014973670}
+{"level":"info","message":"admin:reply","targetUserId":2014973670,"timestamp":"2026-04-15T20:22:51.265Z"}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-04-15T20:26:46.261Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-04-15T20:26:56.409Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-04-15T20:26:59.907Z","userId":2014973670}

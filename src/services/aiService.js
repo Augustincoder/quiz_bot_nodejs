@@ -3,6 +3,7 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { GEMINI_API_KEY }     = require('../config/config');
 const { GoogleAIFileManager } = require("@google/generative-ai/server");
+const logger                 = require('../core/logger');
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 // Eng so'nggi kuchli model (Lite versiyasi tez va limitlar keng)
 const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
@@ -45,7 +46,9 @@ async function generateQuizFromText(text, count) { // <-- count qo'shildi
         const prompt = `Matn asosida ${getCountInstruction(count)} variantli test tuz. Faqat JSON formatda qaytar. Boshqa so'z yozma.
         Struktura: [{"question": "Savol?", "options": ["A", "B", "C", "D"], "correct_index": 0}]\n\nMatn:\n${text}`;
         const result = await model.generateContent(prompt);
-        return extractJSON(result.response.text());
+        const questions = extractJSON(result.response.text());
+        logger.info('ai:generate', { type: 'text', count: questions?.length || 0 });
+        return questions;
     } catch (e) { return null; }
 }
 // 3. Savollarga javoblar yaratish
@@ -83,7 +86,9 @@ async function generateQuizFromImage(localFilePath, mimeType, count) { // <-- co
             { fileData: { mimeType: uploadResponse.file.mimeType, fileUri: uploadResponse.file.uri } },
             { text: prompt }
         ]);
-        return extractJSON(result.response.text());
+        const questions = extractJSON(result.response.text());
+        logger.info('ai:generate', { type: 'image', count: questions?.length || 0 });
+        return questions;
     } catch (error) { return null; }
 }
 
@@ -98,7 +103,9 @@ async function generateAdaptiveQuiz(subject, mistakes, count) { // <-- count qo'
         Struktura: [{"question": "Yangi savol?", "options": ["A", "B", "C", "D"], "correct_index": 0}]`;
 
         const result = await model.generateContent(prompt);
-        return extractJSON(result.response.text());
+        const questions = extractJSON(result.response.text());
+        logger.info('ai:generate', { type: 'adaptive', count: questions?.length || 0 });
+        return questions;
     } catch (error) { return null; }
 }
 

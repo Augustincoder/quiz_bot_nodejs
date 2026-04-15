@@ -37,6 +37,7 @@ function questionsSummaryKb() {
     [Markup.button.callback("👁 Savollarni ko'rib chiqish", "preview_q_0")],
     [Markup.button.callback("✅ Yakunlash va Saqlash", "finish_test_creation")],
     [Markup.button.callback("❌ Bekor qilish", "cancel_creation")],
+    [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
   ]);
 }
 
@@ -178,7 +179,7 @@ async function cbCreateTest(ctx) {
 
   await safeEdit(
     ctx,
-    "📝 *Test Yaratish*\n\nO'z testlaringizni yarating va do'stlaringiz bilan ulashing!",
+    "✏️ *Test Yaratish*\n\nO'z testingizni yarating — matn, Word fayl yoki AI yordamida. Tayyor bo'lgach, do'stlaringizga havola ulashing!",
     Markup.inlineKeyboard(buttons),
   );
 }
@@ -814,6 +815,7 @@ async function cbManageTest(ctx) {
       [Markup.button.callback("✏️ Tahrirlash", `edit_test_${testId}`)],
       [Markup.button.callback("🗑 Blokni o'chirish", `delete_test_${testId}`)],
       [Markup.button.callback("🔙 Fanga qaytish", `manage_subj_${testId}`)],
+      [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
     ]),
   );
 }

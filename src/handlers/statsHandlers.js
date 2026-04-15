@@ -7,6 +7,7 @@ const {
   backToMainKb,
   progressBar,
   escapeHtml,
+  safeAnswerCb,
 } = require("../core/utils");
 
 const ITEMS_PER_PAGE = 5;
@@ -59,7 +60,7 @@ async function cbStatsMenu(ctx) {
 // ─── 2. LEADERBOARD ──────────────────────────────────────────
 
 async function cbLeaderboard(ctx) {
-  await ctx.answerCbQuery("🏆 Top-10 yuklanmoqda...").catch(() => {}).catch(() => {}  );
+  await safeAnswerCb(ctx, "🏆 Top-10 yuklanmoqda...");
   try {
     const [topUsers, allUsers] = await Promise.all([
       dbService.getTopUsers(10),
@@ -93,7 +94,10 @@ async function cbLeaderboard(ctx) {
       {
         parse_mode: "HTML",
         ...Markup.inlineKeyboard([
-          [Markup.button.callback("🔙 Orqaga", "stats_menu")],
+          [
+            Markup.button.callback("🔙 Orqaga", "stats_menu"),
+            Markup.button.callback("🏠 Asosiy Menyu", "back_to_main"),
+          ],
         ]),
       },
     );
@@ -167,7 +171,10 @@ async function cbHistoryPage(ctx) {
 
     const buttons = [];
     if (navRow.length > 1) buttons.push(navRow);
-    buttons.push([Markup.button.callback("🔙 Orqaga", "stats_menu")]);
+    buttons.push([
+      Markup.button.callback("🔙 Orqaga", "stats_menu"),
+      Markup.button.callback("🏠 Asosiy Menyu", "back_to_main"),
+    ]);
 
     await safeEdit(
       ctx,

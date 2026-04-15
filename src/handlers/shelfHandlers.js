@@ -7,9 +7,11 @@ const {
   clearState,
   safeEdit,
   backToMainKb,
+  safeAnswerCb,
 } = require("../core/utils");
 const { Markup } = require("telegraf");
 const { pendingShelfSaves } = require("../core/pendingStore");
+const logger = require("../core/logger");
 // ==========================================
 // 1. JAVONGA SAQLASH (SAVE) MANTIQI
 // ==========================================
@@ -44,7 +46,10 @@ async function cbShelfSaveInit(ctx) {
     buttons.push([
       Markup.button.callback("➕ Yangi papka yaratish", "sh_new_folder"),
     ]);
-    buttons.push([Markup.button.callback("❌ Bekor qilish", "sh_cancel")]);
+    buttons.push([
+      Markup.button.callback("❌ Bekor qilish", "sh_cancel"),
+      Markup.button.callback("🏠 Asosiy Menyu", "back_to_main"),
+    ]);
 
     const text = `📥 *Javonga saqlash*
 
@@ -158,6 +163,7 @@ async function executeSave(ctx, folderName, msgId) {
         .catch(() => {});
     } else if (result === "saved") {
       pendingShelfSaves.delete(chatId);
+      logger.info('shelf:save', { userId: ctx.from.id, folder: folderName });
       await ctx.telegram
         .editMessageText(
           chatId,
@@ -281,7 +287,10 @@ async function cbOpenFolder(ctx) {
         `sh_del_folder_${folderName}`,
       ),
     ]);
-    buttons.push([Markup.button.callback("🔙 Orqaga", "my_shelf")]);
+    buttons.push([
+      Markup.button.callback("🔙 Orqaga", "my_shelf"),
+      Markup.button.callback("🏠 Asosiy Menyu", "back_to_main"),
+    ]);
 
     await safeEdit(ctx, `📁 *Papka:* ${folderName}\n\nSaqlangan testlar:`, {
       parse_mode: "Markdown",

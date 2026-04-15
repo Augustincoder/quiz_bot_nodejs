@@ -5,29 +5,28 @@ const express = require("express");
 const cron = require("node-cron");
 const fs = require("fs");
 const path = require("path");
-//redis connection
+
+// ─── Redis Connection ────────────────────────────────────────
 const redisConnection = require("./src/services/redisService");
-// sentry
+
+// ─── Sentry ──────────────────────────────────────────────────
 const Sentry = require("@sentry/node");
 const { nodeProfilingIntegration } = require("@sentry/profiling-node");
 const logger = require("./src/core/logger");
 
-// 1. Sentry init qismiga ushbu qatorni qo'shing:
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
   integrations: [nodeProfilingIntegration()],
   tracesSampleRate: 1.0,
   profilesSampleRate: 1.0,
-  environment: process.env.NODE_ENV || "production", // Qaysi muhitdaligini bilish uchun
+  environment: process.env.NODE_ENV || "production",
 });
 
-// 2. Bot catch qismini aqlli filterga o'tkazing:
-
-// 3. ENNG MUHIMI: Uncaught xatolarda Sentry jo'natishga ulgurishi uchun vaqt berish
+// ─── Unhandled Error Safety Net ──────────────────────────────
 process.on("unhandledRejection", async (reason, promise) => {
   console.error("Unhandled Rejection:", reason);
   Sentry.captureException(reason);
-  await Sentry.flush(2000); // Server o'chishidan oldin Sentry'ga yetib borishini kutish
+  await Sentry.flush(2000);
 });
 
 process.on("uncaughtException", async (err) => {
@@ -36,12 +35,13 @@ process.on("uncaughtException", async (err) => {
   await Sentry.flush(2000);
   process.exit(1);
 });
-// redis va BullMQ
-const { broadcastQueue } = require("./src/jobs/queues");
+
+// ─── BullMQ ──────────────────────────────────────────────────
+const { broadcastQueue, quizTimerQueue } = require("./src/jobs/queues");
 const initWorkers = require("./src/jobs/workers");
-// redis session service
+
+// ─── Session & Services ─────────────────────────────────────
 const sessionService = require("./src/services/sessionService");
-// ─── Infratuzilma va Xizmatlar ───────────────────────────────
 const { BOT_TOKEN, DATA_DIR, SUBJECTS } = require("./src/config/config");
 const storage = require("./src/core/storage");
 const botModule = require("./src/core/bot");
@@ -49,8 +49,9 @@ const dbService = require("./src/services/dbService");
 const scheduleService = require("./src/services/scheduleService");
 const { setMemoryDb } = require("./src/keyboards/keyboards");
 const { States, getState, userNameCache } = require("./src/core/utils");
+const { rateLimiterMiddleware } = require("./src/core/rateLimiter");
 
-// ─── Boshqaruvchilar (Handlers) ──────────────────────────────
+// ─── Handlers ────────────────────────────────────────────────
 const startHandler = require("./src/handlers/startHandler");
 const profileHandler = require("./src/handlers/profileHandler");
 const scheduleHandler = require("./src/handlers/scheduleHandler");
@@ -61,16 +62,21 @@ const quizGame = require("./src/handlers/quizGame");
 const aiHandlers = require("./src/handlers/aiHandlers");
 const shelfHandlers = require("./src/handlers/shelfHandlers");
 const aiTestsHandlers = require("./src/handlers/aiTestsHandlers");
-
-// index.js faylida
 const contactAdmin = require("./src/handlers/contactAdmin");
-// ─── Botni ishga tushirish ───────────────────────────────────
+
+// ─── Bot Instance ────────────────────────────────────────────
 const bot = new Telegraf(BOT_TOKEN);
 
-// ─── Redis Session Middleware ───
-// index.js
+// ─── Store workers ref for graceful shutdown ─────────────────
+let _workers = null;
+
+// ═══ MIDDLEWARE STACK ═════════════════════════════════════════
+
+// 1. Rate Limiter (fires FIRST — blocks spammers before Redis session read)
+bot.use(rateLimiterMiddleware());
+
+// 2. Redis Session Middleware
 bot.use(async (ctx, next) => {
-  // 1. Session umuman talab qilinmaydigan update'larni filtrlaymiz (Redis'ga bormaydi)
   const ignoredUpdates = [
     "poll_answer",
     "poll",
@@ -84,46 +90,55 @@ bot.use(async (ctx, next) => {
   const key = `tg_session:${ctx.from?.id || ctx.chat?.id || "unknown"}`;
 
   try {
-    // 2. Redisdan o'qiymiz
     const sessionData = await redisConnection.get(key);
     const originalSessionStr = sessionData || '{"state":null,"data":{}}';
     ctx.session = JSON.parse(originalSessionStr);
 
-    await next(); // Keyingi funksiyalar (handlerlar) ishlashi
+    await next();
 
-    // 3. FAQA T O'ZGARISH BO'LSA saqlaymiz! (Buyruqlar sonini keskin kamaytiradi)
     const newSessionStr = JSON.stringify(ctx.session);
     if (originalSessionStr !== newSessionStr) {
       await redisConnection.set(key, newSessionStr, "EX", 86400);
     }
   } catch (err) {
-    console.error("Session Redis xatosi:", err);
+    logger.error("Session Redis xatosi:", { error: err.message });
     ctx.session = { state: null, data: {} };
     await next();
   }
 });
+
+// ═══ GLOBAL ERROR HANDLER (Single, Unified) ══════════════════
 bot.catch((err, ctx) => {
   const errMsg = err.message || "";
 
-  // E'tiborga olinmaydigan "bezor" Telegram xatolari (Sentry'ni to'ldirib tashlamasligi uchun)
+  // Benign Telegram errors — don't pollute Sentry
   if (
     errMsg.includes("bot was blocked by the user") ||
     errMsg.includes("message is not modified") ||
     errMsg.includes("message to edit not found") ||
-    errMsg.includes("query is too old")
+    errMsg.includes("query is too old") ||
+    errMsg.includes("Too Many Requests")
   ) {
-    return; // E'tiborsiz qoldiramiz, bu normal holat
+    return;
   }
 
+  // Send to Sentry with full context
   Sentry.withScope((scope) => {
     scope.setUser({ id: ctx?.from?.id, username: ctx?.from?.username });
-    scope.setContext("telegram", { updateType: ctx?.updateType });
+    scope.setContext("telegram", {
+      updateType: ctx?.updateType,
+      chatId: ctx?.chat?.id,
+      callbackData: ctx?.callbackQuery?.data,
+    });
     Sentry.captureException(err);
   });
 
-  logger.error(`Bot xatosi: ${errMsg}`);
+  logger.error(`Bot xatosi [${ctx?.updateType}]: ${errMsg}`, {
+    stack: err.stack,
+  });
 });
-// ─── Handlerlarni ulash ──────────────────────────────────────
+
+// ═══ REGISTER HANDLERS ═══════════════════════════════════════
 startHandler.register(bot);
 profileHandler.register(bot);
 scheduleHandler.register(bot);
@@ -135,12 +150,13 @@ aiHandlers.register(bot);
 shelfHandlers.register(bot);
 aiTestsHandlers.register(bot);
 contactAdmin.register(bot);
+
 // Bot komandalarini ulash
 bot.command("start", (ctx) => startHandler.cbStart(ctx));
 bot.command("profile", (ctx) => profileHandler.cbProfile(ctx));
 bot.command("schedule", (ctx) => scheduleHandler.cbSchedule(ctx));
 
-// ─── Global Matnli Xabarlar (State Router) ───────────────────
+// ═══ GLOBAL TEXT STATE ROUTER ════════════════════════════════
 bot.on("message", async (ctx, next) => {
   const state = getState(ctx);
   if (!state) return next();
@@ -155,8 +171,6 @@ bot.on("message", async (ctx, next) => {
     if (ctx.message.document) return testCreation.onDocxFile(ctx);
     return testCreation.onQuestionMessage(ctx);
   }
-
-  // SHU QATORNI QO'SHING:
   if (state === States.CREATE_AI_IMAGE) {
     if (ctx.message.photo) return testCreation.onAiImageInput(ctx);
   }
@@ -179,7 +193,6 @@ bot.on("message", async (ctx, next) => {
     if (ctx.message.document) return adminHandlers.onAdmDocxContent(ctx);
     if (ctx.message.text) return adminHandlers.onAdmTextContent(ctx);
   }
-
   if (state === States.ADMIN_BROADCAST) {
     if (ctx.message.text) return adminHandlers.onBroadcastMessage(ctx);
   }
@@ -197,29 +210,55 @@ bot.on("poll_answer", async (ctx) => {
   await quizGame.handlePollAnswer(ctx.pollAnswer, ctx.telegram);
 });
 
-bot.catch((err, ctx) => {
-  // Xatoni Sentry orqali telefoningizga jo'natadi
-  Sentry.withScope((scope) => {
-    scope.setUser({ id: ctx?.from?.id, username: ctx?.from?.username });
-    scope.setContext("telegram", {
-      updateType: ctx?.updateType,
-      chatId: ctx?.chat?.id,
-      callbackData: ctx?.callbackQuery?.data,
-    });
-    Sentry.captureException(err);
-  });
+// ═══ GRACEFUL SHUTDOWN ═══════════════════════════════════════
+let _isShuttingDown = false;
 
-  // Xatoni serverdagi logs/error.log fayliga chiroyli qilib yozadi
-  logger.error(`Bot xatosi [${ctx?.updateType}]: ${err.message}`, {
-    stack: err.stack,
-  });
-});
+async function gracefulShutdown(signal) {
+  if (_isShuttingDown) return;
+  _isShuttingDown = true;
+  logger.info(`⚡ ${signal} received — graceful shutdown started`);
 
-// ─── Asosiy ishga tushirish funksiyasi ───────────────────────
+  try {
+    // 1. Stop accepting new updates
+    bot.stop(signal);
+
+    // 2. Pause BullMQ queues
+    await broadcastQueue.pause().catch(() => {});
+    await quizTimerQueue.pause().catch(() => {});
+    logger.info('📦 BullMQ queues paused');
+
+    // 3. Close workers
+    if (_workers) {
+      if (_workers.broadcastWorker) await _workers.broadcastWorker.close().catch(() => {});
+      if (_workers.quizTimerWorker) await _workers.quizTimerWorker.close().catch(() => {});
+      logger.info('👷 BullMQ workers closed');
+    }
+
+    // 4. Flush Sentry
+    await Sentry.flush(3000).catch(() => {});
+    logger.info('📡 Sentry flushed');
+
+    // 5. Close Redis
+    await redisConnection.quit().catch(() => {});
+    logger.info('🔌 Redis connection closed');
+
+    logger.info('✅ Graceful shutdown completed');
+  } catch (err) {
+    logger.error('Shutdown error:', { error: err.message });
+  } finally {
+    process.exit(0);
+  }
+}
+
+process.once("SIGINT", () => gracefulShutdown("SIGINT"));
+process.once("SIGTERM", () => gracefulShutdown("SIGTERM"));
+
+// ═══ MAIN STARTUP ════════════════════════════════════════════
 async function main() {
   console.log("📦 Testlar yuklanmoqda...");
   botModule.memoryDb = storage.initStorage();
-  initWorkers(bot, scheduleService);
+  _workers = initWorkers(bot, scheduleService);
+
   // 1. Supabase'dan testlarni yuklash
   try {
     const dbTests = await dbService.loadAllOfficialTests();
@@ -232,7 +271,7 @@ async function main() {
     console.warn("⚠️ Supabase testlari yuklanmadi:", e.message);
   }
 
-  // 2. Local JSON papkadagi testlarni yuklash (Eski testlarni yo'qotmaslik uchun)
+  // 2. Local JSON papkadagi testlarni yuklash
   try {
     for (const subj of Object.keys(SUBJECTS)) {
       const subjDir = path.join(DATA_DIR, subj);
@@ -251,7 +290,6 @@ async function main() {
             fs.readFileSync(path.join(subjDir, file), "utf8"),
           );
 
-          // Agar bu test Supabase'dan kelmagan bo'lsa, xotiraga qo'shamiz
           if (!botModule.memoryDb[subj][testId]) {
             botModule.memoryDb[subj][testId] = {
               test_id: testId,
@@ -290,7 +328,6 @@ async function main() {
     console.log(`🌐 Web server ishga tushdi (Port: ${port})`),
   );
 
-  // Avtomatik Dars Jadvali tarqatish
   // Avtomatik Dars Jadvali tarqatish (Xavfsiz Navbat orqali)
   cron.schedule(
     "30 07 * * 1-6",
@@ -308,7 +345,6 @@ async function main() {
         const dayOfWeek = (date.getDay() + 6) % 7;
         if (dayOfWeek === 6) return;
 
-        // Hamma foydalanuvchini BullMQ navbatiga tashlaymiz
         const jobs = users
           .filter((u) => u.class_name)
           .map((user) => ({
@@ -319,9 +355,9 @@ async function main() {
               dayOfWeek,
             },
             opts: {
-              attempts: 3, // Agar xato qilsa 3 marta qayta urinib ko'radi
+              attempts: 3,
               backoff: { type: "exponential", delay: 5000 },
-              removeOnComplete: true, // Xotirani tozalash uchun
+              removeOnComplete: true,
               removeOnFail: false,
             },
           }));
@@ -341,6 +377,7 @@ async function main() {
 
   // Botni yurgizish
   await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+  logger.info("🤖 Bot ishga tushdi", { timestamp: new Date().toISOString() });
   console.log("🤖 Bot ishga tushdi...");
   await bot.launch();
 }
@@ -349,6 +386,3 @@ main().catch((err) => {
   console.error("Ishga tushishda xato:", err);
   process.exit(1);
 });
-
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));

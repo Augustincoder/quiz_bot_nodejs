@@ -4,8 +4,9 @@ const { Markup } = require('telegraf');
 const dbService = require('../services/dbService');
 const scheduleService = require('../services/scheduleService');
 const { getTimetableKeyboard } = require('../keyboards/keyboards');
+const { TTLMap } = require('../core/utils');
 
-const roomsPaginationCache = new Map();
+const roomsPaginationCache = new TTLMap(5 * 60 * 1000); // 5-minute TTL
 
 const PARA_KB = Markup.inlineKeyboard([
   [Markup.button.callback('1-para  08:30–09:50', 'bosh_1'), Markup.button.callback('2-para  10:00–11:20', 'bosh_2')],

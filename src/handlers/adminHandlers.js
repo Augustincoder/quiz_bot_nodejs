@@ -6,22 +6,15 @@ const { Markup } = require('telegraf');
 
 const { ADMIN_ID, SUBJECTS }  = require('../config/config');
 const dbService                = require('../services/dbService');
+const logger                   = require('../core/logger');
 const {
   States, setState, clearState, updateData, getData, getState,
   safeEdit, backToMainKb, progressBar, parseSuffix,
   parseDocxQuestions, parseTextQuestions, escapeHtml, sanitizeForTelegram,
+  isAdmin, adminGuard, safeAnswerCb, downloadFile,
 } = require('../core/utils');
 
 const PER_PAGE = 15;
-
-function isAdmin(userId) { return userId === ADMIN_ID; }
-
-function adminGuard(fn) {
-  return async (ctx, ...args) => {
-    if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('⛔ Ruxsat yo\'q!', { show_alert: true }).catch(() => {});
-    return fn(ctx, ...args);
-  };
-}
 
 // ─── PANEL ───────────────────────────────────────────────────
 
@@ -263,6 +256,7 @@ async function cbBroadcastConfirm(ctx) {
       await new Promise(r => setTimeout(r, 500));
     }
 
+    logger.info('admin:broadcast', { count: ok, total: users.length });
     await safeEdit(ctx,
       `✅ <b>Yakunlandi!</b>\n\n` +
       `🟢 Yetib bordi: <b>${ok} ta</b>\n` +
@@ -304,9 +298,22 @@ async function onReplyMessage(ctx) {
   const targetUserId = parseInt(data.target_id, 10);
   const targetMsgId  = data.target_msg_id ? parseInt(data.target_msg_id, 10) : null;
 
+  // Telemetry
+  logger.info('admin:reply', { targetUserId });
+
   try {
-    // "Admindan javob:" belgisini foydalanuvchining ASAL murojaatiga reply qilib yuboramiz
-    await ctx.telegram.sendMessage(targetUserId, `👨‍💻 <b>Admindan javob:</b>`, {
+    // ─── Threaded Reply UI ─────────────────────────────
+    const adminText = ctx.message.text || '';
+
+    // Build the threaded reply card for the user
+    const replyCard =
+      `📩 <b>Admindan Javob</b>\n` +
+      `━━━━━━━━━━━━━━━━\n\n` +
+      `${escapeHtml(adminText)}\n\n` +
+      `━━━━━━━━━━━━━━━━\n` +
+      `📨 <i>Yana savol bormi? Quyidagi tugmani bosing.</i>`;
+
+    await ctx.telegram.sendMessage(targetUserId, replyCard, {
       parse_mode: 'HTML',
       ...(targetMsgId ? {
         reply_parameters: {
@@ -314,18 +321,23 @@ async function onReplyMessage(ctx) {
           allow_sending_without_reply: true,
         }
       } : {}),
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('📞 Yana yozish', 'contact_admin')],
+        [Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')],
+      ]),
     });
 
-    // Admin xabarini (matn, media, ovoz — nima bo'lsa) nusxalaymiz
-    await ctx.telegram.copyMessage(targetUserId, ctx.chat.id, ctx.message.message_id);
+    // If admin sent media (not just text), copy the media too
+    if (!ctx.message.text && (ctx.message.photo || ctx.message.video || ctx.message.voice || ctx.message.document)) {
+      await ctx.telegram.copyMessage(targetUserId, ctx.chat.id, ctx.message.message_id);
+    }
 
     await ctx.reply('✅ Javob yuborildi.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Admin panel', 'admin_panel_main')]]));
   } catch (e) {
     console.error('onReplyMessage error:', e.message);
-    // Fallback: foydalanuvchi asl xabarini o'chirgan bo'lsa
     try {
       await ctx.telegram.copyMessage(targetUserId, ctx.chat.id, ctx.message.message_id);
-      await ctx.reply('✅ Javob yuborildi (reply bo\'lmadi — foydalanuvchi asl xabarini o\'chirgan).', Markup.inlineKeyboard([[Markup.button.callback('🔙 Admin panel', 'admin_panel_main')]]));
+      await ctx.reply('✅ Javob yuborildi (reply bo\'lmadi).', Markup.inlineKeyboard([[Markup.button.callback('🔙 Admin panel', 'admin_panel_main')]]));
     } catch {
       await ctx.reply("❌ Foydalanuvchiga xabar yuborib bo'lmadi — botni bloklagan bo'lishi mumkin.", Markup.inlineKeyboard([[Markup.button.callback('🔙 Admin panel', 'admin_panel_main')]]));
     }

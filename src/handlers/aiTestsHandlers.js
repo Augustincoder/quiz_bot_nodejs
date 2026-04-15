@@ -4,16 +4,7 @@ const { Markup } = require('telegraf');
 const aiService = require('../services/aiService');
 const dbService = require('../services/dbService');
 const { ADMIN_ID, SUBJECTS } = require('../config/config');
-const { States, setState, clearState, updateData, getData, getState, safeEdit, backToMainKb, escapeHtml, sanitizeForTelegram } = require('../core/utils');
-
-function isAdmin(userId) { return userId === ADMIN_ID; }
-
-function adminGuard(fn) {
-  return async (ctx, ...args) => {
-    if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('⛔ Ruxsat yo\'q!', { show_alert: true }).catch(() => {});
-    return fn(ctx, ...args);
-  };
-}
+const { States, setState, clearState, updateData, getData, getState, safeEdit, backToMainKb, escapeHtml, sanitizeForTelegram, isAdmin, adminGuard, parseSuffix, safeAnswerCb } = require('../core/utils');
 
 // ─── AI TESTS MENU ─────────────────────────────────────────────
 async function cbAdminAiTests(ctx) {
@@ -334,7 +325,7 @@ async function cbAiTestsRegenerate(ctx) {
   const type = data.ai_test_type;
   
   if (!subject || !type) {
-    return ctx.answerCbQuery('❌ Ma\'lumotlar yetishmaydi!', { show_alert: true }).catch(() => {}).catch(() => {});
+    return safeAnswerCb(ctx, '❌ Ma\'lumotlar yetishmaydi!', { show_alert: true });
   }
   
   const status = await ctx.reply("⏳ <b>AI test qayta yaratilmoqda...</b>", { parse_mode: 'HTML' });
@@ -382,10 +373,7 @@ async function cbAiTestsRegenerate(ctx) {
   }
 }
 
-// ─── HELPERS ───────────────────────────────────────────────────
-function parseSuffix(data, prefix) {
-  return data.startsWith(prefix) ? data.slice(prefix.length) : null;
-}
+// parseSuffix is imported from core/utils
 
 // ─── REGISTER ──────────────────────────────────────────────────
 function register(bot) {

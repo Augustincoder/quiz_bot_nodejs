@@ -237,9 +237,32 @@ async function saveTestToShelf(userId, folderName, testInfo) {
     }
 }
 
+// ==========================================
+// BAN FOYDALANUVCHI
+// ==========================================
+async function banUser(userId) {
+  try {
+    const { error } = await supabase.from('users').update({ is_banned: true }).eq('telegram_id', String(userId));
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    console.error('banUser xatosi:', e.message);
+    return false;
+  }
+}
+
+async function isUserBanned(userId) {
+  try {
+    const { data } = await supabase.from('users').select('is_banned').eq('telegram_id', String(userId)).single();
+    return data?.is_banned === true;
+  } catch {
+    return false;
+  }
+}
 
 module.exports = {
   loadAllOfficialTests, saveOfficialTest, getUserStats, updateUserStats, getUserRank,
   registerUser, getAllUsers, getTopUsers, saveUserTest, getUserTest, getUserCreatedTests,
-  deleteUserTest, updateUserClass, getUserClass, updateUserTestQuestions, getUserShelf, saveTestToShelf, updateUserShelf
+  deleteUserTest, updateUserClass, getUserClass, updateUserTestQuestions, getUserShelf, saveTestToShelf, updateUserShelf,
+  banUser, isUserBanned,
 };

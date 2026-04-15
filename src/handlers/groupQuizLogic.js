@@ -6,6 +6,7 @@ const { SUBJECTS }          = require('../config/config');
 const { prepareShuffledQuestions } = require('../core/questionUtils');
 const { safeDelete, backToMainKb } = require('../core/utils');
 const { sendNextQuestion }  = require('./coreQuiz');
+const logger                = require('../core/logger');
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
@@ -27,6 +28,15 @@ async function initAndStartTest(chatId, telegram, subjectKey, testId, testData, 
       groupScores:       {},
       finished:          false,
       status:            'preparing',
+    });
+
+    // Telemetry
+    logger.info('test:start', {
+      chatId,
+      subject: subjectKey,
+      testId,
+      type: chatType,
+      questionCount: sessionQ.length,
     });
 
     const tLabel = testId === 'mock' ? 'Aralash Test' : `${testId}-Blok`;
@@ -97,7 +107,7 @@ async function cbRoomStart(ctx) {
     if (!room) return;
 
     if (ctx.from.id !== room.initiatorId) {
-      return ctx.answerCbQuery('⚠️ Faqat testni boshlagan kishi ishga tushira oladi!', { show_alert: true }).catch(() => {})  ;
+      return ctx.answerCbQuery('⚠️ Faqat testni boshlagan kishi ishga tushira oladi!', { show_alert: true }).catch(() => {});
     }
     if (room.readyUsers.size < 2) {
       return ctx.answerCbQuery("⚠️ Kamida 2 kishi tayyor bo'lishi kerak!", { show_alert: true }).catch(() => {});
@@ -125,6 +135,16 @@ async function cbRoomStart(ctx) {
       groupScores:       {},
       finished:          false,
       status:            'running',
+    });
+
+    // Telemetry
+    logger.info('test:start', {
+      chatId,
+      subject: room.subjectKey,
+      testId: room.testId,
+      type: 'group',
+      participants: room.readyUsers.size,
+      questionCount: sessionQ.length,
     });
 
     const msg = await ctx.telegram.sendMessage(

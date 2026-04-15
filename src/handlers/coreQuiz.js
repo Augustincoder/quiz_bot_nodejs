@@ -5,6 +5,7 @@ const mutex = require("../core/mutex");
 const { SUBJECTS } = require("../config/config");
 const dbService = require("../services/dbService");
 const sessionService = require("../services/sessionService");
+const logger = require("../core/logger");
 const {
   userNameCache,
   safePercent,
@@ -14,9 +15,41 @@ const {
 const redisConnection = require("../services/redisService");
 const { pendingShelfSaves } = require("../core/pendingStore");
 
+// ─── TTL-Wrapped In-Memory Caches (Prevent memory leaks) ────
+// Each entry stores { data, ts }. A cleanup interval purges stale entries.
 const groupTestCache = new Map();
 const activePollsCache = new Map();
 
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const CACHE_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+function setCacheEntry(cache, key, data) {
+  cache.set(key, { data, ts: Date.now() });
+}
+
+function getCacheEntry(cache, key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > CACHE_TTL_MS) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+// Periodic cleanup of stale entries
+const cleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of groupTestCache) {
+    if (now - v.ts > CACHE_TTL_MS) groupTestCache.delete(k);
+  }
+  for (const [k, v] of activePollsCache) {
+    if (now - v.ts > CACHE_TTL_MS) activePollsCache.delete(k);
+  }
+}, CACHE_CLEANUP_INTERVAL_MS);
+cleanupTimer.unref(); // Don't prevent Node.js from exiting
+
+// ─── Redis-backed Mistakes Cache ─────────────────────────────
 const lastMistakesCache = {
   set: async (chatId, mistakes) => {
     if (!mistakes || mistakes.length === 0) return;
@@ -130,13 +163,13 @@ async function sendNextQuestion(chatId, telegram) {
     session.msgId = msg.message_id;
 
     if (session.chatType !== "private") {
-      activePollsCache.set(msg.poll.id, {
+      setCacheEntry(activePollsCache, msg.poll.id, {
         chatId: chatId,
         correct_index: q.correct_index,
         qData: q,
       });
-      if (!groupTestCache.has(chatId)) {
-        groupTestCache.set(chatId, { scores: session.groupScores || {} });
+      if (!getCacheEntry(groupTestCache, chatId)) {
+        setCacheEntry(groupTestCache, chatId, { scores: session.groupScores || {} });
       }
     }
 
@@ -165,9 +198,9 @@ async function finishTest(chatId, telegram) {
   activePollsCache.delete(session.pollId);
 
   if (session.chatType !== "private") {
-    const groupData = groupTestCache.get(chatId);
-    if (groupData) {
-      session.groupScores = groupData.scores;
+    const groupEntry = getCacheEntry(groupTestCache, chatId);
+    if (groupEntry) {
+      session.groupScores = groupEntry.scores;
       groupTestCache.delete(chatId);
     }
   }
@@ -200,6 +233,17 @@ async function finishTest(chatId, telegram) {
       const total = session.correct + session.wrong;
       const skipped = session.sessionQuestions.length - total;
       const pct = safePercent(session.correct, total);
+
+      // Telemetry
+      logger.info('test:finish', {
+        chatId,
+        subject: session.subjectKey,
+        testId: tId,
+        correct: session.correct,
+        wrong: session.wrong,
+        percent: pct,
+        elapsed,
+      });
 
       text =
         `🏁 <b>Test Yakunlandi!</b>\n\n` +
@@ -287,8 +331,9 @@ async function finishTest(chatId, telegram) {
 async function handlePollAnswer(pollAnswer, telegram) {
   const pollId = pollAnswer.poll_id;
 
-  if (activePollsCache.has(pollId)) {
-    const { chatId, correct_index, qData } = activePollsCache.get(pollId);
+  const cachedPoll = getCacheEntry(activePollsCache, pollId);
+  if (cachedPoll) {
+    const { chatId, correct_index, qData } = cachedPoll;
     const isCorrect = pollAnswer.option_ids[0] === correct_index;
 
     const uId = pollAnswer.user.id;
@@ -298,14 +343,14 @@ async function handlePollAnswer(pollAnswer, telegram) {
         .join(" ") || "Talaba";
     userNameCache.set(uId, uName);
 
-    let groupData = groupTestCache.get(chatId);
-    if (!groupData) {
-      groupData = { scores: {} };
-      groupTestCache.set(chatId, groupData);
+    let groupEntry = getCacheEntry(groupTestCache, chatId);
+    if (!groupEntry) {
+      groupEntry = { scores: {} };
+      setCacheEntry(groupTestCache, chatId, groupEntry);
     }
 
-    if (!groupData.scores[uId]) {
-      groupData.scores[uId] = {
+    if (!groupEntry.scores[uId]) {
+      groupEntry.scores[uId] = {
         name: uName,
         correct: 0,
         wrong: 0,
@@ -313,7 +358,7 @@ async function handlePollAnswer(pollAnswer, telegram) {
       };
     }
 
-    const sc = groupData.scores[uId];
+    const sc = groupEntry.scores[uId];
     if (isCorrect) {
       sc.correct++;
     } else {

@@ -19,6 +19,7 @@ const {
   backToMainKb,
   parseSuffix,
   escapeHtml,
+  safeAnswerCb,
 } = require("../core/utils");
 
 const {
@@ -43,7 +44,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // ─── OFFICIAL TEST SELECTION ─────────────────────────────────
 
 async function cbOfficialTests(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
+  await safeAnswerCb(ctx);
   const memDb = require("../core/bot").memoryDb;
   const buttons = Object.entries(SUBJECTS).map(([k, v]) => {
     const blocks = memDb[k] || {};
@@ -61,7 +62,7 @@ async function cbOfficialTests(ctx) {
   buttons.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
   await safeEdit(
     ctx,
-    `📚 <b>Rasmiy Testlar</b>\n\nAdmin tomonidan tayyorlangan testlar.\nFan tanlang:`,
+    `📚 <b>Rasmiy Testlar</b>\n\nAdmin tomonidan tayyorlangan rasmiy test bloklari. Fan tanlang va bilimingizni sinab ko'ring!`,
     { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) },
   );
 }
@@ -453,7 +454,10 @@ async function cbReviewMistakes(ctx) {
           "ai_explain_mistakes",
         ),
       ],
-      [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
+      [
+        Markup.button.callback("🔙 Natijaga qaytish", "post_main"),
+        Markup.button.callback("🏠 Asosiy Menyu", "back_to_main"),
+      ],
     ]),
   });
 }
@@ -485,27 +489,18 @@ async function cbAiExplainMistakes(ctx) {
 }
 
 async function cbPostMain(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
-  try {
-    await ctx.editMessageReplyMarkup({});
-  } catch {
-    /* silent */
-  }
-  await ctx.reply("🏛 <b>Asosiy Menyu</b>", {
+  await safeAnswerCb(ctx);
+  await safeEdit(ctx, "🏛 <b>Asosiy Menyu</b>\n\nQuyidagi bo'limlardan birini tanlang:", {
     parse_mode: "HTML",
     ...getMainKeyboard(),
   });
 }
 
 async function cbPostSubj(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
+  await safeAnswerCb(ctx);
   const subjectKey = parseSuffix(ctx.callbackQuery.data, "post_subj_");
-  try {
-    await ctx.editMessageReplyMarkup({});
-  } catch {
-    /* silent */
-  }
-  await ctx.reply(
+  await safeEdit(
+    ctx,
     `📚 <b>${escapeHtml(SUBJECTS[subjectKey] || "Fan")}</b>\n\nBlokni tanlang:`,
     { parse_mode: "HTML", ...getBlocksKeyboard(subjectKey, 0) },
   );
