@@ -706,6 +706,8 @@ async function cbCancelCreation(ctx) {
   await safeEdit(ctx, "❌ Bekor qilindi.", backToMainKb());
 }
 
+// src/handlers/testCreation.js fayli ichida:
+
 async function cbMyTests(ctx) {
   await ctx.answerCbQuery().catch(() => {});
 
@@ -719,10 +721,13 @@ async function cbMyTests(ctx) {
   if (!tests || tests.length === 0) {
     return safeEdit(
       ctx,
-      "📭 Siz hali hech qanday test yaratmagansiz.",
-      Markup.inlineKeyboard([
-        [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
-      ]),
+      "📭 <b>Siz hali hech qanday test yaratmagansiz.</b>\n\nBu bo'limda siz AI yordamida yoki o'zingiz qo'lda yaratgan shaxsiy testlaringiz saqlanadi.",
+      {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
+        ]),
+      },
     );
   }
 
@@ -752,13 +757,15 @@ async function cbMyTests(ctx) {
     );
 
   if (navButtons.length > 0) buttons.push(navButtons);
-  buttons.push([Markup.button.callback("🔙 Orqaga", "create_test")]);
+
+  // ORQAGA tugmasi to'g'ridan-to'g'ri asosiy menyuga qaytadi
+  buttons.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
 
   await safeEdit(
     ctx,
-    `📂 *Mening Testlarim* (Sahifa ${page + 1}/${totalPages}):\n\nJami: ${tests.length} ta test`,
+    `📂 <b>Mening Testlarim</b> (Sahifa ${page + 1}/${totalPages}):\n\nBu yerda o'zingiz yaratgan shaxsiy testlarni boshqarasiz. Ularni tahrirlash yoki do'stlaringizga ulashishingiz mumkin.\n\n📊 Jami: ${tests.length} ta test`,
     {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard(buttons),
     },
   );
