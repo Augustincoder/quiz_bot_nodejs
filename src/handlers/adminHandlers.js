@@ -278,27 +278,57 @@ async function cbBroadcastConfirm(ctx) {
 
 async function cbReplyStart(ctx) {
   await ctx.answerCbQuery();
-  const targetId = parseSuffix(ctx.callbackQuery.data, 'reply_');
-  await updateData(ctx, { target_id: targetId });
+  // callback data: reply_{userId}  yoki  reply_{userId}_{msgId}
+  const parts    = ctx.callbackQuery.data.split('_');
+  const targetId = parts[1];
+  const msgId    = parts[2] || null;   // contactAdmin dan kelsa msg id ham bor
+
+  await updateData(ctx, { target_id: targetId, target_msg_id: msgId });
   setState(ctx, States.ADMIN_REPLY);
   await ctx.reply(
-    '✍️ Foydalanuvchiga javobingizni yozing:',
-    Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'admin_cancel')]]),
+    '✍️ Foydalanuvchiga javobingizni yuboring.\nMatn, rasm, video yoki ovozli xabar bo\'lishi mumkin.',
+    {
+      reply_parameters: {
+        message_id: ctx.callbackQuery.message.message_id,
+        allow_sending_without_reply: true,
+      },
+      ...Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'admin_cancel')]]),
+    },
   );
 }
 
 async function onReplyMessage(ctx) {
   const data = await getData(ctx);
   clearState(ctx);
+
+  const targetUserId = parseInt(data.target_id, 10);
+  const targetMsgId  = data.target_msg_id ? parseInt(data.target_msg_id, 10) : null;
+
   try {
-    await ctx.telegram.sendMessage(
-      parseInt(data.target_id, 10),
-      `📩 <b>Admin javobi:</b>\n\n${escapeHtml(ctx.message.text)}`,
-      { parse_mode: 'HTML' },
-    );
+    // "Admindan javob:" belgisini foydalanuvchining ASAL murojaatiga reply qilib yuboramiz
+    await ctx.telegram.sendMessage(targetUserId, `👨‍💻 <b>Admindan javob:</b>`, {
+      parse_mode: 'HTML',
+      ...(targetMsgId ? {
+        reply_parameters: {
+          message_id: targetMsgId,
+          allow_sending_without_reply: true,
+        }
+      } : {}),
+    });
+
+    // Admin xabarini (matn, media, ovoz — nima bo'lsa) nusxalaymiz
+    await ctx.telegram.copyMessage(targetUserId, ctx.chat.id, ctx.message.message_id);
+
     await ctx.reply('✅ Javob yuborildi.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Admin panel', 'admin_panel_main')]]));
-  } catch {
-    await ctx.reply("❌ Foydalanuvchiga xabar yuborib bo'lmadi.", Markup.inlineKeyboard([[Markup.button.callback('🔙 Admin panel', 'admin_panel_main')]]));
+  } catch (e) {
+    console.error('onReplyMessage error:', e.message);
+    // Fallback: foydalanuvchi asl xabarini o'chirgan bo'lsa
+    try {
+      await ctx.telegram.copyMessage(targetUserId, ctx.chat.id, ctx.message.message_id);
+      await ctx.reply('✅ Javob yuborildi (reply bo\'lmadi — foydalanuvchi asl xabarini o\'chirgan).', Markup.inlineKeyboard([[Markup.button.callback('🔙 Admin panel', 'admin_panel_main')]]));
+    } catch {
+      await ctx.reply("❌ Foydalanuvchiga xabar yuborib bo'lmadi — botni bloklagan bo'lishi mumkin.", Markup.inlineKeyboard([[Markup.button.callback('🔙 Admin panel', 'admin_panel_main')]]));
+    }
   }
 }
 
@@ -475,14 +505,28 @@ async function cbAdmFinish(ctx) {
 
 // ─── USER → ADMIN CONTACT ─────────────────────────────────────
 
-async function cbContactAdmin(ctx) {
-  await ctx.answerCbQuery();
-  setState(ctx, States.USER_CONTACT);
-  await ctx.reply(
-    '💬 <b>Adminga Murojaat</b>\n\nSavol yoki taklifingizni yozing:',
-    { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'cancel_contact')]]) },
-  );
-}
+// Funksiya mantiqi
+// async function cbContactAdmin(ctx) {
+//   await ctx.answerCbQuery().catch(() => {});
+  
+//   const text = `👨‍💻 *Adminga Murojaat*
+
+// Bot ishlashida xatolikka duch keldingizmi yoki o'z takliflaringiz bormi? Biz foydalanuvchilarimizning fikrlarini doim qadrlaymiz!
+
+// 👇 *To'g'ridan-to'g'ri admin bilan bog'lanish uchun quyidagi manzilga yozing:*
+// @AvazovM
+
+// _Xabaringizni iloji boricha batafsil yozib qoldiring, admin imkon qadar tezroq javob beradi._`;
+
+//   // Eski xabarni o'zgartiramiz
+//   const { safeEdit } = require('./src/core/utils'); // Yo'lini o'zingizning papkangizga moslang
+//   await safeEdit(ctx, text, {
+//     parse_mode: 'Markdown',
+//     ...Markup.inlineKeyboard([
+//       [Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')]
+//     ])
+//   });
+// }
 
 async function cbCancelContact(ctx) {
   clearState(ctx);
@@ -532,7 +576,7 @@ function register(bot) {
   bot.action('adm_reset',              adminGuard(cbAdmReset));
   bot.action('adm_finish',             adminGuard(cbAdmFinish));
 
-  bot.action('contact_admin',  cbContactAdmin);
+  // bot.action('contact_admin',  cbContactAdmin);
   bot.action('cancel_contact', cbCancelContact);
   bot.action('ignore', ctx => ctx.answerCbQuery());
 

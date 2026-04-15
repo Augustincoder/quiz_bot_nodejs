@@ -12,23 +12,22 @@ const blocksKbCache = new Map();
 
 function getMainKeyboard() {
   return Markup.inlineKeyboard([
-    // 1-qator: Asosiy o'quv jarayonlari
+    // 1-qator: Eng ko'p ishlatiladigan asosiy funksiyalar (Yonma-yon)
     [
       Markup.button.callback('📚 Rasmiy Testlar', 'official_tests'),
-      Markup.button.callback('🤖 AI Tutor', 'ai_tutor_menu')
+      Markup.button.callback('➕ Test Yaratish', 'create_test')
     ],
-    // 2-qator: Shaxsiy kutubxona va yaratish
+    // 2-qator: Shaxsiy ma'lumotlar
     [
-      Markup.button.callback('📝 Test Yaratish', 'create_test'),
-      Markup.button.callback('📖 Mening Javonim', 'my_shelf')
+      Markup.button.callback('📂 Mening Testlarim', 'my_tests'),
+      Markup.button.callback('📊 Statistika', 'stats_menu')
     ],
-    // 3-qator: Kengaytirilgan statistika
+    // 3-qator: Yordam va Aloqa (Alohida, keng qilib joylashtiramiz)
     [
-      Markup.button.callback('📊 Statistika va Reyting', 'stats_menu')
+      Markup.button.callback('📞 Adminga Murojaat / Yordam', 'contact_admin')
     ]
   ]);
 }
-
 function invalidateBlocksCache(subjectKey = null) {
   if (subjectKey) {
     for (const key of blocksKbCache.keys()) {
