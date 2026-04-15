@@ -76,7 +76,7 @@ Bu bot sizga imtihonlarga tayyorgarlik ko'rishda yordam beradi — AI yordamida 
 
 async function cbBackToMain(ctx) {
   clearState(ctx);
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const firstName = ctx.from.first_name || 'Talaba';
   const welcomeText = `🏛 *Asosiy Menyu* \n\nQuyidagi bo'limlardan birini tanlang, ${firstName}:`;
   await safeEdit(ctx, welcomeText, { parse_mode: 'Markdown', ...getMainKeyboard() });
@@ -136,7 +136,7 @@ function register(bot) {
   bot.command('menu', cmdMenu);
   bot.hears('🔙 Asosiy menyu', cmdBackToMainReply);
   bot.action('back_to_main', cbBackToMain);
-  bot.action('ignore', ctx => ctx.answerCbQuery());
+  bot.action('ignore', ctx => ctx.answerCbQuery()).catch(() => {});
 }
 
 module.exports = { register };

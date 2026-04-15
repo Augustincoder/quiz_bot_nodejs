@@ -52,14 +52,14 @@ async function cbStatsMenu(ctx) {
     );
   } catch (e) {
     console.error("cbStatsMenu error:", e.message);
-    await ctx.answerCbQuery("❌ Xatolik yuz berdi.", { show_alert: true });
+    await ctx.answerCbQuery("❌ Xatolik yuz berdi.", { show_alert: true }).catch(() => {});
   }
 }
 
 // ─── 2. LEADERBOARD ──────────────────────────────────────────
 
 async function cbLeaderboard(ctx) {
-  await ctx.answerCbQuery("🏆 Top-10 yuklanmoqda...").catch(() => {});
+  await ctx.answerCbQuery("🏆 Top-10 yuklanmoqda...").catch(() => {}).catch(() => {}  );
   try {
     const [topUsers, allUsers] = await Promise.all([
       dbService.getTopUsers(10),
@@ -187,7 +187,7 @@ function register(bot) {
   bot.action("stats_menu", cbStatsMenu);
   bot.action("stats_leaderboard", cbLeaderboard);
   bot.action(/^stats_history/, cbHistoryPage);
-  bot.action("ignore", (ctx) => ctx.answerCbQuery());
+  bot.action("ignore", (ctx) => ctx.answerCbQuery()).catch(() => {});
 }
 
 module.exports = { register, cbStatsMenu, cbLeaderboard, cbHistoryPage };

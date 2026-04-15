@@ -12,13 +12,30 @@ const Sentry = require("@sentry/node");
 const { nodeProfilingIntegration } = require("@sentry/profiling-node");
 const logger = require("./src/core/logger");
 
+// 1. Sentry init qismiga ushbu qatorni qo'shing:
 Sentry.init({
-  dsn: process.env.SENTRY_DSN, // Sentry.io dan olingan link
+  dsn: process.env.SENTRY_DSN,
   integrations: [nodeProfilingIntegration()],
   tracesSampleRate: 1.0,
   profilesSampleRate: 1.0,
+  environment: process.env.NODE_ENV || "production", // Qaysi muhitdaligini bilish uchun
 });
 
+// 2. Bot catch qismini aqlli filterga o'tkazing:
+
+// 3. ENNG MUHIMI: Uncaught xatolarda Sentry jo'natishga ulgurishi uchun vaqt berish
+process.on("unhandledRejection", async (reason, promise) => {
+  console.error("Unhandled Rejection:", reason);
+  Sentry.captureException(reason);
+  await Sentry.flush(2000); // Server o'chishidan oldin Sentry'ga yetib borishini kutish
+});
+
+process.on("uncaughtException", async (err) => {
+  console.error("Uncaught Exception:", err);
+  Sentry.captureException(err);
+  await Sentry.flush(2000);
+  process.exit(1);
+});
 // redis va BullMQ
 const { broadcastQueue } = require("./src/jobs/queues");
 const initWorkers = require("./src/jobs/workers");
@@ -46,29 +63,66 @@ const shelfHandlers = require("./src/handlers/shelfHandlers");
 const aiTestsHandlers = require("./src/handlers/aiTestsHandlers");
 
 // index.js faylida
-const contactAdmin = require('./src/handlers/contactAdmin');
+const contactAdmin = require("./src/handlers/contactAdmin");
 // ─── Botni ishga tushirish ───────────────────────────────────
 const bot = new Telegraf(BOT_TOKEN);
 
 // ─── Redis Session Middleware ───
+// index.js
 bot.use(async (ctx, next) => {
+  // 1. Session umuman talab qilinmaydigan update'larni filtrlaymiz (Redis'ga bormaydi)
+  const ignoredUpdates = [
+    "poll_answer",
+    "poll",
+    "my_chat_member",
+    "chat_member",
+  ];
+  if (ignoredUpdates.includes(ctx.updateType)) {
+    return next();
+  }
+
   const key = `tg_session:${ctx.from?.id || ctx.chat?.id || "unknown"}`;
+
   try {
+    // 2. Redisdan o'qiymiz
     const sessionData = await redisConnection.get(key);
-    ctx.session = sessionData
-      ? JSON.parse(sessionData)
-      : { state: null, data: {} };
+    const originalSessionStr = sessionData || '{"state":null,"data":{}}';
+    ctx.session = JSON.parse(originalSessionStr);
 
-    await next(); // Keyingi funksiyalarni ishlatish
+    await next(); // Keyingi funksiyalar (handlerlar) ishlashi
 
-    // Javob berib bo'lgach, sessiyani yana Redis'ga saqlab qo'yamiz (24 soatga)
-    await redisConnection.set(key, JSON.stringify(ctx.session), "EX", 86400);
+    // 3. FAQA T O'ZGARISH BO'LSA saqlaymiz! (Buyruqlar sonini keskin kamaytiradi)
+    const newSessionStr = JSON.stringify(ctx.session);
+    if (originalSessionStr !== newSessionStr) {
+      await redisConnection.set(key, newSessionStr, "EX", 86400);
+    }
   } catch (err) {
     console.error("Session Redis xatosi:", err);
     ctx.session = { state: null, data: {} };
+    await next();
   }
 });
+bot.catch((err, ctx) => {
+  const errMsg = err.message || "";
 
+  // E'tiborga olinmaydigan "bezor" Telegram xatolari (Sentry'ni to'ldirib tashlamasligi uchun)
+  if (
+    errMsg.includes("bot was blocked by the user") ||
+    errMsg.includes("message is not modified") ||
+    errMsg.includes("message to edit not found") ||
+    errMsg.includes("query is too old")
+  ) {
+    return; // E'tiborsiz qoldiramiz, bu normal holat
+  }
+
+  Sentry.withScope((scope) => {
+    scope.setUser({ id: ctx?.from?.id, username: ctx?.from?.username });
+    scope.setContext("telegram", { updateType: ctx?.updateType });
+    Sentry.captureException(err);
+  });
+
+  logger.error(`Bot xatosi: ${errMsg}`);
+});
 // ─── Handlerlarni ulash ──────────────────────────────────────
 startHandler.register(bot);
 profileHandler.register(bot);
@@ -85,18 +139,6 @@ contactAdmin.register(bot);
 bot.command("start", (ctx) => startHandler.cbStart(ctx));
 bot.command("profile", (ctx) => profileHandler.cbProfile(ctx));
 bot.command("schedule", (ctx) => scheduleHandler.cbSchedule(ctx));
-bot.command("stop", async (ctx) => {
-  // YANGILANISH: Redis'dan qidiramiz
-  const existingSession = await sessionService.getActiveTest(
-    ctx.chat?.id || ctx.from?.id,
-  );
-
-  if (!existingSession) {
-    return ctx.reply("⚠️ Faol test yo'q.");
-  }
-
-  await quizGame.cbStopTest(ctx);
-});
 
 // ─── Global Matnli Xabarlar (State Router) ───────────────────
 bot.on("message", async (ctx, next) => {
@@ -114,12 +156,6 @@ bot.on("message", async (ctx, next) => {
     return testCreation.onQuestionMessage(ctx);
   }
 
-  if (state === States.CREATE_AI_TEXT) {
-    if (ctx.message.text) return testCreation.onAiTextInput(ctx);
-  }
-  if (state === States.CREATE_AI_QUESTIONS) {
-    if (ctx.message.text) return testCreation.onAiQuestionsInput(ctx);
-  }
   // SHU QATORNI QO'SHING:
   if (state === States.CREATE_AI_IMAGE) {
     if (ctx.message.photo) return testCreation.onAiImageInput(ctx);

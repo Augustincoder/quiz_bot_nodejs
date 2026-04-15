@@ -69,7 +69,7 @@ async function cmdXonalar(ctx) {
 }
 
 async function cbBoshXona(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => { });
   const periodNum = parseInt(ctx.callbackQuery.data.split('_')[1]);
   const tzDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
   let dayIdx = (tzDate.getDay() + 6) % 7;
@@ -103,7 +103,7 @@ async function cbBoshXona(ctx) {
 }
 
 async function cbRoomPage(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const targetPage = parseInt(ctx.callbackQuery.data.split('_')[1]);
   const pages = roomsPaginationCache.get(ctx.from.id);
   if (!pages?.[targetPage]) return ctx.reply("⚠️ Ma'lumot eskirgan, qaytadan yozing.");
@@ -111,13 +111,13 @@ async function cbRoomPage(ctx) {
 }
 
 async function cbBackToRoomsMenu(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   await ctx.editMessageText('🏢 Qaysi para uchun bo\'sh xonalarni ko\'rmoqchisiz?', PARA_KB);
 }
 
 // FIX #8 (davomi): /hafta xatoligi tugmasidan "Qayta urinish" callback handleri.
 async function cbRetryHafta(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   await ctx.deleteMessage().catch(() => {});
   await cmdHafta(ctx);
 }

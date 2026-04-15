@@ -9,7 +9,7 @@ const { safeEdit, parseSuffix } = require('../core/utils');
 const { initAndStartTest }      = require('./groupQuizLogic');
 
 async function cbAdaptiveTest(ctx) {
-  await ctx.answerCbQuery();
+ await ctx.answerCbQuery().catch(() => {});
   const subjectKey = parseSuffix(ctx.callbackQuery.data, 'adaptive_');
   const subjName   = SUBJECTS[subjectKey] || subjectKey;
 
@@ -57,7 +57,7 @@ async function cbAdaptiveTest(ctx) {
 }
 
 async function cbAdaptiveRun(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const suffix     = parseSuffix(ctx.callbackQuery.data, 'adp_run_');
   const parts      = suffix.split('_');
   const count      = parts.pop();
@@ -67,14 +67,14 @@ async function cbAdaptiveRun(ctx) {
 
   try {
     const existing = await sessionService.getActiveTest(chatId);
-    if (existing) return ctx.answerCbQuery("⚠️ Avvalgi testni to'xtating: /stop", { show_alert: true });
+    if (existing) return ctx.answerCbQuery("⚠️ Avvalgi testni to'xtating: /stop", { show_alert: true }).catch(() => {});
 
     const stats    = await dbService.getUserStats(ctx.from.id);
     const mistakes = (stats.history || [])
       .filter(r => (r.subject === subjectKey || r.subjectKey === subjectKey) && r.mistakes?.length)
       .flatMap(r => r.mistakes);
 
-    if (!mistakes.length) return ctx.answerCbQuery("🎉 Bu fandan xatolar yo'q!", { show_alert: true });
+    if (!mistakes.length) return ctx.answerCbQuery("🎉 Bu fandan xatolar yo'q!", { show_alert: true }).catch(() => {});
 
     const msg = await ctx.reply(
       `⏳ <i>AI "${subjName}" fanidan ${count} ta maxsus savol tuzmoqda...</i>`,

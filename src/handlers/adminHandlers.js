@@ -18,7 +18,7 @@ function isAdmin(userId) { return userId === ADMIN_ID; }
 
 function adminGuard(fn) {
   return async (ctx, ...args) => {
-    if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('⛔ Ruxsat yo\'q!', { show_alert: true });
+    if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('⛔ Ruxsat yo\'q!', { show_alert: true }).catch(() => {});
     return fn(ctx, ...args);
   };
 }
@@ -51,14 +51,14 @@ async function cmdAdmin(ctx) {
 }
 
 async function cbAdminPanelMain(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const { text, kb } = await buildPanelContent();
   await safeEdit(ctx, text, kb);
 }
 
 async function cbAdminCancel(ctx) {
   clearState(ctx);
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const { text, kb } = await buildPanelContent();
   await safeEdit(ctx, text, kb);
 }
@@ -66,7 +66,7 @@ async function cbAdminCancel(ctx) {
 // ─── USERS LIST ──────────────────────────────────────────────
 
 async function cbAdminUsersList(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const page  = parseInt(parseSuffix(ctx.callbackQuery.data, 'admin_users_page_'), 10) || 0;
 
   try {
@@ -96,14 +96,14 @@ async function cbAdminUsersList(ctx) {
     );
   } catch (e) {
     console.error('cbAdminUsersList error:', e.message);
-    await ctx.answerCbQuery('❌ Xatolik yuz berdi.', { show_alert: true });
+    await ctx.answerCbQuery('❌ Xatolik yuz berdi.', { show_alert: true }).catch(() => {});
   }
 }
 
 // ─── USER SEARCH ─────────────────────────────────────────────
 
 async function cbAdminSearchUser(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   setState(ctx, States.ADMIN_SEARCH_USER);
   await safeEdit(ctx,
     '🔍 <b>Foydalanuvchi qidirish</b>\n\nTelegram ID yoki @username yuboring:',
@@ -166,7 +166,7 @@ async function onAdminSearchInput(ctx) {
 // ─── GLOBAL STATS ────────────────────────────────────────────
 
 async function cbAdminStats(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   try {
     const users = await dbService.getAllUsers();
     const count = users?.length ?? 0;
@@ -200,14 +200,14 @@ async function cbAdminStats(ctx) {
     );
   } catch (e) {
     console.error('cbAdminStats error:', e.message);
-    await ctx.answerCbQuery('❌ Xatolik yuz berdi.', { show_alert: true });
+    await ctx.answerCbQuery('❌ Xatolik yuz berdi.', { show_alert: true }).catch(() => {});
   }
 }
 
 // ─── BROADCAST ───────────────────────────────────────────────
 
 async function cbAdminBroadcast(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   setState(ctx, States.ADMIN_BROADCAST);
   await safeEdit(ctx,
     '📢 <b>Ommaviy xabar</b>\n\nBarcha foydalanuvchilarga yuboriladigan matnni yozing:',
@@ -243,7 +243,7 @@ async function onBroadcastMessage(ctx) {
 }
 
 async function cbBroadcastConfirm(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   clearState(ctx);
 
   try {
@@ -277,7 +277,7 @@ async function cbBroadcastConfirm(ctx) {
 // ─── REPLY TO USER ───────────────────────────────────────────
 
 async function cbReplyStart(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   // callback data: reply_{userId}  yoki  reply_{userId}_{msgId}
   const parts    = ctx.callbackQuery.data.split('_');
   const targetId = parts[1];
@@ -358,7 +358,7 @@ async function adminPrompt(ctx, fmt, total, edit = false) {
 }
 
 async function cbAdminAddTest(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const buttons = Object.entries(SUBJECTS).map(([k, v]) => [Markup.button.callback(v, `adm_subj_${k}`)]);
   buttons.push([Markup.button.callback('❌ Bekor qilish', 'admin_cancel')]);
   await safeEdit(ctx, "📂 <b>Rasmiy test qo'shish</b>\n\nQaysi fanga?", { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
@@ -366,7 +366,7 @@ async function cbAdminAddTest(ctx) {
 }
 
 async function cbAdmSubj(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const subj = parseSuffix(ctx.callbackQuery.data, 'adm_subj_');
   await updateData(ctx, { subject: subj });
   setState(ctx, States.ADM_CREATE_TEST_ID);
@@ -395,7 +395,7 @@ async function onAdmTestId(ctx) {
 }
 
 async function cbAdmFmt(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const fmt = parseSuffix(ctx.callbackQuery.data, 'adm_fmt_');
   await updateData(ctx, { format: fmt, questions: [] });
   setState(ctx, States.ADM_CREATE_CONTENT);
@@ -403,7 +403,7 @@ async function cbAdmFmt(ctx) {
 }
 
 async function cbAdmSwitchFmt(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const fmt  = parseSuffix(ctx.callbackQuery.data, 'adm_switch_');
   const data = await getData(ctx);
   await updateData(ctx, { format: fmt });
@@ -413,8 +413,8 @@ async function cbAdmSwitchFmt(ctx) {
 async function cbAdmPreview(ctx) {
   const data      = await getData(ctx);
   const questions = data.questions || [];
-  if (!questions.length) return ctx.answerCbQuery('❌ Hali savol yo\'q!', { show_alert: true });
-  await ctx.answerCbQuery();
+  if (!questions.length) return ctx.answerCbQuery('❌ Hali savol yo\'q!', { show_alert: true }).catch(() => {});
+  await ctx.answerCbQuery().catch(() => {});
 
   const lines = questions.slice(0, 20).map((q, i) =>
     `<b>${i + 1}.</b> ${escapeHtml(q.question)}\n✅ ${escapeHtml(q.options[q.correct_index])}`,
@@ -427,7 +427,7 @@ async function cbAdmPreview(ctx) {
 async function cbAdmReset(ctx) {
   const data = await getData(ctx);
   await updateData(ctx, { questions: [] });
-  await ctx.answerCbQuery("✅ Barcha savollar o'chirildi!", { show_alert: true });
+  await ctx.answerCbQuery("✅ Barcha savollar o'chirildi!", { show_alert: true }).catch(() => {});
   await adminPrompt(ctx, data.format || 'text', 0, true);
 }
 
@@ -479,15 +479,15 @@ async function onAdmDocxContent(ctx) {
 async function cbAdmFinish(ctx) {
   const data      = await getData(ctx);
   const questions = data.questions || [];
-  if (!questions.length) return ctx.answerCbQuery('⚠️ Savol yo\'q!', { show_alert: true });
-  await ctx.answerCbQuery();
+  if (!questions.length) return ctx.answerCbQuery('⚠️ Savol yo\'q!', { show_alert: true }).catch(() => {});
+  await ctx.answerCbQuery().catch(() => {});
 
   const subject = data.subject;
   const testId  = data.test_id;
 
   try {
     const success = await dbService.saveOfficialTest(subject, testId, questions);
-    if (!success) return ctx.answerCbQuery("❌ Supabase'ga saqlashda xatolik.", { show_alert: true });
+    if (!success) return ctx.answerCbQuery("❌ Supabase'ga saqlashda xatolik.", { show_alert: true }).catch(() => {});
 
     await safeEdit(ctx,
       `✅ <b>Rasmiy test saqlandi!</b>\n\n` +
@@ -499,7 +499,7 @@ async function cbAdmFinish(ctx) {
     clearState(ctx);
   } catch (e) {
     console.error('cbAdmFinish error:', e.message);
-    await ctx.answerCbQuery('❌ Xatolik yuz berdi.', { show_alert: true });
+    await ctx.answerCbQuery('❌ Xatolik yuz   berdi.', { show_alert: true }).catch(() => {});
   }
 }
 
@@ -530,7 +530,7 @@ async function cbAdmFinish(ctx) {
 
 async function cbCancelContact(ctx) {
   clearState(ctx);
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   await ctx.reply('❌ Murojaat bekor qilindi.', backToMainKb());
 }
 
@@ -578,7 +578,7 @@ function register(bot) {
 
   // bot.action('contact_admin',  cbContactAdmin);
   bot.action('cancel_contact', cbCancelContact);
-  bot.action('ignore', ctx => ctx.answerCbQuery());
+  bot.action('ignore', ctx => ctx.answerCbQuery().catch(() => {}));
 
   // Wire ADMIN_SEARCH_USER text messages inside register to avoid modifying index.js
   bot.on('message', async (ctx, next) => {

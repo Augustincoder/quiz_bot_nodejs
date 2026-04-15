@@ -10,19 +10,24 @@ function setMemoryDb(db) { _memoryDb = db; }
 
 const blocksKbCache = new Map();
 
+// src/keyboards/keyboards.js
 function getMainKeyboard() {
   return Markup.inlineKeyboard([
-    // 1-qator: Eng ko'p ishlatiladigan asosiy funksiyalar (Yonma-yon)
+    // 1-qator:
     [
       Markup.button.callback('📚 Rasmiy Testlar', 'official_tests'),
       Markup.button.callback('➕ Test Yaratish', 'create_test')
     ],
-    // 2-qator: Shaxsiy ma'lumotlar
+    // 2-qator: AI Tutor va Statistika (yangi o'zgarish)
     [
-      Markup.button.callback('📂 Mening Testlarim', 'my_tests'),
+      Markup.button.callback('🤖 AI Tutor', 'ai_tutor_menu'), // <-- SHU YERGA QO'SHILDI
       Markup.button.callback('📊 Statistika', 'stats_menu')
     ],
-    // 3-qator: Yordam va Aloqa (Alohida, keng qilib joylashtiramiz)
+    // 3-qator: Shaxsiy javon
+    [
+      Markup.button.callback('📂 Mening Testlarim / Javon', 'my_tests')
+    ],
+    // 4-qator:
     [
       Markup.button.callback('📞 Adminga Murojaat / Yordam', 'contact_admin')
     ]

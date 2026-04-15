@@ -43,7 +43,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // ─── OFFICIAL TEST SELECTION ─────────────────────────────────
 
 async function cbOfficialTests(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const memDb = require("../core/bot").memoryDb;
   const buttons = Object.entries(SUBJECTS).map(([k, v]) => {
     const blocks = memDb[k] || {};
@@ -67,7 +67,7 @@ async function cbOfficialTests(ctx) {
 }
 
 async function cbSubject(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const subjectKey = parseSuffix(ctx.callbackQuery.data, "subj_");
   const subjName = escapeHtml(SUBJECTS[subjectKey] || "Fan");
   await safeEdit(
@@ -78,7 +78,7 @@ async function cbSubject(ctx) {
 }
 
 async function cbPage(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const parts = ctx.callbackQuery.data.split("_");
   const page = parseInt(parts[parts.length - 1], 10);
   const subjectKey = parts.slice(1, parts.length - 1).join("_");
@@ -94,7 +94,7 @@ async function cbPage(ctx) {
 // ─── TEST START ENTRY POINTS ─────────────────────────────────
 
 async function cbStartTest(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const chatId = ctx.chat.id;
   const memDb = require("../core/bot").memoryDb;
 
@@ -104,7 +104,7 @@ async function cbStartTest(ctx) {
       return ctx.answerCbQuery(
         "⚠️ Bu chatda faol test bor! Avval to'xtating: /stop",
         { show_alert: true },
-      );
+      ).catch(() => {});
 
     const isMock = ctx.callbackQuery.data.startsWith("mock_");
     let subjectKey, testId, testData;
@@ -117,7 +117,7 @@ async function cbStartTest(ctx) {
       if (!allQs.length)
         return ctx.answerCbQuery("❌ Bu fanda savollar yo'q!", {
           show_alert: true,
-        });
+        }).catch(() => {});
       shuffleArray(allQs);
       testData = { questions: allQs.slice(0, 25), block_name: "Aralash Test" };
       testId = "mock";
@@ -128,7 +128,7 @@ async function cbStartTest(ctx) {
       subjectKey = parts.slice(0, -1).join("_");
       testData = (memDb[subjectKey] || {})[testId];
       if (!testData)
-        return ctx.answerCbQuery("❌ Test topilmadi!", { show_alert: true });
+        return ctx.answerCbQuery("❌ Test topilmadi!", { show_alert: true }).catch(() => {});
     }
 
     await safeDelete(ctx);
@@ -177,12 +177,12 @@ async function cbPostStart(ctx) {
     if (existing)
       return ctx.answerCbQuery("⚠️ Avval joriy testni to'xtating: /stop", {
         show_alert: true,
-      });
+      }).catch(() => {});
 
     const memDb = require("../core/bot").memoryDb || {};
     const testData = (memDb[subjectKey] || {})[testId];
     if (!testData)
-      return ctx.answerCbQuery("❌ Test topilmadi!", { show_alert: true });
+      return ctx.answerCbQuery("❌ Test topilmadi!", { show_alert: true }).catch(() => {});
 
     try {
       await ctx.editMessageReplyMarkup({});
@@ -288,7 +288,7 @@ async function startUgcTest(ctx, testDb) {
 }
 
 async function cbUgcStart(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const testId = parseSuffix(ctx.callbackQuery.data, "ugc_start_");
   try {
     const testDb = await dbService.getUserTest(testId);
@@ -311,15 +311,15 @@ async function cbUserReadyStart(ctx) {
       return ctx.answerCbQuery(
         "⚠️ Test topilmadi yoki allaqachon boshlangan!",
         { show_alert: true },
-      );
+      ).catch(() => {});
     }
     if (session.initiatorId !== ctx.from.id) {
       return ctx.answerCbQuery("⚠️ Bu sizning testingiz emas!", {
         show_alert: true,
-      });
+      }).catch(() => {});
     }
 
-    await ctx.answerCbQuery();
+    await ctx.answerCbQuery().catch(() => {});
     session.status = "running";
     session.startTime = Date.now();
     await sessionService.setActiveTest(chatId, session);
@@ -347,12 +347,12 @@ async function cbUserReadyStart(ctx) {
 }
 
 async function cbResumeTest(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const chatId = ctx.chat.id;
   try {
     const session = await sessionService.getActiveTest(chatId);
     if (!session)
-      return ctx.answerCbQuery("❌ Test topilmadi.", { show_alert: true });
+      return ctx.answerCbQuery("❌ Test topilmadi.", { show_alert: true }).catch(() => {});
     session.consecutiveTimeouts = 0;
     await sessionService.setActiveTest(chatId, session);
     await safeDelete(ctx);
@@ -363,7 +363,7 @@ async function cbResumeTest(ctx) {
 }
 
 async function cbForceFinish(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   await safeDelete(ctx);
   await finishTest(ctx.chat.id, ctx.telegram);
 }
@@ -426,12 +426,12 @@ async function cbStopTest(ctx) {
 // ─── POST-TEST ACTIONS ────────────────────────────────────────
 
 async function cbReviewMistakes(ctx) {
-  await ctx.answerCbQuery();
-  const mistakes = lastMistakesCache.get(ctx.chat.id) || [];
+  await ctx.answerCbQuery().catch(() => {});
+  const mistakes = await lastMistakesCache.get(ctx.chat.id) || [];
   if (!mistakes.length)
     return ctx.answerCbQuery("🎉 Bu testda xato yo'q edi!", {
       show_alert: true,
-    });
+    }).catch(() => {});
 
   const parts = [`📑 <b>So'nggi testdagi xatolar (${mistakes.length} ta):</b>`];
   for (let i = 0; i < Math.min(mistakes.length, 20); i++) {
@@ -459,10 +459,10 @@ async function cbReviewMistakes(ctx) {
 }
 
 async function cbAiExplainMistakes(ctx) {
-  await ctx.answerCbQuery();
-  const mistakes = lastMistakesCache.get(ctx.chat.id) || [];
+  await ctx.answerCbQuery().catch(() => {});
+  const mistakes = await lastMistakesCache.get(ctx.chat.id) || [];
   if (!mistakes.length)
-    return ctx.answerCbQuery("Xatolar topilmadi!", { show_alert: true });
+    return ctx.answerCbQuery("Xatolar topilmadi!", { show_alert: true }).catch(() => {});
 
   await safeEdit(
     ctx,
@@ -485,7 +485,7 @@ async function cbAiExplainMistakes(ctx) {
 }
 
 async function cbPostMain(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   try {
     await ctx.editMessageReplyMarkup({});
   } catch {
@@ -498,7 +498,7 @@ async function cbPostMain(ctx) {
 }
 
 async function cbPostSubj(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const subjectKey = parseSuffix(ctx.callbackQuery.data, "post_subj_");
   try {
     await ctx.editMessageReplyMarkup({});

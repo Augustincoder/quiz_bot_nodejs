@@ -102,12 +102,14 @@ async function showEditDashboard(ctx) {
 }
 
 async function cbEditTest(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const testId = parseSuffix(ctx.callbackQuery.data, "edit_test_");
   const testData = await dbService.getUserTest(testId);
 
   if (!testData || String(testData.creator_id) !== String(ctx.from.id)) {
-    return ctx.answerCbQuery("❌ Ruxsat yo'q!", { show_alert: true });
+    return ctx
+      .answerCbQuery("❌ Ruxsat yo'q!", { show_alert: true })
+      .catch(() => {});
   }
 
   await updateData(ctx, {
@@ -122,13 +124,13 @@ async function cbEditTest(ctx) {
 }
 
 async function cbBackToEditDash(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   setState(ctx, States.CREATE_QUESTIONS);
   await showEditDashboard(ctx);
 }
 
 async function cbEditAddQ(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   await safeEdit(
     ctx,
     `📝 *Yangi savol formatini tanlang:*\n\n⬇️ Qaysi usulda savol qo'shmoqchisiz?`,
@@ -145,7 +147,7 @@ async function cbEditAddQ(ctx) {
 // ─── 1. YANGI TEST YARATISH BOSQICHLARI ──────────────────────
 async function cbCreateTest(ctx) {
   clearState(ctx);
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const tests = await dbService.getUserCreatedTests(ctx.from.id);
   const subjects = {};
   for (const t of tests) {
@@ -182,7 +184,7 @@ async function cbCreateTest(ctx) {
 }
 
 async function cbCtNew(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   setState(ctx, States.CREATE_SUBJECT);
   await safeEdit(
     ctx,
@@ -192,7 +194,7 @@ async function cbCtNew(ctx) {
 }
 
 async function cbCtExist(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const refId = parseSuffix(ctx.callbackQuery.data, "ct_exist_");
   const testData = await dbService.getUserTest(refId);
   if (!testData) return;
@@ -206,12 +208,17 @@ async function cbCtExist(ctx) {
 }
 
 async function onSubjectInput(ctx) {
-  // 1. Zod orqali kiritilgan matnni tekshiramiz va tozalaymiz
   const result = SubjectSchema.safeParse(ctx.message.text || "");
 
-  // 2. Agar foydalanuvchi qoidani buzgan bo'lsa (maxsus belgi, juda qisqa/uzun)
   if (!result.success) {
     return ctx.reply(`${result.error.errors[0].message} Qaytadan yozing:`);
+  }
+  if (!ctx.session || !ctx.session.data) {
+    clearState(ctx);
+    return ctx.reply(
+      "⏳ Amaliyot muddati tugadi. Iltimos, qaytadan boshlang.",
+      backToMainKb(),
+    );
   }
 
   // 3. Tozalangan va xavfsiz matnni olamiz
@@ -237,22 +244,29 @@ async function onNameInput(ctx) {
   if (!result.success) {
     return ctx.reply(`${result.error.errors[0].message} Qaytadan yozing:`);
   }
+  if (!ctx.session || !ctx.session.data) {
+    clearState(ctx);
+    return ctx.reply(
+      "⏳ Amaliyot muddati tugadi. Iltimos, qaytadan boshlang.",
+      backToMainKb(),
+    );
+  }
 
-  const blockName = result.data;
+  const block_name = result.data;
 
-  await updateData(ctx, { blockName });
+  await updateData(ctx, { block_name });
   setState(ctx, States.CREATE_QUESTIONS);
 
-  const safeBlockName = escapeMarkdown(blockName);
+  const safeBlockName = escapeMarkdown(block_name);
 
   await ctx.reply(
     `✅ Blok: *${safeBlockName}*\n\n📝 *3-qadam: Savollarni yuborish*\nSavollarni matn, rasm yoki bitta Word (.docx) fayl ko'rinishida yuboring.\n\n_Barcha savollarni yuborib bo'lgach, "✅ Yakunlash" tugmasini bosing._`,
-    { parse_mode: "Markdown", ...doneKb() },
+    { parse_mode: "Markdown", ...questionsSummaryKb() },
   );
 }
 
 async function cbFmt(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const fmt = parseSuffix(ctx.callbackQuery.data, "fmt_");
   const data = await getData(ctx);
 
@@ -347,7 +361,7 @@ async function promptQuestionCount(ctx) {
 
 // Sanoq tanlanganda ishlaydigan funksiya
 async function cbAiCount(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const count = parseSuffix(ctx.callbackQuery.data, "ai_cnt_");
   const data = await getData(ctx);
   const mode = data.ai_mode_pending;
@@ -375,13 +389,13 @@ async function cbAiCount(ctx) {
 
 // ─── AI INPUT HANDLERLARI ──────────────────────────────────────
 async function cbAiModeText(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   await updateData(ctx, { ai_mode_pending: "text" });
   await promptQuestionCount(ctx);
 }
 
 async function cbAiModeQuestions(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   setState(ctx, States.CREATE_AI_QUESTIONS);
   await safeEdit(
     ctx,
@@ -392,7 +406,7 @@ async function cbAiModeQuestions(ctx) {
 }
 
 async function cbAiModeImage(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   await updateData(ctx, { ai_mode_pending: "image" });
   await promptQuestionCount(ctx);
 }
@@ -589,7 +603,7 @@ async function onQuestionMessage(ctx) {
 
 // ─── 3. KO'RIB CHIQISH (PREVIEW) VA O'CHIRISH ────────────────
 async function cbPreviewQuestion(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const idx = parseInt(parseSuffix(ctx.callbackQuery.data, "preview_q_"), 10);
   const data = await getData(ctx);
   const questions = data.questions || [];
@@ -624,7 +638,7 @@ async function cbPreviewQuestion(ctx) {
 }
 
 async function cbDeleteQuestion(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
 
   const idx = parseInt(parseSuffix(ctx.callbackQuery.data, "del_q_"), 10);
   const data = await getData(ctx);
@@ -641,7 +655,7 @@ async function cbDeleteQuestion(ctx) {
 }
 
 async function cbPreviewBack(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const data = await getData(ctx);
   if (data.is_editing) return showEditDashboard(ctx);
 
@@ -657,8 +671,10 @@ async function cbFinishCreation(ctx) {
   const data = await getData(ctx);
   const questions = data.questions || [];
   if (!questions.length)
-    return ctx.answerCbQuery("❌ Savollar yo'q!", { show_alert: true });
-  await ctx.answerCbQuery();
+    return ctx
+      .answerCbQuery("❌ Savollar yo'q!", { show_alert: true })
+      .catch(() => {});
+  await ctx.answerCbQuery().catch(() => {});
 
   let testId = data.editing_test_id;
   if (testId) {
@@ -686,46 +702,70 @@ async function cbFinishCreation(ctx) {
 
 async function cbCancelCreation(ctx) {
   clearState(ctx);
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   await safeEdit(ctx, "❌ Bekor qilindi.", backToMainKb());
 }
 
 async function cbMyTests(ctx) {
   await ctx.answerCbQuery().catch(() => {});
-  
+
   // Sahifani aniqlaymiz (agar birinchi marta kirsa 0)
   let page = 0;
-  if (ctx.callbackQuery.data.startsWith('my_tests_')) {
-      page = parseInt(ctx.callbackQuery.data.replace('my_tests_', ''), 10);
+  if (ctx.callbackQuery.data.startsWith("my_tests_")) {
+    page = parseInt(ctx.callbackQuery.data.replace("my_tests_", ""), 10);
   }
 
   const tests = await dbService.getUserCreatedTests(ctx.from.id);
   if (!tests || tests.length === 0) {
-    return safeEdit(ctx, "📭 Siz hali hech qanday test yaratmagansiz.", Markup.inlineKeyboard([[Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]]));
+    return safeEdit(
+      ctx,
+      "📭 Siz hali hech qanday test yaratmagansiz.",
+      Markup.inlineKeyboard([
+        [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
+      ]),
+    );
   }
 
   const itemsPerPage = 5;
   const totalPages = Math.ceil(tests.length / itemsPerPage);
-  const currentTests = tests.slice(page * itemsPerPage, (page + 1) * itemsPerPage);
+  const currentTests = tests.slice(
+    page * itemsPerPage,
+    (page + 1) * itemsPerPage,
+  );
 
-  const buttons = currentTests.map(t => [Markup.button.callback(`📝 ${t.subject} - ${t.block_name}`, `manage_test_${t.id}`)]);
+  const buttons = currentTests.map((t) => [
+    Markup.button.callback(
+      `📝 ${t.subject} - ${t.block_name}`,
+      `manage_test_${t.id}`,
+    ),
+  ]);
 
   // Navigatsiya tugmalari (Keyingi / Oldingi)
   const navButtons = [];
-  if (page > 0) navButtons.push(Markup.button.callback("⬅️ Oldingi", `my_tests_${page - 1}`));
-  if (page < totalPages - 1) navButtons.push(Markup.button.callback("Keyingi ➡️", `my_tests_${page + 1}`));
-  
+  if (page > 0)
+    navButtons.push(
+      Markup.button.callback("⬅️ Oldingi", `my_tests_${page - 1}`),
+    );
+  if (page < totalPages - 1)
+    navButtons.push(
+      Markup.button.callback("Keyingi ➡️", `my_tests_${page + 1}`),
+    );
+
   if (navButtons.length > 0) buttons.push(navButtons);
   buttons.push([Markup.button.callback("🔙 Orqaga", "create_test")]);
 
-  await safeEdit(ctx, `📂 *Mening Testlarim* (Sahifa ${page + 1}/${totalPages}):\n\nJami: ${tests.length} ta test`, {
-    parse_mode: 'Markdown',
-    ...Markup.inlineKeyboard(buttons)
-  });
+  await safeEdit(
+    ctx,
+    `📂 *Mening Testlarim* (Sahifa ${page + 1}/${totalPages}):\n\nJami: ${tests.length} ta test`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard(buttons),
+    },
+  );
 }
 
 async function cbManageSubj(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const refId = parseSuffix(ctx.callbackQuery.data, "manage_subj_");
   const testData = await dbService.getUserTest(refId);
   if (!testData) return;
@@ -753,7 +793,7 @@ async function cbManageSubj(ctx) {
 }
 
 async function cbManageTest(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const testId = parseSuffix(ctx.callbackQuery.data, "manage_test_");
   const testData = await dbService.getUserTest(testId);
   if (!testData) return;
@@ -772,7 +812,7 @@ async function cbManageTest(ctx) {
 }
 
 async function cbDeleteTest(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const testId = parseSuffix(ctx.callbackQuery.data, "delete_test_");
   await safeEdit(
     ctx,
@@ -785,7 +825,7 @@ async function cbDeleteTest(ctx) {
 }
 
 async function cbConfirmDelete(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const testId = parseSuffix(ctx.callbackQuery.data, "confirm_delete_");
   await dbService.deleteUserTest(testId, ctx.from.id);
   await safeEdit(
@@ -824,7 +864,7 @@ function register(bot) {
   bot.action("ai_mode_image", cbAiModeImage);
   bot.action(/^ai_cnt_/, cbAiCount);
 
-  bot.action("ignore", (ctx) => ctx.answerCbQuery());
+  bot.action("ignore", (ctx) => ctx.answerCbQuery().catch(() => {}));
 }
 
 module.exports = {

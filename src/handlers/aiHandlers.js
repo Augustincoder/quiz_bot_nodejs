@@ -60,9 +60,8 @@ _Kutmoqdamiz, matnni yuboring:_`;
 
 
 
-module.exports = { register, };
 async function cbAiEssayMenu(ctx) {
-    await ctx.answerCbQuery();
+    await ctx.answerCbQuery().catch(() => { });
     setState(ctx, States.AI_ESSAY_ANALYSIS);
     await safeEdit(
         ctx,
@@ -98,6 +97,7 @@ async function onEssayInput(ctx) {
 
     clearState(ctx);
 }
+
 
 function register(bot) {
     bot.action('ai_essay_menu', cbAiEssayMenu);

@@ -70,8 +70,8 @@ async function cbRoomReady(ctx) {
   const chatId = ctx.chat.id;
   try {
     const room = await sessionService.getWaitingRoom(chatId);
-    if (!room) return ctx.answerCbQuery('Kutish zali yopilgan!', { show_alert: true });
-    if (room.readyUsers.has(ctx.from.id)) return ctx.answerCbQuery('✅ Siz allaqachon tayyorsiz!');
+    if (!room) return ctx.answerCbQuery('Kutish zali yopilgan!', { show_alert: true }).catch(() => {});
+    if (room.readyUsers.has(ctx.from.id)) return ctx.answerCbQuery('✅ Siz allaqachon tayyorsiz!').catch(() => {});
 
     room.readyUsers.add(ctx.from.id);
     await sessionService.setWaitingRoom(chatId, room);
@@ -82,25 +82,25 @@ async function cbRoomReady(ctx) {
     buttons.push([Markup.button.callback('❌ Bekor qilish', 'room_cancel')]);
 
     try { await ctx.editMessageReplyMarkup(Markup.inlineKeyboard(buttons).reply_markup); } catch { /* no change */ }
-    await ctx.answerCbQuery(`✅ Tayyor! Jami: ${count} kishi`);
+    await ctx.answerCbQuery(`✅ Tayyor! Jami: ${count} kishi`).catch(() => {});
   } catch (e) {
     console.error('cbRoomReady error:', e.message);
-    await ctx.answerCbQuery('❌ Xatolik yuz berdi.', { show_alert: true });
+    await ctx.answerCbQuery('❌ Xatolik yuz berdi.', { show_alert: true }).catch(() => {});
   }
 }
 
 async function cbRoomStart(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const chatId = ctx.chat.id;
   try {
     const room = await sessionService.getWaitingRoom(chatId);
     if (!room) return;
 
     if (ctx.from.id !== room.initiatorId) {
-      return ctx.answerCbQuery('⚠️ Faqat testni boshlagan kishi ishga tushira oladi!', { show_alert: true });
+      return ctx.answerCbQuery('⚠️ Faqat testni boshlagan kishi ishga tushira oladi!', { show_alert: true }).catch(() => {})  ;
     }
     if (room.readyUsers.size < 2) {
-      return ctx.answerCbQuery("⚠️ Kamida 2 kishi tayyor bo'lishi kerak!", { show_alert: true });
+      return ctx.answerCbQuery("⚠️ Kamida 2 kishi tayyor bo'lishi kerak!", { show_alert: true }).catch(() => {});
     }
 
     await sessionService.deleteWaitingRoom(chatId);
@@ -153,9 +153,9 @@ async function cbRoomCancel(ctx) {
   const chatId = ctx.chat.id;
   try {
     const room = await sessionService.getWaitingRoom(chatId);
-    if (!room) return ctx.answerCbQuery('Kutish zali allaqachon yopilgan.', { show_alert: true });
+    if (!room) return ctx.answerCbQuery('Kutish zali allaqachon yopilgan.', { show_alert: true }).catch(() => {});
     if (ctx.from.id !== room.initiatorId) {
-      return ctx.answerCbQuery('⚠️ Faqat testni boshlagan kishi bekor qila oladi!', { show_alert: true });
+      return ctx.answerCbQuery('⚠️ Faqat testni boshlagan kishi bekor qila oladi!', { show_alert: true }).catch(() => {});
     }
     await sessionService.deleteWaitingRoom(chatId);
     await safeDelete(ctx);

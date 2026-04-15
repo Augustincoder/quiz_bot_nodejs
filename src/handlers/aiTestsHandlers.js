@@ -10,14 +10,14 @@ function isAdmin(userId) { return userId === ADMIN_ID; }
 
 function adminGuard(fn) {
   return async (ctx, ...args) => {
-    if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('⛔ Ruxsat yo\'q!', { show_alert: true });
+    if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('⛔ Ruxsat yo\'q!', { show_alert: true }).catch(() => {});
     return fn(ctx, ...args);
   };
 }
 
 // ─── AI TESTS MENU ─────────────────────────────────────────────
 async function cbAdminAiTests(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const buttons = Object.entries(SUBJECTS).map(([k, v]) => [Markup.button.callback(v, `ai_tests_subj_${k}`)]);
   buttons.push([Markup.button.callback('❌ Bekor qilish', 'admin_cancel')]);
   await safeEdit(ctx, "🤖 <b>AI Testlar</b>\n\nQaysi fanga AI test yaratmoqchisiz?", { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
@@ -25,7 +25,7 @@ async function cbAdminAiTests(ctx) {
 }
 
 async function cbAiTestsSubj(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const subj = parseSuffix(ctx.callbackQuery.data, 'ai_tests_subj_');
   await updateData(ctx, { subject: subj });
   setState(ctx, States.ADMIN_AI_TESTS_TYPE);
@@ -44,7 +44,7 @@ async function cbAiTestsSubj(ctx) {
 }
 
 async function cbAiTestsType(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const type = parseSuffix(ctx.callbackQuery.data, 'ai_tests_type_');
   await updateData(ctx, { ai_test_type: type });
   
@@ -275,12 +275,12 @@ async function onAiTestsAdaptiveCount(ctx) {
 
 // ─── AI TESTS ACTIONS ──────────────────────────────────────────
 async function cbAiTestsPreview(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const data = await getData(ctx);
   const questions = data.ai_generated_questions || [];
   
   if (!questions.length) {
-    return ctx.answerCbQuery('❌ Hali savol yo\'q!', { show_alert: true });
+    return ctx.answerCbQuery('❌ Hali savol yo\'q!', { show_alert: true }).catch(() => {});
   }
   
   const lines = questions.slice(0, 10).map((q, i) =>
@@ -293,14 +293,14 @@ async function cbAiTestsPreview(ctx) {
 }
 
 async function cbAiTestsSave(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const data = await getData(ctx);
   const questions = data.ai_generated_questions || [];
   const subject = data.subject;
   const type = data.ai_test_type;
   
   if (!questions.length || !subject) {
-    return ctx.answerCbQuery('❌ Ma\'lumotlar yetishmaydi!', { show_alert: true });
+    return ctx.answerCbQuery('❌ Ma\'lumotlar yetishmaydi!', { show_alert: true }).catch(() => {});
   }
   
   try {
@@ -309,7 +309,7 @@ async function cbAiTestsSave(ctx) {
     const success = await dbService.saveOfficialTest(subject, testId, questions);
     
     if (!success) {
-      return ctx.answerCbQuery("❌ Supabase'ga saqlashda xatolik.", { show_alert: true });
+      return ctx.answerCbQuery("❌ Supabase'ga saqlashda xatolik.", { show_alert: true }).catch(() => {})     ;
     }
     
     await safeEdit(ctx,
@@ -323,18 +323,18 @@ async function cbAiTestsSave(ctx) {
     clearState(ctx);
   } catch (e) {
     console.error('cbAiTestsSave error:', e.message);
-    await ctx.answerCbQuery('❌ Xatolik yuz berdi.', { show_alert: true });
+    await ctx.answerCbQuery('❌ Xatolik yuz berdi.', { show_alert: true }).catch(() => {});
   }
 }
 
 async function cbAiTestsRegenerate(ctx) {
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery().catch(() => {});
   const data = await getData(ctx);
   const subject = data.subject;
   const type = data.ai_test_type;
   
   if (!subject || !type) {
-    return ctx.answerCbQuery('❌ Ma\'lumotlar yetishmaydi!', { show_alert: true });
+    return ctx.answerCbQuery('❌ Ma\'lumotlar yetishmaydi!', { show_alert: true }).catch(() => {}).catch(() => {});
   }
   
   const status = await ctx.reply("⏳ <b>AI test qayta yaratilmoqda...</b>", { parse_mode: 'HTML' });
