@@ -32,7 +32,7 @@ async function cmdStart(ctx) {
     await sessionService.deleteActiveTest(chatId);
     cleared = true;
   }
-  if (cleared) await ctx.reply('🔄 Tugallanmagan test tozalandi. Yangi boshlashingiz mumkin!');
+  if (cleared) await ctx.reply('🔄 Oldingi tugallanmagan sessiya tozalandi. Yangi testga tayyorsiz!');
 
   // LINK ORQALI KIRGANDA (Deep Linking)
   const args = (ctx.message.text || '').split(' ');
@@ -56,18 +56,20 @@ async function cmdStart(ctx) {
 
   // --- UX/UI Onboarding ---
   const firstName = ctx.from.first_name || 'Talaba';
-  const welcomeText = `👋 Salom, <b>${firstName}</b>! 🏛 <b>Talabalar Imtihon Trenajyori</b>ga xush kelibsiz.
+  const welcomeText = `👋 Assalomu alaykum, <b>${firstName}</b>!
 
-Bu bot sizga imtihonlarga tayyorgarlik ko'rishda yordam beradi — AI yordamida test yechib, xatolaringizni tahlil qilib va o'z reytingingizni ko'tarib, har kuni bir qadam oldinga siljishingiz mumkin.
+🎓 <b>Talabalar Imtihon Simulyatori</b>ga xush kelibsiz — imtihonga tayyorgarlikda sizning shaxsiy AI yordamchingiz.
 
 ━━━━━━━━━━━━━━━━
-✨ <b>Nimalar qila olasiz?</b>
-📚 <b>Rasmiy testlar</b> — Tayyor baza va Adaptiv testlar
-🤖 <b>AI Tutor</b> — Matn/rasmdan test va xatolar tahlili
-📝 <b>Test yaratish</b> — O'z bloklaringizni yaratish
-📖 <b>Javon</b> — Testlarni saqlash va davom ettirish
-📊 <b>Reyting</b> — Eng yaxshi talabalar qatorida bo'lish
+✨ <b>Sizning 4 ta superkuchingiz:</b>
+
+📚 <b>Rasmiy Testlar</b> — Tasdiqlanagan test bazasidan yechib, bilimingizni sinab ko'ring
+🤖 <b>AI Smart Quiz</b> — Darslik rasmi yoki matnini yuboring, AI bir zumda test tuzib beradi
+📥 <b>Javon</b> — Testni to'xtatib, istalgan paytda qolgan joyidan davom eting
+🧠 <b>AI Tutor</b> — Xatolaringizni batafsil tahlil qilib, har bir xatoni tushuntirib beradi
+
 ━━━━━━━━━━━━━━━━
+📊 Har bir test natijalari reytingga qo'shiladi — eng yaxshilar o'nligiga kiring!
 
 👇 <b>Quyidagi menyudan boshlang:</b>`;
 
@@ -78,7 +80,7 @@ async function cbBackToMain(ctx) {
   clearState(ctx);
   await safeAnswerCb(ctx);
   const firstName = ctx.from.first_name || 'Talaba';
-  const welcomeText = `🏛 <b>Asosiy Menyu</b>\n\nQuyidagi bo'limlardan birini tanlang, ${firstName}:`;
+  const welcomeText = `🏛 <b>Asosiy Menyu</b>\n\nNimadan boshlaymiz, ${firstName}?`;
   await safeEdit(ctx, welcomeText, { parse_mode: 'HTML', ...getMainKeyboard() });
 }
 
@@ -93,33 +95,33 @@ async function cmdStop(ctx) {
   if (room) {
     if (userId === room.initiatorId || ctx.chat.type === 'private') {
       await sessionServiceLocal.deleteWaitingRoom(chatId);
-      return ctx.reply('🛑 Test bekor qilindi.', backToMainKb());
+      return ctx.reply('🛑 Test bekor qilindi. Asosiy menyudan yangisini boshlashingiz mumkin.', backToMainKb());
     }
-    return ctx.reply('⚠️ Faqat testni boshlagan kishi bekor qila oladi!');
+    return ctx.reply('⚠️ Faqat testni boshlagan foydalanuvchi bekor qila oladi.');
   }
 
   const session = await sessionServiceLocal.getActiveTest(chatId);
 
   if (session) {
     if (ctx.chat.type !== 'private' && userId !== session.initiatorId) {
-      return ctx.reply('⚠️ Faqat testni boshlagan kishi to\'xtata oladi!');
+      return ctx.reply('⚠️ Faqat testni boshlagan foydalanuvchi to\'xtata oladi.');
     }
 
     const { cbStopTest, finishTest } = require('./quizGame');
     if (cbStopTest) {
       return cbStopTest(ctx);
     } else {
-      await ctx.reply('🛑 <b>Test to\'xtatildi!</b>', { parse_mode: 'HTML' });
+      await ctx.reply('🛑 <b>Test to\'xtatildi.</b> Natijalar hisoblanmoqda...', { parse_mode: 'HTML' });
       return finishTest(chatId, ctx.telegram);
     }
   }
 
-  await ctx.reply('ℹ️ Hozir faol test yo\'q.\n\nAsosiy menyuga qaytish uchun tugmani bosing:', backToMainKb());
+  await ctx.reply('ℹ️ Hozirda faol test mavjud emas.\n\n👇 Asosiy menyuga qaytib yangi test boshlashingiz mumkin:', backToMainKb());
 }
 
 async function cmdMenu(ctx) {
   clearState(ctx);
-  await ctx.reply('🏛 <b>Asosiy Menyu</b>', { parse_mode: 'HTML', ...getMainKeyboard() });
+  await ctx.reply('🏛 <b>Asosiy Menyu</b>\n\nQuyidagi bo\'limlardan birini tanlang:', { parse_mode: 'HTML', ...getMainKeyboard() });
 }
 
 async function cmdBackToMainReply(ctx) {

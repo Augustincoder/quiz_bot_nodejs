@@ -70,8 +70,8 @@ async function cbLeaderboard(ctx) {
     if (!topUsers?.length) {
       return safeEdit(
         ctx,
-        "🏆 Hozircha reyting bo'sh. Birinchi bo'lish imkoniyati sizda!",
-        backToMainKb(),
+        "🏆 <b>Reyting maydoni hozircha bo'sh!</b>\n\nBu siz uchun katta imkoniyat. Birinchi bo'lib test yeching va taxtni egallang! Qani, olg'a! 🥷",
+        { parse_mode: "HTML", ...backToMainKb() },
       );
     }
 

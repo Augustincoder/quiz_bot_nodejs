@@ -62,9 +62,9 @@ function cancelKb(cb = "cancel_creation") {
 }
 
 const FORMAT_INSTRUCTIONS = {
-  quiz: "📊 *Quiz Formati*\n\nTelegram'ning *Quiz* funksiyasidan foydalaning:\n1️⃣ 📎 belgisini bosing\n2️⃣ *Poll* → *Quiz* tanlang\n3️⃣ Savol/javob kiriting\n4️⃣ To'g'riligini belgilab yuboring",
-  text: "📝 *Matn Formati*\n\nQuyidagi ko'rinishda yuboring:\n```\nO'zbekiston poytaxti?\n#Toshkent\nSamarqand\nBuxoro\nNamangan\n```",
-  docx: "📄 *Word (.docx) Formati*\n\nFaylni quyidagicha tayyorlang:\n```\nSavol matni?\n#To'g'ri javob\nXato javob\nXato javob\n```",
+  quiz: "📊 *Quiz Formati*\n\nTelegram'ning o'z quiz funksiyasidan foydalaning:\n\n1️⃣ 📎 (Biriktirish) belgisini bosing\n2️⃣ *Poll* → *Quiz* rejimini tanlang\n3️⃣ Savol va javob variantlarini kiriting\n4️⃣ To'g'ri javobni belgilab yuboring\n\n💡 _Har bir quiz ayrima xabar sifatida yuboriladi._",
+  text: "📝 *Matn Formati*\n\nQuyidagi ko'rinishda yuboring (bir yoki bir nechta savol):\n```\nO'zbekiston poytaxti qayer?\n#Toshkent\nSamarqand\nBuxoro\nNamangan\n```\n\n💡 _To'g'ri javob oldiga # belgisi qo'yiladi. Savollar orasiga bo'sh qator qo'shing._",
+  docx: "📄 *Word (.docx) Formati*\n\nFaylni quyidagicha tayyorlang:\n```\nSavol matni?\n#To'g'ri javob\nNoto'g'ri javob 1\nNoto'g'ri javob 2\nNoto'g'ri javob 3\n```\n\n💡 _Har bir savolda 2–6 ta javob varianti bo'lishi kerak. Tayyor .docx faylni shu chatga yuboring._",
 };
 
 // ─── TAHRIRLASH DASHBOARD ────────────────────────────────────
@@ -179,7 +179,7 @@ async function cbCreateTest(ctx) {
 
   await safeEdit(
     ctx,
-    "✏️ *Test Yaratish*\n\nO'z testingizni yarating — matn, Word fayl yoki AI yordamida. Tayyor bo'lgach, do'stlaringizga havola ulashing!",
+    "✏️ *Test Yaratish*\n\nO'z shaxsiy testingizni yarating va do'stlaringiz bilan ulashing!\n\n💡 *Qanday ishlaydi:*\n1️⃣ Fan va blok nomini kiriting\n2️⃣ Savollarni matn, Word fayl, yoki AI orqali qo'shing\n3️⃣ Tayyor testni havola orqali ulashing\n\n👇 Boshlash uchun fan tanlang yoki yangi yarating:",
     Markup.inlineKeyboard(buttons),
   );
 }
@@ -189,7 +189,7 @@ async function cbCtNew(ctx) {
   setState(ctx, States.CREATE_SUBJECT);
   await safeEdit(
     ctx,
-    "📝 *Yangi Fan — 1-qadam*\n\nFan nomini kiriting (Masalan: Anatomiya):",
+    "📝 *Yangi Fan — 1-qadam*\n\nFan nomini kiriting.\n\n💡 _Masalan: Anatomiya, Kirish testi, IELTS Reading_\n\n⚠️ Faqat harflar, raqamlar va tire ishlatiladi (2–50 belgi).",
     cancelKb(),
   );
 }
@@ -203,7 +203,7 @@ async function cbCtExist(ctx) {
   setState(ctx, States.CREATE_NAME);
   await safeEdit(
     ctx,
-    `✅ Fan: *${testData.subject}*\n\n📝 *Yangi Blok — 2-qadam*\n\nBlok nomini yozing (Masalan: 1-Mavzu):`,
+    `✅ Fan: *${testData.subject}*\n\n📝 *Yangi Blok — 2-qadam*\n\nBlok nomini kiriting.\n\n💡 _Masalan: 1-Mavzu, Biokimyo Lab, Final tayyorgarlik_`,
     cancelKb(),
   );
 }
@@ -212,12 +212,12 @@ async function onSubjectInput(ctx) {
   const result = SubjectSchema.safeParse(ctx.message.text || "");
 
   if (!result.success) {
-    return ctx.reply(`${result.error.errors[0].message} Qaytadan yozing:`);
+    return ctx.reply(`${result.error.errors[0].message}\n\n💡 Fan nomlari 2–50 belgidan iborat bo'lishi va faqat harf, raqam va tire o'z ichiga olishi kerak. Qaytadan kiriting:`);
   }
   if (!ctx.session || !ctx.session.data) {
     clearState(ctx);
     return ctx.reply(
-      "⏳ Amaliyot muddati tugadi. Iltimos, qaytadan boshlang.",
+      "⏳ Sessiya muddati tugadi. Xavotir olmang — bu xavfsizlik uchun. Iltimos, qaytadan boshlang.",
       backToMainKb(),
     );
   }
@@ -233,7 +233,7 @@ async function onSubjectInput(ctx) {
   const safeSubject = escapeMarkdown(subject);
 
   await ctx.reply(
-    `✅ Fan: *${safeSubject}*\n\n📝 *2-qadam: Blok nomi*\nBlok nomini yozing:`,
+    `✅ Fan: *${safeSubject}*\n\n📝 *2-qadam: Blok nomi*\n\nBlok nomini kiriting (1–40 belgi).\n\n💡 _Masalan: 1-Bob, Midterm savollar, Laboratoriya_`,
     { parse_mode: "Markdown", ...cancelKb() },
   );
 }
@@ -243,12 +243,12 @@ async function onNameInput(ctx) {
   const result = BlockNameSchema.safeParse(ctx.message.text || "");
 
   if (!result.success) {
-    return ctx.reply(`${result.error.errors[0].message} Qaytadan yozing:`);
+    return ctx.reply(`${result.error.errors[0].message}\n\n💡 Blok nomi 1–40 belgidan iborat bo'lishi kerak. Qaytadan kiriting:`);
   }
   if (!ctx.session || !ctx.session.data) {
     clearState(ctx);
     return ctx.reply(
-      "⏳ Amaliyot muddati tugadi. Iltimos, qaytadan boshlang.",
+      "⏳ Sessiya muddati tugadi. Xavotir olmang — bu xavfsizlik uchun. Iltimos, qaytadan boshlang.",
       backToMainKb(),
     );
   }
@@ -261,7 +261,7 @@ async function onNameInput(ctx) {
   const safeBlockName = escapeMarkdown(block_name);
 
   await ctx.reply(
-    `✅ Blok: *${safeBlockName}*\n\n📝 *3-qadam: Savollarni yuborish*\nSavollarni matn, rasm yoki bitta Word (.docx) fayl ko'rinishida yuboring.\n\n_Barcha savollarni yuborib bo'lgach, "✅ Yakunlash" tugmasini bosing._`,
+    `✅ Blok: *${safeBlockName}*\n\n📝 *3-qadam: Savollarni qo'shish*\n\nQuyidagi usullardan birini tanlang:\n🤖 *AI Smart Quiz* — matn/rasmdan avtomatik\n📊 *Telegram Quiz* — Telegram'ning o'z poll formati\n📝 *Matn* — yozma format (#belgi bilan)\n📄 *Word fayl* — .docx yuklash\n\n_Barcha savollarni qo'shib bo'lgach, "✅ Yakunlash va Saqlash" tugmasini bosing._`,
     { parse_mode: "Markdown", ...questionsSummaryKb() },
   );
 }
@@ -281,21 +281,23 @@ async function cbFmt(ctx) {
   const backBtnText = data.is_editing ? "🔙 Orqaga" : "❌ Bekor qilish";
 
   if (fmt === "ai") {
-    const aiText = `🤖 *AI Smart Quiz*
+    const aiText = `🤖 *AI Smart Quiz — Sun'iy Intellekt bilan test yaratish*
 
-Quyidagi usullardan birini tanlang:
-📄 *Matndan test* — Konspekt yoki kitob matnini yuboring
-📸 *Rasmdan test* — Kitob sahifasini rasmga oling
-❓ *Savollardan* — Ochiq savollar ro'yxatini yuboring
+AI sizning matn yoki rasmingizdan professional darajada test savollarini yaratib beradi.
 
 ━━━━━━━━━━━━━━━━
-💡 *Eng yaxshi natija uchun:*
-- Matn kamida 150-200 so'z bo'lsin
-- 10 ta savol so'rasangiz — kamida 80 so'z kerak
-- Rasmda matn aniq ko'rinsin, qiya yoki xira bo'lmasin
-- Darslik paragrafini yoki ma'ruza konspektini yuboring
+📄 *Matndan test* — Konspekt, darslik yoki maqola matnini yuboring
+📸 *Rasmdan test* — Darslik sahifasini rasmga olib yuboring
+❓ *Savollardan test* — O'zingiz yozgan ochiq savollarni yuboring, AI javob variantlarini tuzib beradi
 
-⚠️ *Eslatma:* Bu yerda yaratilgan savollar AI tomonidan tayyorlanadi — xatoliklar bo'lishi mumkin. Muhim imtihon oldidan rasmiy test bloklarini ham tekshiring.`;
+━━━━━━━━━━━━━━━━
+💡 *Eng sifatli natija uchun maslahatlar:*
+• Matn kamida *150–200 so'z* bo'lishi tavsiya etiladi
+• 10 ta savol uchun kamida *80 so'z* matn kerak
+• 📸 Rasmda matn *aniq, tekis va to'liq* ko'rinishi kerak
+• Qiya, xira yoki qisman rasmlardan savollar sifatsiz chiqadi
+
+⚠️ _AI tomonidan yaratilgan savollar xatolik o'z ichiga olishi mumkin. Rasmiy imtihon oldidan doimo tekshirib oling._`;
 
     await safeEdit(ctx, aiText, {
       parse_mode: "Markdown",

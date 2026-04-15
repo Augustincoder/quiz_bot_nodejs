@@ -337,7 +337,7 @@ async function cbUserReadyStart(ctx) {
       parse_mode: "HTML",
     });
     await wait(1000);
-    await safeEdit(ctx, "🚀 <b>BOSHLADIK!</b> Omad yor bo'lsin! 🍀", {
+    await safeEdit(ctx, "🚀 <b>Kamarlarni taqing! BOSHLADIK!</b> Omad yor bo'lsin! 🍀", {
       parse_mode: "HTML",
     });
 

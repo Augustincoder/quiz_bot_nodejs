@@ -245,15 +245,30 @@ async function finishTest(chatId, telegram) {
         elapsed,
       });
 
+      // Dynamic gamified feedback based on score
+      let funFeedback;
+      if (pct === 100) {
+        funFeedback = `\n\n🔥 <b>Super-Miya!</b> Siz shunchaki yonayapsiz! 100% to'g'ri javob. Barcha savollarni «chaqib» tashladingiz! 🏆`;
+      } else if (pct >= 80) {
+        funFeedback = `\n\n😎 <b>Ajoyib natija!</b> Siz deyarli ustoz darajasidasiz. Yana ozgina harakat qilsangiz, 100% lik marra sizniki bo'ladi! 🚀`;
+      } else if (pct >= 50) {
+        funFeedback = `\n\n👍 <b>Yomon emas, lekin...</b> siz bundan ham zo'riga qodirsiz! O'tkazib yuborilgan «zarbalarni» AI Tutor bilan tahlil qilamizmi? 🥊\n\n👇 Quyidagi <b>«❌ Xatolarni ko'rish»</b> tugmasini bosing.`;
+      } else {
+        funFeedback = `\n\n😅 <b>Oups...</b> Bugun yulduzlar siz tomonda emas shekilli. Taslim bo'lish yo'q! Xatolarni AI Tutor bilan ko'rib chiqib, tezda «qasos» oling! ⚔️\n\n👇 Quyidagi <b>«❌ Xatolarni ko'rish»</b> tugmasini bosing.`;
+      }
+
       text =
         `🏁 <b>Test Yakunlandi!</b>\n\n` +
         `📚 ${subjName} — ${tName}\n` +
         `${progressBar(Math.round(pct), 100)}\n\n` +
+        `━━━━━━━━━━━━━━━━\n` +
         `✅ To'g'ri:    <b>${session.correct} ta</b>\n` +
         `❌ Xato:       <b>${session.wrong} ta</b>\n` +
-        `⏭ O'tkazildi: <b>${skipped} ta</b>\n\n` +
+        `⏭ O'tkazildi: <b>${skipped} ta</b>\n` +
+        `━━━━━━━━━━━━━━━━\n\n` +
         `🎯 Natija: <b>${pct}%</b> — ${grade(pct)}\n` +
-        `⏱ Vaqt: <b>${time}</b>`;
+        `⏱ Vaqt: <b>${time}</b>` +
+        funFeedback;
 
       pendingShelfSaves.set(chatId, {
         testId: tId,
@@ -450,13 +465,15 @@ async function questionTimeout(chatId, expectedIdx, pollId, telegram) {
         await sessionService.setActiveTest(chatId, session);
         await telegram.sendMessage(
           chatId,
-          `⏸ <b>Test to'xtatildi!</b>\n\n` +
-            `Ketma-ket 2 ta savolga javob bermadingiz.\n\n` +
+          `⏸ <b>Ouu, qayerdasiz?</b> ☕️\n\n` +
+            `Ketma-ket 2 ta savol o'tib ketdi. Qahva ichgani ketdingizmi?\n\n` +
+            `Xavotir olmang, test avtomatik pauza qilindi. Qachon tayyor bo'lsangiz, davom etamiz!\n\n` +
+            `━━━━━━━━━━━━━━━━\n` +
             `📊 <b>Joriy natija:</b>\n` +
             `✅ To'g'ri: <b>${session.correct} ta</b>\n` +
             `❌ Xato:    <b>${session.wrong} ta</b>\n` +
-            `📌 Qolgan:  <b>${remaining} ta savol</b>\n\n` +
-            `Davom etasizmi?`,
+            `📌 Qolgan:  <b>${remaining} ta savol</b>\n` +
+            `━━━━━━━━━━━━━━━━`,
           {
             parse_mode: "HTML",
             ...Markup.inlineKeyboard([
