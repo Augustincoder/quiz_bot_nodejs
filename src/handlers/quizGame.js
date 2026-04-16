@@ -62,7 +62,7 @@ async function cbOfficialTests(ctx) {
   buttons.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
   await safeEdit(
     ctx,
-    `📚 <b>Rasmiy Testlar</b>\n\nAdmin tomonidan tayyorlangan rasmiy test bloklari. Fan tanlang va bilimingizni sinab ko'ring!`,
+    `📚 <b>Rasmiy Test Bazasi</b>\n\nProfessional tarzda tayyorlangan rasmiy test bloklari. Fan tanlang va bilimingizni sinab ko'ring!\n\n💡 <i>Har bir fanda Adaptiv test va Aralash (Mock Exam) rejimi mavjud.</i>`,
     { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) },
   );
 }
@@ -73,7 +73,7 @@ async function cbSubject(ctx) {
   const subjName = escapeHtml(SUBJECTS[subjectKey] || "Fan");
   await safeEdit(
     ctx,
-    `📚 <b>${subjName}</b>\n\nBlok tanlang yoki Mock Exam yechib ko'ring:`,
+    `📚 <b>${subjName}</b>\n\nQuyidagi blokdan birini tanlang yoki maxsus rejimlardan foydalaning:`,
     { parse_mode: "HTML", ...getBlocksKeyboard(subjectKey, 0) },
   );
 }
@@ -103,7 +103,7 @@ async function cbStartTest(ctx) {
     const existing = await sessionService.getActiveTest(chatId);
     if (existing)
       return ctx.answerCbQuery(
-        "⚠️ Bu chatda faol test bor! Avval to'xtating: /stop",
+        "⚠️ Hozirda faol test mavjud. Avval uni yakunlang yoki /stop buyrug'i bilan to'xtating.",
         { show_alert: true },
       ).catch(() => {});
 
@@ -176,7 +176,7 @@ async function cbPostStart(ctx) {
   try {
     const existing = await sessionService.getActiveTest(chatId);
     if (existing)
-      return ctx.answerCbQuery("⚠️ Avval joriy testni to'xtating: /stop", {
+      return ctx.answerCbQuery("⚠️ Hozirda faol test mavjud. Avval uni yakunlang yoki /stop buyrug'i bilan to'xtating.", {
         show_alert: true,
       }).catch(() => {});
 
@@ -254,7 +254,7 @@ async function startUgcTest(ctx, testDb) {
     const existing = await sessionService.getActiveTest(chatId);
     if (existing)
       return ctx.reply(
-        "⚠️ Sizda allaqachon faol test bor! Avval uni yakunlang: /stop",
+        "⚠️ Sizda hozirda faol test mavjud. Avval uni yakunlang yoki /stop bilan to'xtating.",
       );
 
     if (ctx.chat?.type !== "private") {
@@ -337,7 +337,7 @@ async function cbUserReadyStart(ctx) {
       parse_mode: "HTML",
     });
     await wait(1000);
-    await safeEdit(ctx, "🚀 <b>Kamarlarni taqing! BOSHLADIK!</b> Omad yor bo'lsin! 🍀", {
+    await safeEdit(ctx, "🚀 <b>Kamarlarni taqing! BOSHLADIK!</b> Omad yor bo'lsin, muvaffaqiyat sizga! 🍀", {
       parse_mode: "HTML",
     });
 
@@ -399,9 +399,11 @@ async function cbStopTest(ctx) {
     await sessionService.deleteActiveTest(chatId).catch(() => {});
 
     const text =
-      `🛑 <b>Test to'xtatildi!</b>\n\n` +
-      `Siz <b>${escapeHtml(tName)}</b> testini <b>${session.qIdx}-savolida</b> to'xtatdingiz.\n\n` +
-      `Javonga saqlab, keyinroq davom ettirish mumkin.`;
+      `🛑 <b>Test to'xtatildi</b>\n\n` +
+      `📝 Test: <b>${escapeHtml(tName)}</b>\n` +
+      `📊 Holat: <b>${session.qIdx}</b>-savolda to'xtatildi\n` +
+      `✅ To'g'ri: <b>${session.correct || 0}</b>  ❌ Xato: <b>${(session.mistakes || []).length}</b>\n\n` +
+      `💡 Javonga saqlang va istalgan vaqtda qolgan joyingizdan davom eting!`;
 
     const buttons = [
       [Markup.button.callback("📥 Javonga saqlash (Pauza)", "shelf_save_init")],
@@ -434,7 +436,7 @@ async function cbReviewMistakes(ctx) {
       show_alert: true,
     }).catch(() => {});
 
-  const parts = [`📑 <b>So'nggi testdagi xatolar (${mistakes.length} ta):</b>`];
+  const parts = [`📑 <b>Xatolar Tahlili</b> — <i>${mistakes.length} ta xato topildi</i>\n\nQuyida har bir xato uchun siz bergan va to'g'ri javob ko'rsatilgan:`];
   for (let i = 0; i < Math.min(mistakes.length, 20); i++) {
     parts.push(
       `<b>${i + 1}.</b> ${escapeHtml(mistakes[i].question)}\n` +
@@ -470,7 +472,7 @@ async function cbAiExplainMistakes(ctx) {
 
   await safeEdit(
     ctx,
-    "🤖 <i>AI Tutor xatolaringizni tahlil qilmoqda... Iltimos, bir oz kuting</i> ⏳",
+    "🧠 <i>AI Tutor xatolaringizni tahlil qilmoqda va har biriga tushuntirish yozmoqda...</i>\n\n⏳ <i>Bu bir necha soniya vaqt olishi mumkin.</i>",
     { parse_mode: "HTML" },
   );
 
@@ -484,7 +486,7 @@ async function cbAiExplainMistakes(ctx) {
     });
   } catch (e) {
     console.error("cbAiExplainMistakes error:", e.message);
-    await safeEdit(ctx, "❌ AI tahlilida xatolik yuz berdi.", backToMainKb());
+    await safeEdit(ctx, "⚠️ AI tahlilida kutilmagan xatolik yuz berdi.\n\nIltimos, bir ozdan so'ng qaytadan urinib ko'ring. Muammo davom etsa, adminga murojaat qiling.", backToMainKb());
   }
 }
 
@@ -514,7 +516,7 @@ async function resumeTestFromShelf(ctx, savedTest) {
     const existing = await sessionService.getActiveTest(chatId);
     if (existing)
       return ctx.reply(
-        "⚠️ Sizda allaqachon faol test bor! Avval uni yakunlang: /stop",
+        "⚠️ Sizda hozirda faol test mavjud. Avval uni yakunlang yoki /stop bilan to'xtating.",
       );
 
     await safeDelete(ctx);
@@ -550,10 +552,10 @@ async function resumeTestFromShelf(ctx, savedTest) {
 
     await ctx.telegram.sendMessage(
       chatId,
-      `🚀 <b>Javondagi test yuklandi</b>\n\n` +
-        `📚 Fan: ${escapeHtml(savedTest.subject)}\n` +
-        `📝 Test: ${escapeHtml(savedTest.testName)}\n\n` +
-        `${startLabel}`,
+      `📥 <b>Javondan test yuklandi!</b>\n\n` +
+        `📚 Fan: <b>${escapeHtml(savedTest.subject)}</b>\n` +
+        `📝 Test: <b>${escapeHtml(savedTest.testName)}</b>\n\n` +
+        `${startLabel}\n\n💡 <i>Oldingi natijalaringiz saqlanib qolgan.</i>`,
       { parse_mode: "HTML" },
     );
 

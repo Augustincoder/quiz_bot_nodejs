@@ -47,7 +47,8 @@ async function initAndStartTest(chatId, telegram, subjectKey, testId, testData, 
       `📝 Blok: <b>${tLabel}</b>\n` +
       `🔢 Jami: <b>${sessionQ.length} ta savol</b>\n` +
       `⏱ Har savolga: <b>30 soniya</b>\n\n` +
-      `<i>Boshlashga tayyor bo'lsangiz, quyidagi tugmani bosing:</i>`,
+      `━━━━━━━━━━━━━━━━\n` +
+      `💡 <i>Savollar aralashtirilib beriladi. Tayyor bo'lsangiz — boshlang!</i>`,
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([[Markup.button.callback('✅ Tayyorman!', 'user_ready_start')]]),
@@ -62,10 +63,10 @@ async function sendWaitingRoomMessage(ctx, chatId, subjectKey, testId, questionC
   const tLabel = testId === 'mock' ? 'Aralash' : `${testId}-Blok`;
   await ctx.telegram.sendMessage(
     chatId,
-    `👥 <b>Guruh Rejimi</b>\n\n` +
+    `👥 <b>Guruh Rejimi — Kutish Zali</b>\n\n` +
     `📚 ${SUBJECTS[subjectKey] || 'Fan'} — ${tLabel}\n` +
     `🔢 Savollar: <b>${questionCount} ta</b>\n\n` +
-    `<i>Kamida 2 kishi tayyor bo'lsa boshlanadi.</i>`,
+    `<i>\"✅ Tayyorman\" tugmasini bosing. Kamida 2 kishi tayyorlanishi kerak.</i>`,
     {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([

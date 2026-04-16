@@ -21,27 +21,27 @@ async function cbAdaptiveTest(ctx) {
 
     if (!mistakes.length) {
       return safeEdit(ctx,
-        `🎉 <b>Zo'r natija!</b>\n\n` +
-        `<b>${subjName}</b> bo'yicha hech qanday xatoyingiz topilmadi.\n\n` +
-        `<b>Nima qilish mumkin?</b>\n` +
-        `✅ Rasmiy test bloklarini ishlang\n` +
-        `✅ Aralash (Mock Exam) yechib ko'ring\n` +
-        `✅ Xatolar to'plangach, bu sahifaga qaytib keling`,
+        `🎉 <b>Tabriklaymiz!</b>\n\n` +
+        `<b>${subjName}</b> bo'yicha hozircha hech qanday xato topilmadi — siz ajoyib tayyorgarlik ko'rsatyapsiz!\n\n` +
+        `<b>Keyingi qadamlar:</b>\n` +
+        `📚 Rasmiy test bloklarini yechib, xatolar to'plashga harakat qiling\n` +
+        `🎲 Aralash (Mock Exam) rejimida bilimingizni sinab ko'ring\n` +
+        `🎯 Xatolar yig'ilgach — bu yerga qaytib keling!`,
         { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Fanga qaytish', `subj_${subjectKey}`)]]) },
       );
     }
 
     const topicCount = Math.max(1, Math.floor(mistakes.length / 2));
     await safeEdit(ctx,
-      `🎯 <b>Moslashuvchi (Adaptiv) Test</b>\n\n` +
-      `Avvalgi xatolaringiz asosida maxsus savollar yaratiladi.\n\n` +
+      `🎯 <b>AI Adaptiv Test</b>\n\n` +
+      `AI sizning <b>avvalgi xatolaringiz</b> asosida maxsus test yaratadi — zaif joylaringizni mustahkamlash uchun eng samarali usul!\n\n` +
       `━━━━━━━━━━━━━━━━\n` +
-      `📊 <b>${subjName} bo'yicha holatingiz:</b>\n` +
-      `❌ Topilgan xatolar: <b>${mistakes.length} ta</b>\n` +
-      `📌 Taxminiy mavzular: <b>${topicCount} ta</b>\n` +
+      `📊 <b>${subjName} bo'yicha tahlil:</b>\n` +
+      `❌ Jamg'arilgan xatolar: <b>${mistakes.length} ta</b>\n` +
+      `📌 Taxminiy zaif mavzular: <b>${topicCount} ta</b>\n` +
       `━━━━━━━━━━━━━━━━\n\n` +
-      `<b>Nechta savol ishlaylik?</b>\n` +
-      `<i>💡 10–15 ta — diqqatni jamlash uchun optimal.</i>`,
+      `<b>Nechta savol ishlashni tanlang:</b>\n` +
+      `<i>💡 10–15 ta — diqqat va samaradorlik uchun eng maqbul.</i>`,
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
@@ -77,7 +77,7 @@ async function cbAdaptiveRun(ctx) {
     if (!mistakes.length) return ctx.answerCbQuery("🎉 Bu fandan xatolar yo'q!", { show_alert: true }).catch(() => {});
 
     const msg = await ctx.reply(
-      `⏳ <i>AI "${subjName}" fanidan ${count} ta maxsus savol tuzmoqda...</i>`,
+      `⏳ <i>AI "${subjName}" fanidan sizning zaif joylaringiz asosida ${count} ta maxsus savol tuzmoqda...</i> 🧠`,
       { parse_mode: 'HTML' },
     );
 

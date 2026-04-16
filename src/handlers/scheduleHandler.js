@@ -49,7 +49,7 @@ async function cmdHafta(ctx) {
     // Avval faqat "❌ Texnik xatolik" deb qo'yib qolardi — foydalanuvchi nima qilishini bilmasdi.
     await ctx.telegram.editMessageText(
       ctx.chat.id, msg.message_id, undefined,
-      '❌ Jadval yuklanmadi. Iltimos, bir ozdan so\'ng qayta urinib ko\'ring yoki /jadval buyrug\'idan foydalaning.',
+      '⚠️ Jadval yuklanmadi.\n\nIltimos, bir ozdan so\'ng qaytadan urinib ko\'ring. Bugungi jadval uchun /jadval buyrug\'idan foydalaning.',
       Markup.inlineKeyboard([[Markup.button.callback('🔄 Qayta urinish', 'retry_hafta')]])
     );
   }

@@ -12,11 +12,15 @@ async function cbAiTutorMenu(ctx) {
     try {
         await ctx.answerCbQuery().catch(() => { });
 
-        const text = `🤖 *AI Tutor — Shaxsiy Yordamchingiz*
+        const text = `🤖 *AI Tutor — Shaxsiy O'quv Yordamchingiz*
 
-Bu bo'limda Sun'iy Intellekt sizga test tuzib berishi yoki yozgan matnlaringizni tahlil qilishi mumkin. 
+Sun'iy Intellekt sizga ikki xil yo'lda yordam beradi:
 
-*Nimadan boshlaymiz?*`;
+🧠 *Smart Quiz* — Matn yoki rasmdan avtomatik test tuzib beradi
+📝 *Insho Tahlili* — Yozgan matningizni tekshirib, baho va maslahat beradi
+
+━━━━━━━━━━━━━━━━
+*Qaysi xizmatdan foydalanmoqchisiz?*`;
 
         const buttons = [
             [Markup.button.callback('🧠 Smart Quiz (Matn/Rasmdan test)', 'fmt_ai')], // TestCreation.js dagi funksiyaga ulanadi
@@ -39,15 +43,18 @@ async function cbAiEssayInit(ctx) {
         const { setState, States } = require('../core/utils');
         setState(ctx, States.AI_ESSAY_ANALYSIS);
 
-        const text = `📝 *Insho yoki Tarjimani tahlil qilish*
+        const text = `📝 *Insho / Tarjima Tahlili*
 
-Yozgan matningizni (IELTS Insho, maqola yoki tarjima) menga xabar qilib yuboring. AI uni tekshirib, quyidagilarni aniqlaydi:
-- Grammatik xatolar
-- So'z boyligi (Vocabulary)
-- Tuzilma va mantiq
-- 100 ballik tizimda baho
+Yozgan matningizni (IELTS essay, maqola, tarjima yoki boshqa yozma ish) shu chatga yuboring.
 
-_Kutmoqdamiz, matnni yuboring:_`;
+🤖 *AI Tutor quyidagilarni tahlil qiladi:*
+• ✍️ Grammatik xatolar va ularni tuzatish
+• 📚 So'z boyligi (Vocabulary) darajasi
+• 🏗 Matn tuzilmasi va mantiqiy ketma-ketlik
+• 💯 100 ballik tizimda umumiy baho
+
+━━━━━━━━━━━━━━━━
+💡 _Kamida 2–3 gapdan iborat matn yuboring. Uzunroq matn — batafsilroq tahlil!_`;
 
         await safeEdit(ctx, text, {
             parse_mode: 'Markdown',
@@ -76,7 +83,7 @@ async function cbAiEssayMenu(ctx) {
 async function onEssayInput(ctx) {
     const text = ctx.message.text;
     if (!text || text.length < 15) {
-        return ctx.reply("⚠️ Matn juda qisqa. Kamida 1-2 gapdan iborat matn yuboring.");
+        return ctx.reply("⚠️ Matn juda qisqa.\n\nSifatli tahlil uchun kamida 2–3 gapdan iborat matn yuboring. Uzunroq matn — batafsilroq natija!");
     }
 
     const msg = await ctx.reply("⏳ <i>AI Tutor matningizni tekshirmoqda...</i>", { parse_mode: 'HTML' });

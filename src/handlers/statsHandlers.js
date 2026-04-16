@@ -41,7 +41,7 @@ async function cbStatsMenu(ctx) {
         `📝 Yakunlangan testlar:<b>${completed} ta</b>\n` +
         `━━━━━━━━━━━━━━━━\n` +
         `🏆 Reytingdagi o'rin: <b>${rankLabel}</b>\n\n` +
-        `<i>💡 Reyting uchun ko'proq to'g'ri javob bering.</i>`,
+        `<i>💡 Ko'proq test yeching va to'g'ri javoblar bilan reytingda o'rningizni oshiring!</i>`,
       {
         parse_mode: "HTML",
         ...Markup.inlineKeyboard([
@@ -70,7 +70,7 @@ async function cbLeaderboard(ctx) {
     if (!topUsers?.length) {
       return safeEdit(
         ctx,
-        "🏆 <b>Reyting maydoni hozircha bo'sh!</b>\n\nBu siz uchun katta imkoniyat. Birinchi bo'lib test yeching va taxtni egallang! Qani, olg'a! 🥷",
+        "🏆 Reyting jadvali hozircha bo'sh.\n\n💡 Birinchi bo'lib test yechib, reytingda 🥇 o'rin egallang!",
         { parse_mode: "HTML", ...backToMainKb() },
       );
     }
@@ -120,7 +120,7 @@ async function cbHistoryPage(ctx) {
     if (!history.length) {
       return safeEdit(
         ctx,
-        "📜 <b>Testlar tarixi</b>\n\nSiz hali hech qanday testni yakunlamagansiz.",
+        "📜 <b>Test Tarixi</b>\n\n📭 Siz hali hech qanday testni yakunlamagansiz.\n\n💡 Rasmiy testlar yoki AI Smart Quiz orqali birinchi testingizni yeching — natijalar shu yerda ko'rinadi!",
         {
           parse_mode: "HTML",
           ...Markup.inlineKeyboard([

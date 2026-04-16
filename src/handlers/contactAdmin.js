@@ -16,7 +16,7 @@ async function cbInitContact(ctx) {
 
   await safeEdit(
     ctx,
-    `👨‍💻 <b>Adminga Murojaat</b>\n\nSavol, taklif yoki muammoingizni shu yerda yozib qoldiring.\n📷 <i>Matn, rasm, video, link yoki ovozli xabar yuborishingiz mumkin.</i>\n\nAdmin sizga tez orada javob beradi.`,
+    `👨‍💻 <b>Adminga Murojaat</b>\n\nSavol, taklif yoki texnik muammoingiz bormi? Shu yerga yozib qoldiring — admin tez orada javob beradi.\n\n📎 <i>Quyidagilarni yuborishingiz mumkin:</i>\n• Matn xabari\n• 📷 Rasm yoki 📹 Video\n• 🔗 Havola (link)\n• 🎤 Ovozli xabar\n\n👇 <b>Xabaringizni yozing:</b>`,
     {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([
@@ -87,7 +87,7 @@ async function handleContactMessages(ctx, next) {
 
     // 4. Confirmation to user
     await ctx.reply(
-      '✅ Xabaringiz adminga muvaffaqiyatli yuborildi!\n\n<i>Admin tez orada javob beradi.</i>',
+      '✅ <b>Xabaringiz muvaffaqiyatli yuborildi!</b>\n\n<i>Admin tez orada sizga javob beradi. Iltimos, sabr bilan kuting.</i> 📩',
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
@@ -98,7 +98,7 @@ async function handleContactMessages(ctx, next) {
     );
   } catch (e) {
     console.error('Adminga xabar yuborishda xato:', e);
-    await ctx.reply('❌ Xatolik yuz berdi. Iltimos, keyinroq urinib ko\'ring.');
+    await ctx.reply('⚠️ Xabar yuborishda xatolik yuz berdi.\n\nIltimos, bir ozdan so\'ng qaytadan urinib ko\'ring. Muammo davom etsa, to\'g\'ridan-to\'g\'ri @AvazovM ga yozing.');
   }
 }
 

@@ -56,10 +56,12 @@ async function cbShelfSaveInit(ctx) {
 📝 Test: *${pendingTest.testName}*
 📚 Fan: *${pendingTest.subject}*
 
+━━━━━━━━━━━━━━━━
 *Qaysi papkaga saqlaymiz?*
-_Yangi papka nomiga misol: "Ertangi imtihon", "Korporativ 3-blok", "Takrorlash uchun"_
 
-💡 *Maslahat:* Papkani imtihon sanasi yoki mavzu bo'yicha nomlasangiz, keyinchalik tez topasiz.`;
+Mavjud papkani tanlang yoki yangi yarating.
+
+💡 *Maslahat:* Papkani sanasi yoki mavzu bo'yicha nomlang (masalan: "15-Aprel imtihon", "Takrorlash")`;
 
     await safeEdit(ctx, text, {
       parse_mode: "Markdown",
@@ -79,7 +81,7 @@ async function cbShelfNewFolder(ctx) {
     setState(ctx, States.CREATE_SHELF_FOLDER);
     await safeEdit(
       ctx,
-      `📁 *Yangi papka*\n\nPapka nomini kiriting (Masalan: "Ertangi imtihon"):`,
+      `📁 *Yangi papka yaratish*\n\nPapka nomini kiriting (2–30 belgi).\n\n💡 _Masalan: "Ertangi imtihon", "Biologiya takrorlash", "Final savollar"_`,
       Markup.inlineKeyboard([
         [Markup.button.callback("❌ Bekor qilish", "sh_cancel")],
       ]),
@@ -94,10 +96,10 @@ async function onNewFolderInput(ctx) {
     const folderName = ctx.message.text.trim();
     if (folderName.length > 30)
       return ctx.reply(
-        "⚠️ Papka nomi 30 ta belgidan oshmasligi kerak. Qaytadan yozing:",
+        "⚠️ Papka nomi juda uzun! Iltimos, 30 ta belgidan oshmaydigan nom kiriting.\n\n💡 Qisqa va tushunarli nom tanlang.",
       );
     if (folderName.length < 2)
-      return ctx.reply("⚠️ Papka nomi juda qisqa. Qaytadan yozing:");
+      return ctx.reply("⚠️ Papka nomi juda qisqa. Kamida 2 ta belgi kiriting.\n\n💡 Masalan: \"Midterm\", \"5-Bob\"");
 
     const msg = await ctx.reply("⏳ <i>Saqlanmoqda...</i>", {
       parse_mode: "HTML",
@@ -138,7 +140,7 @@ async function executeSave(ctx, folderName, msgId) {
           chatId,
           msgId,
           undefined,
-          "⚠️ Xatolik: Xotiradan test topilmadi. Test allaqachon saqlangan yoki muddati o'tgan.",
+          "⚠️ Test ma'lumotlari topilmadi.\n\nBu test allaqachon saqlangan yoki sessiya muddati tugagan bo'lishi mumkin. Iltimos, yangi test yakunlab qaytadan urinib ko'ring.",
           inlineMain,
         )
         .catch(() => {});
@@ -157,7 +159,7 @@ async function executeSave(ctx, folderName, msgId) {
           chatId,
           msgId,
           undefined,
-          `⚠️ Bu test <b>${folderName}</b> papkasida allaqachon mavjud!`,
+          `⚠️ Bu test <b>${folderName}</b> papkasida allaqachon saqlangan.\n\n💡 Boshqa papka tanlang yoki yangi papka yarating.`,
           { parse_mode: "HTML", ...inlineMain },
         )
         .catch(() => {});
@@ -169,7 +171,7 @@ async function executeSave(ctx, folderName, msgId) {
           chatId,
           msgId,
           undefined,
-          `✅ Test muvaffaqiyatli <b>${folderName}</b> papkasiga saqlandi!\n\nAsosiy menyudagi "📥 Javon" bo'limi orqali testni qolgan joyidan davom ettirishingiz mumkin.`,
+          `✅ Test <b>${folderName}</b> papkasiga muvaffaqiyatli saqlandi!\n\n📥 Asosiy menyudagi <b>\"Javon\"</b> bo'limidan istalgan paytda qolgan joyidan davom ettirishingiz mumkin.`,
           { parse_mode: "HTML", ...inlineMain },
         )
         .catch(() => {});
@@ -179,7 +181,7 @@ async function executeSave(ctx, folderName, msgId) {
           chatId,
           msgId,
           undefined,
-          "❌ Saqlashda xatolik yuz berdi.",
+          "⚠️ Saqlashda kutilmagan xatolik yuz berdi. Iltimos, bir ozdan so'ng qaytadan urinib ko'ring.",
           inlineMain,
         )
         .catch(() => {});
@@ -195,7 +197,7 @@ async function executeSave(ctx, folderName, msgId) {
         ctx.chat?.id,
         msgId,
         undefined,
-        "❌ Kutilmagan tizim xatosi.",
+        "⚠️ Kutilmagan tizim xatosi yuz berdi. Iltimos, keyinroq urinib ko'ring yoki adminga murojaat qiling.",
         inlineMain,
       )
       .catch(() => {});
@@ -218,18 +220,21 @@ async function cbMyShelf(ctx) {
     const folders = Object.keys(shelf || {});
 
     if (folders.length === 0) {
-      const emptyText = `📚 *Sizning Javoningiz*
+      const emptyText = `📥 *Javon — Sizning shaxsiy arxivingiz*
 
-Hozircha bu yerda hech narsa yo'q — lekin bu oson hal bo'ladi!
-
-*Javon nima uchun kerak?*
-✓ Test ishlayotganda to'xtatib, keyinroq davom eting
-✓ Sevimlilaringizni papkalarga tartiblang
-✓ AI tomonidan yaratilgan testlarni yo'qotmang
-✓ Imtihon oldidan tezkor takrorlash qiling
+📭 Hozircha bu yerda hech narsa yo'q.
 
 ━━━━━━━━━━━━━━━━
-*Qanday saqlash mumkin?*
+*Javon nima?*
+Javon — bu sizning testlaringiz uchun shaxsiy arxiv. Istalgan testni to'xtatib, saqlang va keyinroq qolgan joyidan davom eting.
+
+✨ *Nimalar mumkin:*
+• Testni to'xtatib, keyinroq davom ettirish
+• Testlarni papkalarga ajratib tartibga solish
+• Imtihon oldidan saqlangan testlarni qayta yechish
+
+━━━━━━━━━━━━━━━━
+💡 *Qanday saqlash mumkin?*
 Test yakunlangach yoki /stop orqali to'xtatganda "📥 Javonga saqlash" tugmasi paydo bo'ladi.`;
 
       return safeEdit(ctx, emptyText, {
@@ -251,7 +256,7 @@ Test yakunlangach yoki /stop orqali to'xtatganda "📥 Javonga saqlash" tugmasi 
     });
     buttons.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
 
-    await safeEdit(ctx, `📚 *Sizning Javoningiz*\n\nPapkalar ro'yxati:`, {
+    await safeEdit(ctx, `📥 *Javon — Papkalaringiz*\n\n${folders.length} ta papka mavjud. Ochish uchun tanlang:`, {
       parse_mode: "Markdown",
       ...Markup.inlineKeyboard(buttons),
     });
