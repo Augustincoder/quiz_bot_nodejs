@@ -34,6 +34,8 @@ const MAX_BLOCK_LEN = 50;
 // ─── TUGMALAR GENERATORI ─────────────────────────────────────
 function questionsSummaryKb() {
   return Markup.inlineKeyboard([
+    [Markup.button.callback("🤖 AI test", "fmt_ai"), Markup.button.callback("📊 Quiz qo'shish", "fmt_quiz")],
+    [Markup.button.callback("📝 Matn orqali", "fmt_text"), Markup.button.callback("📄 Docx fayl", "fmt_docx")],
     [Markup.button.callback("👁 Savollarni ko'rib chiqish", "preview_q_0")],
     [Markup.button.callback("✅ Yakunlash va Saqlash", "finish_test_creation")],
     [Markup.button.callback("❌ Bekor qilish", "cancel_creation")],
@@ -277,8 +279,8 @@ async function cbFmt(ctx) {
 
   const backBtnAction = data.is_editing
     ? "back_to_edit_dash"
-    : "cancel_creation";
-  const backBtnText = data.is_editing ? "🔙 Orqaga" : "❌ Bekor qilish";
+    : "preview_back";
+  const backBtnText = data.is_editing ? "🔙 Orqaga" : "🔙 Format tanlashga qaytish";
 
   if (fmt === "ai") {
     const aiText = `🤖 *AI Smart Quiz — Sun'iy Intellekt bilan test yaratish*
@@ -356,7 +358,7 @@ async function promptQuestionCount(ctx) {
           Markup.button.callback("20 ta", "ai_cnt_20"),
         ],
         [Markup.button.callback("🤖 Matnga mos (Avto)", "ai_cnt_auto")],
-        [Markup.button.callback("🔙 Orqaga", "fmt_ai")],
+        [Markup.button.callback("🔙 Orqaga", data?.is_editing ? "back_to_edit_dash" : "fmt_ai")],
       ]),
     },
   );
@@ -664,7 +666,7 @@ async function cbPreviewBack(ctx) {
 
   await safeEdit(
     ctx,
-    `✅ *Holat*\nJami savollar: *${(data.questions || []).length} ta*`,
+    `✅ *Holat*\nJami savollar: *${(data.questions || []).length} ta*\n\nQo'shimcha savollar qo'shish uchun formatni tanlang yoki yakunlang:`,
     { parse_mode: "Markdown", ...questionsSummaryKb() },
   );
 }
