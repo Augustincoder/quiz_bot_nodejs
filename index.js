@@ -274,30 +274,72 @@ async function main() {
   // 2. Local JSON papkadagi testlarni yuklash
   try {
     for (const subj of Object.keys(SUBJECTS)) {
-      const subjDir = path.join(DATA_DIR, subj);
-      if (fs.existsSync(subjDir)) {
-        const files = fs
-          .readdirSync(subjDir)
-          .filter((f) => f.endsWith(".json"));
-        if (!botModule.memoryDb[subj]) botModule.memoryDb[subj] = {};
+      let subjDir = path.join(DATA_DIR, subj);
+      let sourceDir = subjDir;
+      if (!fs.existsSync(subjDir) || !fs.readdirSync(subjDir).some((f) => f.endsWith(".json"))) {
+        const altDir = path.join(__dirname, "src", "data", subj);
+        if (fs.existsSync(altDir)) {
+          subjDir = altDir;
+          sourceDir = altDir;
+        }
+      }
 
-        for (const file of files) {
-          const testId = parseInt(
-            file.replace("test_", "").replace(".json", ""),
-            10,
-          );
-          const questions = JSON.parse(
-            fs.readFileSync(path.join(subjDir, file), "utf8"),
-          );
+      if (!fs.existsSync(subjDir)) {
+        console.warn(`⚠️ Local test katalogi topilmadi: ${subjDir}`);
+        continue;
+      }
 
-          if (!botModule.memoryDb[subj][testId]) {
-            botModule.memoryDb[subj][testId] = {
-              test_id: testId,
-              range: `1-${questions.length}`,
-              questions: questions,
-            };
+      const files = fs.readdirSync(subjDir).filter((f) => f.endsWith(".json"));
+      if (!files.length) {
+        console.warn(`⚠️ ${subj} uchun JSON fayl topilmadi: ${subjDir}`);
+        continue;
+      }
+
+      if (!botModule.memoryDb[subj]) botModule.memoryDb[subj] = {};
+
+      for (const file of files) {
+        const match = file.match(/^test_(\d+)\.json$/);
+        if (!match) {
+          console.warn(`⚠️ Nomutanosib fayl nomi e'tiborsiz qoldirildi: ${file}`);
+          continue;
+        }
+
+        const testId = Number(match[1]);
+        const filePath = path.join(subjDir, file);
+        const rawData = JSON.parse(fs.readFileSync(filePath, "utf8"));
+        let questions = rawData;
+        let range = `1-${Array.isArray(rawData) ? rawData.length : (rawData.questions?.length || 0)}`;
+        let blockName = rawData.block_name || `Blok ${rawData.test_id || testId}`;
+
+        if (rawData && typeof rawData === "object" && !Array.isArray(rawData)) {
+          if (Array.isArray(rawData.questions)) {
+            questions = rawData.questions;
+          }
+          if (typeof rawData.range === "string") {
+            range = rawData.range;
+          }
+          if (typeof rawData.block_name === "string") {
+            blockName = rawData.block_name;
           }
         }
+
+        if (!Array.isArray(questions)) {
+          console.warn(`⚠️ ${filePath} ichidagi test savollari massiv emas; o'tkazib yuborildi.`);
+          continue;
+        }
+
+        if (!botModule.memoryDb[subj][testId]) {
+          botModule.memoryDb[subj][testId] = {
+            test_id: testId,
+            range,
+            block_name: blockName,
+            questions,
+          };
+        }
+      }
+
+      if (sourceDir !== path.join(DATA_DIR, subj)) {
+        console.log(`ℹ️ Local tests for ${subj} loaded from alternate directory: ${sourceDir}`);
       }
     }
     console.log("✅ Local JSON testlar ham muvaffaqiyatli o'qildi.");
@@ -321,11 +363,28 @@ async function main() {
   }
 
   // Web Server
+  // Web Server & Socket.io Upgrade
   const app = express();
+  const cors = require("cors");
+  const adminRouter = require("./src/api/admin");
+
+  app.use(cors());
+  app.use(express.json({ limit: "50mb" }));
+  app.use("/api/admin", adminRouter);
+
+  const http = require("http");
+  const { initSocket } = require("./src/socket");
+
+  const server = http.createServer(app);
+  
+  // Attach Socket.io
+  initSocket(server);
+
   const port = parseInt(process.env.PORT || "8080", 10);
   app.get("/", (_, res) => res.send("Bot 100% aktiv va ishlab turibdi! 🚀"));
-  app.listen(port, () =>
-    console.log(`🌐 Web server ishga tushdi (Port: ${port})`),
+  
+  server.listen(port, () =>
+    console.log(`🌐 Web & Socket.io server ishga tushdi (Port: ${port})`)
   );
 
   // Avtomatik Dars Jadvali tarqatish (Xavfsiz Navbat orqali)
