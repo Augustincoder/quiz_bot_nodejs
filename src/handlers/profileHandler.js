@@ -6,12 +6,23 @@ const dbService = require('../services/dbService');
 
 let VALID_GROUPS = [];
 try {
-  const rawGroups = JSON.parse(fs.readFileSync(path.join(__dirname, '../../groups.json'), 'utf8'));
-  VALID_GROUPS = rawGroups.filter(g => g && g !== '-' && !g.toUpperCase().includes('FAKULTET') && !g.toUpperCase().includes('KURS'));
+  const rawGroups = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/groups.json'), 'utf8'));
+  
+  VALID_GROUPS = rawGroups.filter(g => {
+    if (!g) return false;
+    
+    // Matnni bo'sh joylardan tozalab, hammasini katta harfga o'tkazib olamiz
+    const cleanG = g.trim().toUpperCase();
+    
+    return cleanG !== '-' && 
+           cleanG !== '--' && 
+           cleanG !== '(RUS)' && // Agar buni ham chiqarib tashlash kerak bo'lsa
+           !cleanG.includes('FAKULTET') && 
+           !cleanG.includes('KURS');
+  });
 } catch {
   console.error('⚠️ groups.json topilmadi. Qidiruv ishlamasligi mumkin.');
 }
-
 function normalize(str) { return str.toUpperCase().replace(/[^A-Z0-9*]/g, ''); }
 
 function getLevenshteinDistance(a, b) {

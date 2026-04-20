@@ -269,4 +269,4 @@ async function getEmptyRoomsText(className, dayIdx, periodNum, offsetDays = 0) {
   } catch (e) { return ["❌ Tizimdan bo'sh xonalarni ajratib olishda xatolik."]; }
 }
 
-module.exports = { getFormattedSchedule, getEmptyRoomsText, parseSchedule, formatTimetableText, getRawSchedule };
+module.exports = { getFormattedSchedule, getEmptyRoomsText, parseSchedule, formatTimetableText, getRawSchedule,getTimetableData };
