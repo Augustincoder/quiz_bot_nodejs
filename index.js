@@ -223,23 +223,23 @@ async function gracefulShutdown(signal) {
     bot.stop(signal);
 
     // 2. Pause BullMQ queues
-    await broadcastQueue.pause().catch(() => {});
-    await quizTimerQueue.pause().catch(() => {});
+    await broadcastQueue.pause().catch(() => { });
+    await quizTimerQueue.pause().catch(() => { });
     logger.info('📦 BullMQ queues paused');
 
     // 3. Close workers
     if (_workers) {
-      if (_workers.broadcastWorker) await _workers.broadcastWorker.close().catch(() => {});
-      if (_workers.quizTimerWorker) await _workers.quizTimerWorker.close().catch(() => {});
+      if (_workers.broadcastWorker) await _workers.broadcastWorker.close().catch(() => { });
+      if (_workers.quizTimerWorker) await _workers.quizTimerWorker.close().catch(() => { });
       logger.info('👷 BullMQ workers closed');
     }
 
     // 4. Flush Sentry
-    await Sentry.flush(3000).catch(() => {});
+    await Sentry.flush(3000).catch(() => { });
     logger.info('📡 Sentry flushed');
 
     // 5. Close Redis
-    await redisConnection.quit().catch(() => {});
+    await redisConnection.quit().catch(() => { });
     logger.info('🔌 Redis connection closed');
 
     logger.info('✅ Graceful shutdown completed');
@@ -376,68 +376,130 @@ async function main() {
   const { initSocket } = require("./src/socket");
 
   const server = http.createServer(app);
-  
+
   // Attach Socket.io
   initSocket(server);
 
   const port = parseInt(process.env.PORT || "8080", 10);
   app.get("/", (_, res) => res.send("Bot 100% aktiv va ishlab turibdi! 🚀"));
-  
+
   server.listen(port, () =>
     console.log(`🌐 Web & Socket.io server ishga tushdi (Port: ${port})`)
   );
 
-  // Avtomatik Dars Jadvali tarqatish (Xavfsiz Navbat orqali)
-  cron.schedule(
-    "30 07 * * 1-6",
-    async () => {
-      console.log(
-        "⏰ Jadval tarqatish vazifalari navbatga (Queue) qo'shilmoqda...",
+  // Avtomatik Dars Jadvali tarqatish funksiyasi
+  async function queueSchedules(isTomorrow) {
+    console.log(
+      `⏰ ${isTomorrow ? 'Ertangi' : 'Bugungi'} jadval tarqatish vazifalari navbatga (Queue) qo'shilmoqda...`,
+    );
+    try {
+      const users = await dbService.getAllUsers();
+      if (!users) return;
+
+      const date = new Date(
+        new Date().toLocaleString("en-US", { timeZone: "Asia/Tashkent" }),
       );
-      try {
-        const users = await dbService.getAllUsers();
-        if (!users) return;
+      // Dushanba=0, Seshanba=1, ..., Yakshanba=6
+      let dayOfWeek = (date.getDay() + 6) % 7;
 
-        const date = new Date(
-          new Date().toLocaleString("en-US", { timeZone: "Asia/Tashkent" }),
-        );
-        const dayOfWeek = (date.getDay() + 6) % 7;
-        if (dayOfWeek === 6) return;
-
-        const jobs = users
-          .filter((u) => u.class_name)
-          .map((user) => ({
-            name: "send-schedule",
-            data: {
-              userId: user.telegram_id,
-              className: user.class_name,
-              dayOfWeek,
-            },
-            opts: {
-              attempts: 3,
-              backoff: { type: "exponential", delay: 5000 },
-              removeOnComplete: true,
-              removeOnFail: false,
-            },
-          }));
-
-        if (jobs.length > 0) {
-          await broadcastQueue.addBulk(jobs);
-          console.log(
-            `✅ Jami ${jobs.length} ta xabar yuborish vazifasi BullMQ navbatiga tizildi!`,
-          );
-        }
-      } catch (error) {
-        console.error("Cron xatoligi:", error);
+      // Agar kechqurun ishlayotgan bo'lsa, ertasi kun indeksini olamiz
+      if (isTomorrow) {
+        dayOfWeek = (dayOfWeek + 1) % 7;
       }
-    },
-    { timezone: "Asia/Tashkent" },
-  );
+
+      // Yakshanba kuni dars bo'lmaydi, vazifa qilinmaydi
+      if (dayOfWeek === 6) return;
+
+      const jobs = users
+        .filter((u) => u.class_name)
+        .map((user) => ({
+          name: "send-schedule",
+          data: {
+            userId: user.telegram_id,
+            className: user.class_name,
+            dayOfWeek,
+            isTomorrow // Worker xayrli tong/tun deb ajratishi uchun kerak
+          },
+          opts: {
+            attempts: 3,
+            backoff: { type: "exponential", delay: 5000 },
+            removeOnComplete: true,
+            removeOnFail: false,
+          },
+        }));
+
+      if (jobs.length > 0) {
+        await broadcastQueue.addBulk(jobs);
+        console.log(
+          `✅ Jami ${jobs.length} ta xabar yuborish vazifasi BullMQ navbatiga tizildi!`,
+        );
+      }
+    } catch (error) {
+      console.error("Cron xatoligi:", error);
+    }
+  }
+
+  // 1. Ertalab 07:30 (Bugungi jadval uchun) - Dushanbadan Shanbagacha ishlaydi
+  cron.schedule("30 07 * * 1-6", () => queueSchedules(false), { timezone: "Asia/Tashkent" });
+
+  // 2. Kechqurun 21:00 (Ertangi jadval uchun) - Yakshanbadan Jumagacha ishlaydi
+  cron.schedule("00 21 * * 0-5", () => queueSchedules(true), { timezone: "Asia/Tashkent" });
 
   // Botni yurgizish
   await bot.telegram.deleteWebhook({ drop_pending_updates: true });
   logger.info("🤖 Bot ishga tushdi", { timestamp: new Date().toISOString() });
   console.log("🤖 Bot ishga tushdi...");
+  // ---------------------------------------------------------
+  // 🛠 TEST KOMANDALARI (Faqat Queue va Workerni tekshirish uchun)
+  // ---------------------------------------------------------
+
+  // 1. Bugungi jadval tizimini tekshirish
+  bot.command('testcron_bugun', async (ctx) => {
+    try {
+      const className = await dbService.getUserClass(ctx.from.id);
+      if (!className) return ctx.reply("⚠️ Sizda guruh saqlanmagan. Avval /setclass orqali guruhni kiriting.");
+
+      const date = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tashkent" }));
+      let dayOfWeek = (date.getDay() + 6) % 7;
+
+      await broadcastQueue.add('send-schedule', {
+        userId: ctx.from.id,
+        className: className,
+        dayOfWeek: dayOfWeek,
+        isTomorrow: false // Bugungi dars
+      }, { removeOnComplete: true });
+
+      await ctx.reply("✅ Bugungi jadval uchun test vazifasi navbatga (Queue) qo'shildi! Kuting...");
+    } catch (e) {
+      console.error(e);
+      ctx.reply("❌ Xatolik yuz berdi.");
+    }
+  });
+
+  // 2. Ertangi jadval tizimini (kechqurungi holatni) tekshirish
+  bot.command('testcron_ertaga', async (ctx) => {
+    try {
+      const className = await dbService.getUserClass(ctx.from.id);
+      if (!className) return ctx.reply("⚠️ Sizda guruh saqlanmagan. Avval /setclass orqali guruhni kiriting.");
+
+      const date = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tashkent" }));
+      let dayOfWeek = (date.getDay() + 6) % 7;
+      dayOfWeek = (dayOfWeek + 1) % 7; // Ertangi kun
+
+      await broadcastQueue.add('send-schedule', {
+        userId: ctx.from.id,
+        className: className,
+        dayOfWeek: dayOfWeek,
+        isTomorrow: true // Ertangi dars
+      }, { removeOnComplete: true });
+
+      await ctx.reply("✅ Ertangi jadval uchun test vazifasi navbatga qo'shildi! Kuting...");
+    } catch (e) {
+      console.error(e);
+      ctx.reply("❌ Xatolik yuz berdi.");
+    }
+  });
+  // ---------------------------------------------------------
   await bot.launch();
 }
 

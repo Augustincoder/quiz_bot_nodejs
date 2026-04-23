@@ -1,12 +1,17 @@
 'use strict';
 
-// Fayllar endi bitta papkada (src/services/) bo'lgani uchun to'g'ridan-to'g'ri yonidan chaqiramiz
 const { getFormattedSchedule, getRawSchedule, getEmptyRoomsText } = require('./edupageService');
 const { generateScheduleImage } = require('./imageService');
 
-async function fetchTodaySchedule(className) {
-    const date = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
-    const dayOfWeek = (date.getDay() + 6) % 7;
+// O'ZGARISH: specificDayIdx qo'shildi
+async function fetchTodaySchedule(className, specificDayIdx = null) {
+    let dayOfWeek;
+    if (specificDayIdx !== null && specificDayIdx !== undefined) {
+        dayOfWeek = specificDayIdx;
+    } else {
+        const date = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
+        dayOfWeek = (date.getDay() + 6) % 7;
+    }
     return await getFormattedSchedule(className, dayOfWeek < 6 ? dayOfWeek : 0);
 }
 
