@@ -258,7 +258,10 @@ async function main() {
   console.log("📦 Testlar yuklanmoqda...");
   botModule.memoryDb = storage.initStorage();
   _workers = initWorkers(bot, scheduleService);
-
+  // 🔴 SHU YERGA QO'SHING: Navbatlarni blokdan chiqarish (Uyg'otish)
+  await broadcastQueue.resume();
+  await quizTimerQueue.resume();
+  console.log("🔓 Navbatlar (Queue) muzlatkichdan chiqarildi va faollashdi!");
   // 1. Supabase'dan testlarni yuklash
   try {
     const dbTests = await dbService.loadAllOfficialTests();

@@ -2,10 +2,13 @@
 const { Queue } = require('bullmq');
 const redisConnection = require('../services/redisService');
 
-// 1. Ertalabki dars jadvallarini tarqatish navbati
-const broadcastQueue = new Queue('broadcastQueue', { connection: redisConnection });
+// ALOHIDA ulanishlardan foydalanamiz
+const broadcastQueue = new Queue('broadcastQueue', { 
+    connection: redisConnection.createWorkerConnection() 
+});
 
-// 2. Test yechishdagi 30 soniyalik taymerlar navbati (buni keyingi qadamda ulaymiz)
-const quizTimerQueue = new Queue('quizTimerQueue', { connection: redisConnection });
+const quizTimerQueue = new Queue('quizTimerQueue', { 
+    connection: redisConnection.createWorkerConnection() 
+});
 
 module.exports = { broadcastQueue, quizTimerQueue };
