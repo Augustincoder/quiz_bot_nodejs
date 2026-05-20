@@ -1,189 +1,291 @@
 'use strict';
 
-const { Markup }            = require('telegraf');
-const sessionService        = require('../services/sessionService');
-const { SUBJECTS }          = require('../config/config');
-const { prepareShuffledQuestions } = require('../core/questionUtils');
-const { safeDelete, backToMainKb } = require('../core/utils');
-const { sendNextQuestion }  = require('./coreQuiz');
-const logger                = require('../core/logger');
+const { Markup } = require('telegraf');
+const sessionService = require('../services/sessionService');
+const dbService = require('../services/dbService');
+const { safeDelete } = require('../core/utils');
 
-const wait = ms => new Promise(r => setTimeout(r, ms));
+// Kutish zalini chizish (yaratish yoki yangilash) uchun yordamchi funksiya
+async function renderLobby(ctx, chatId, room, messageId = null) {
+  const users = Object.values(room.readyUsers);
+  let usersList = users.map((name, i) => `<b>${i + 1}.</b> ${name}`).join('\n');
+  
+  if (!usersList) {
+    usersList = "<i>Hali hech kim qo'shilmadi...</i>";
+  }
 
-async function initAndStartTest(chatId, telegram, subjectKey, testId, testData, initiatorId, chatType) {
-  try {
-    const sessionQ = prepareShuffledQuestions(testData.questions);
-    await sessionService.setActiveTest(chatId, {
-      chatType, initiatorId, subjectKey, testId,
-      blockName:         testData.block_name || '',
-      sessionQuestions:  sessionQ,
-      qIdx:              0,
-      startTime:         Date.now(),
-      pollId:            null,
-      msgId:             null,
-      correct:           0,
-      wrong:             0,
-      mistakes:          [],
-      consecutiveTimeouts: 0,
-      groupScores:       {},
-      finished:          false,
-      status:            'preparing',
+  const modeText = room.mode === 'marathon' ? '🏆 <b>Rejim:</b> MARAFON (Barcha bloklar)' : '📝 <b>Rejim:</b> Bitta Blok';
+  
+  const text = `🎯 <b>MUSOBAQA KUTISH ZALI</b>\n\n` +
+               `${modeText}\n` +
+               `📚 <b>Fan:</b> ${room.testData.subject} ${room.mode === 'block' ? '| 🔖 ' + room.testData.block_name : ''}\n\n` +
+               `👥 <b>Qatnashchilar (${users.length}):</b>\n${usersList}\n\n` +
+               `<i>⚠️ Testni faqatgina muallif (${room.initiatorName}) boshlay oladi.</i>`;
+
+  const buttons = [
+    [Markup.button.callback('✋ Qatnashish', 'room_ready')],
+    [
+      Markup.button.callback('▶️ Boshlash', 'room_start'),
+      Markup.button.callback('❌ Bekor qilish', 'room_cancel')
+    ]
+  ];
+
+  if (messageId) {
+    // Agar oldin yuborilgan bo'lsa, xabarni tahrirlaymiz
+    await ctx.telegram.editMessageText(chatId, messageId, undefined, text, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard(buttons)
+    }).catch(() => {});
+  } else {
+    // Yangi xabar yuboramiz
+    await ctx.telegram.sendMessage(chatId, text, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard(buttons)
     });
-
-    // Telemetry
-    logger.info('test:start', {
-      chatId,
-      subject: subjectKey,
-      testId,
-      type: chatType,
-      questionCount: sessionQ.length,
-    });
-
-    const tLabel = testId === 'mock' ? 'Aralash Test' : `${testId}-Blok`;
-    await telegram.sendMessage(
-      chatId,
-      `🚀 <b>Testga tayyorgarlik</b>\n\n` +
-      `📚 Fan: <b>${SUBJECTS[subjectKey] || subjectKey}</b>\n` +
-      `📝 Blok: <b>${tLabel}</b>\n` +
-      `🔢 Jami: <b>${sessionQ.length} ta savol</b>\n` +
-      `⏱ Har savolga: <b>30 soniya</b>\n\n` +
-      `━━━━━━━━━━━━━━━━\n` +
-      `💡 <i>Savollar aralashtirilib beriladi. Tayyor bo'lsangiz — boshlang!</i>`,
-      {
-        parse_mode: 'HTML',
-        ...Markup.inlineKeyboard([[Markup.button.callback('✅ Tayyorman!', 'user_ready_start')]]),
-      },
-    );
-  } catch (e) {
-    console.error(`initAndStartTest error [${chatId}]:`, e.message);
   }
 }
 
-async function sendWaitingRoomMessage(ctx, chatId, subjectKey, testId, questionCount) {
-  const tLabel = testId === 'mock' ? 'Aralash' : `${testId}-Blok`;
-  await ctx.telegram.sendMessage(
-    chatId,
-    `👥 <b>Guruh Rejimi — Kutish Zali</b>\n\n` +
-    `📚 ${SUBJECTS[subjectKey] || 'Fan'} — ${tLabel}\n` +
-    `🔢 Savollar: <b>${questionCount} ta</b>\n\n` +
-    `<i>\"✅ Tayyorman\" tugmasini bosing. Kamida 2 kishi tayyorlanishi kerak.</i>`,
-    {
-      parse_mode: 'HTML',
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback('✅ Tayyorman! (0)', 'room_ready')],
-        [Markup.button.callback('❌ Bekor qilish',   'room_cancel')],
-      ]),
-    },
-  );
+// 1. Kutish zalini yaratish (startgroup dan kelganda)
+// 1. Kutish zalini yaratish (startgroup dan kelganda)
+async function createLobby(ctx, param) {
+  const chatId = ctx.chat.id;
+  let testData = null;
+  let mode = '';
+  let isOfficial = false;
+  const memDb = require('../core/bot').memoryDb || {};
+
+  if (param.startsWith('t_')) {
+    const id = param.split('_')[1];
+    testData = await dbService.getUserTest(id);
+    if (!testData) return ctx.reply("❌ Test topilmadi yoki o'chirilgan.");
+    mode = 'block';
+  } else if (param.startsWith('s_')) {
+    const id = param.split('_')[1];
+    testData = await dbService.getUserTest(id); 
+    if (!testData) return ctx.reply("❌ Fan topilmadi.");
+    mode = 'marathon';
+  } else if (param.startsWith('offt_')) { 
+    // Rasmiy test (Blok)
+    const parts = param.split('_');
+    const testId = parts.pop();
+    const subject = parts.slice(1).join('_');
+    testData = (memDb[subject] || {})[testId];
+    if (!testData) return ctx.reply("❌ Rasmiy test topilmadi.");
+    testData.subject = subject; 
+    testData.block_name = `${testId}-Blok`;
+    mode = 'block';
+    isOfficial = true;
+  } else if (param.startsWith('offs_')) { 
+    // Rasmiy test (Marafon)
+    const subject = param.replace('offs_', '');
+    const blocks = memDb[subject] || {};
+    const firstBlockId = Object.keys(blocks)[0];
+    if (!firstBlockId) return ctx.reply("❌ Bu fanda rasmiy testlar yo'q.");
+    testData = blocks[firstBlockId];
+    testData.subject = subject;
+    mode = 'marathon';
+    isOfficial = true;
+  } else {
+    return ctx.reply("⚠️ Noma'lum havola.");
+  }
+
+  const room = {
+    initiatorId: ctx.from.id,
+    initiatorName: ctx.from.first_name || 'Muallif',
+    param: param,
+    testData: testData,
+    mode: mode,
+    isOfficial: isOfficial, // Rasmiy ekanligini belgilab qo'yamiz
+    readyUsers: {} 
+  };
+  
+  room.readyUsers[ctx.from.id] = room.initiatorName;
+  await sessionService.setWaitingRoom(chatId, room);
+  await renderLobby(ctx, chatId, room);
 }
 
+// 2. Qatnashish tugmasi bosilganda
 async function cbRoomReady(ctx) {
   const chatId = ctx.chat.id;
   try {
     const room = await sessionService.getWaitingRoom(chatId);
     if (!room) return ctx.answerCbQuery('Kutish zali yopilgan!', { show_alert: true }).catch(() => {});
-    if (room.readyUsers.has(ctx.from.id)) return ctx.answerCbQuery('✅ Siz allaqachon tayyorsiz!').catch(() => {});
 
-    room.readyUsers.add(ctx.from.id);
+    if (room.readyUsers[ctx.from.id]) {
+      return ctx.answerCbQuery("✅ Siz allaqachon ro'yxatdasiz!", { show_alert: true }).catch(() => {});
+    }
+
+    // Foydalanuvchini qo'shamiz va xotirani yangilaymiz
+    room.readyUsers[ctx.from.id] = ctx.from.first_name || 'Foydalanuvchi';
     await sessionService.setWaitingRoom(chatId, room);
-
-    const count   = room.readyUsers.size;
-    const buttons = [[Markup.button.callback(`✅ Tayyorman! (${count})`, 'room_ready')]];
-    if (count >= 2) buttons.push([Markup.button.callback('🚀 Testni Boshlash!', 'room_start')]);
-    buttons.push([Markup.button.callback('❌ Bekor qilish', 'room_cancel')]);
-
-    try { await ctx.editMessageReplyMarkup(Markup.inlineKeyboard(buttons).reply_markup); } catch { /* no change */ }
-    await ctx.answerCbQuery(`✅ Tayyor! Jami: ${count} kishi`).catch(() => {});
+    
+    // Ro'yxatni jonli yangilaymiz
+    await renderLobby(ctx, chatId, room, ctx.callbackQuery.message.message_id);
+    await ctx.answerCbQuery("Ro'yxatga qo'shildingiz!").catch(() => {});
   } catch (e) {
     console.error('cbRoomReady error:', e.message);
-    await ctx.answerCbQuery('❌ Xatolik yuz berdi.', { show_alert: true }).catch(() => {});
   }
 }
 
+// 3. Testni boshlash tugmasi bosilganda (Faqat muallif uchun)
+// 3. Testni boshlash tugmasi bosilganda (Faqat muallif uchun)
 async function cbRoomStart(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
   const chatId = ctx.chat.id;
   try {
     const room = await sessionService.getWaitingRoom(chatId);
-    if (!room) return;
+    if (!room) return ctx.answerCbQuery('Kutish zali yopilgan!', { show_alert: true }).catch(() => {});
 
     if (ctx.from.id !== room.initiatorId) {
       return ctx.answerCbQuery('⚠️ Faqat testni boshlagan kishi ishga tushira oladi!', { show_alert: true }).catch(() => {});
     }
-    if (room.readyUsers.size < 2) {
-      return ctx.answerCbQuery("⚠️ Kamida 2 kishi tayyor bo'lishi kerak!", { show_alert: true }).catch(() => {});
+
+    if (Object.keys(room.readyUsers).length < 2) {
+      return ctx.answerCbQuery("⚠️ O'yinni boshlash uchun kamida 2 kishi qo'shilishi kerak!", { show_alert: true }).catch(() => {});
     }
 
     await sessionService.deleteWaitingRoom(chatId);
-    await safeDelete(ctx);
+    const { safeDelete } = require('../core/utils');
+    await safeDelete(ctx); // Kutish zali xabarini o'chiramiz
 
-    const sessionQ = prepareShuffledQuestions(room.testData.questions);
+  let marathonBlocks = [];
+    let currentBlockIdx = 0;
+    let sessionQ = [];
+    let testId = '';
+    let blockName = '';
+
+    const { prepareShuffledQuestions } = require('../core/questionUtils');
+    const dbService = require('../services/dbService'); // Bazadan izlash uchun
+
+  if (room.mode === 'marathon') {
+      const subjectKey = room.testData.subject;
+      
+      if (room.isOfficial) {
+        // Rasmiy testlar marafoni
+        const blocksInfo = memDb[subjectKey] || {};
+        marathonBlocks = Object.values(blocksInfo).map(b => ({
+             test_id: b.test_id,
+             block_name: `${b.test_id}-Blok`,
+             questions: b.questions
+        })).sort((a, b) => parseInt(a.test_id) - parseInt(b.test_id));
+      } else {
+        // UGC (Foydalanuvchi) testlar marafoni
+        const tests = await dbService.getUserCreatedTests(room.testData.creator_id);
+        marathonBlocks = tests
+            .filter(t => t.subject === subjectKey)
+            .sort((a, b) => a.id - b.id);
+      }
+          
+      if (!marathonBlocks.length) return ctx.reply("❌ Bu fanda bloklar topilmadi.");
+
+      sessionQ = prepareShuffledQuestions(marathonBlocks[0].questions);
+      testId = marathonBlocks[0].test_id || marathonBlocks[0].id; // Rasmiy va UGC IDlari
+      blockName = marathonBlocks[0].block_name;
+    } else {
+      sessionQ = prepareShuffledQuestions(room.testData.questions);
+      testId = room.param.split('_').pop(); 
+      blockName = room.testData.block_name;
+    }
+
+    // O'yin sessiyasini yaratamiz
     await sessionService.setActiveTest(chatId, {
-      chatType:          'group',
-      initiatorId:       room.initiatorId,
-      subjectKey:        room.subjectKey,
-      testId:            room.testId,
-      blockName:         room.testData.block_name || '',
-      sessionQuestions:  sessionQ,
-      qIdx:              0,
-      startTime:         Date.now(),
-      pollId:            null,
-      msgId:             null,
-      correct:           0,
-      wrong:             0,
-      mistakes:          [],
+      chatType: 'group',
+      initiatorId: room.initiatorId,
+      subjectKey: room.testData.subject,
+      testId: testId,
+      blockName: blockName,
+      sessionQuestions: sessionQ,
+      qIdx: 0,
+      startTime: Date.now(),
+      pollId: null,
+      msgId: null,
+      correct: 0,
+      wrong: 0,
+      mistakes: [],
       consecutiveTimeouts: 0,
-      groupScores:       {},
-      finished:          false,
-      status:            'running',
+      groupScores: {},
+      finished: false,
+      status: 'running',
+      
+      // Marafon uchun maxsus xotira
+      isMarathon: room.mode === 'marathon',
+      marathonBlocks: marathonBlocks,
+      currentBlockIdx: currentBlockIdx,
+      marathonGlobalScores: {} 
     });
 
-    // Telemetry
-    logger.info('test:start', {
-      chatId,
-      subject: room.subjectKey,
-      testId: room.testId,
-      type: 'group',
-      participants: room.readyUsers.size,
-      questionCount: sessionQ.length,
-    });
-
+    const modeLabel = room.mode === 'marathon' ? `🏆 MARAFON: ${marathonBlocks.length} ta blok ketma-ket` : `📝 Bitta Blok: ${blockName}`;
+    
     const msg = await ctx.telegram.sendMessage(
       chatId,
-      `🚀 <b>Guruh Testi boshlanmoqda!</b>\n\n👥 ${room.readyUsers.size} kishi qatnashmoqda\n🔢 Jami: ${sessionQ.length} ta savol\n\n<b>3️⃣</b>`,
-      { parse_mode: 'HTML' },
+      `🚀 <b>Musobaqa boshlanmoqda!</b>\n\n👥 <b>Qatnashchilar:</b> ${Object.keys(room.readyUsers).length} ta\n${modeLabel}\n\n<b>3️⃣</b>`,
+      { parse_mode: 'HTML' }
     );
 
+    // Sanoq
     for (const emoji of ['2️⃣', '1️⃣']) {
-      await wait(1000);
-      await ctx.telegram.editMessageText(chatId, msg.message_id, undefined,
-        `🚀 <b>Guruh Testi boshlanmoqda!</b>\n\n👥 ${room.readyUsers.size} kishi qatnashmoqda\n🔢 Jami: ${sessionQ.length} ta savol\n\n<b>${emoji}</b>`,
-        { parse_mode: 'HTML' },
-      ).catch(() => {});
+      await new Promise(r => setTimeout(r, 1000));
+      await ctx.telegram.editMessageText(chatId, msg.message_id, undefined, 
+        `🚀 <b>Musobaqa boshlanmoqda!</b>\n\n👥 <b>Qatnashchilar:</b> ${Object.keys(room.readyUsers).length} ta\n${modeLabel}\n\n<b>${emoji}</b>`, 
+        { parse_mode: 'HTML' }).catch(() => {});
     }
-    await wait(1000);
-    await ctx.telegram.editMessageText(chatId, msg.message_id, undefined, '🚀 <b>BOSHLADIK!</b> Omad! 🍀', { parse_mode: 'HTML' }).catch(() => {});
+    await new Promise(r => setTimeout(r, 1000));
+    await ctx.telegram.editMessageText(chatId, msg.message_id, undefined, '🚀 <b>BOSHLADIK!</b> Diqqat qiling, javob berish uchun 30 soniya vaqtingiz bor! 🍀', { parse_mode: 'HTML' }).catch(() => {});
 
+    // 1-savolni yuboramiz
+    const { sendNextQuestion } = require('./coreQuiz');
     await sendNextQuestion(chatId, ctx.telegram);
+
   } catch (e) {
     console.error('cbRoomStart error:', e.message);
   }
 }
 
+// 4. Bekor qilish tugmasi (Faqat muallif uchun)
 async function cbRoomCancel(ctx) {
   const chatId = ctx.chat.id;
   try {
     const room = await sessionService.getWaitingRoom(chatId);
     if (!room) return ctx.answerCbQuery('Kutish zali allaqachon yopilgan.', { show_alert: true }).catch(() => {});
+
     if (ctx.from.id !== room.initiatorId) {
       return ctx.answerCbQuery('⚠️ Faqat testni boshlagan kishi bekor qila oladi!', { show_alert: true }).catch(() => {});
     }
+
     await sessionService.deleteWaitingRoom(chatId);
     await safeDelete(ctx);
-    await ctx.reply('❌ Test bekor qilindi.', backToMainKb());
+    await ctx.reply("❌ Musobaqa bekor qilindi.");
   } catch (e) {
     console.error('cbRoomCancel error:', e.message);
   }
 }
+// 5. Marafonda keyingi blokni boshlash tugmasi (Faqat muallif uchun)
+async function cbRoomNextBlock(ctx) {
+  const chatId = ctx.chat.id;
+  try {
+     const session = await sessionService.getActiveTest(chatId);
+     if (!session || !session.isMarathon) return ctx.answerCbQuery("Test topilmadi", {show_alert: true}).catch(()=>{});
+     
+     if (ctx.from.id !== session.initiatorId) {
+         return ctx.answerCbQuery("⚠️ Faqat test muallifi keyingi blokni boshlay oladi!", {show_alert: true}).catch(()=>{});
+     }
 
-module.exports = { initAndStartTest, sendWaitingRoomMessage, cbRoomReady, cbRoomStart, cbRoomCancel };
+     await ctx.answerCbQuery().catch(()=>{});
+     const { safeDelete } = require('../core/utils');
+     await safeDelete(ctx); // Tugmali xabarni o'chiramiz
+
+     const nextBlock = session.marathonBlocks[session.currentBlockIdx];
+     await ctx.telegram.sendMessage(chatId, `🚀 <b>${session.currentBlockIdx + 1}-Blok (${nextBlock.block_name}) boshlanmoqda!</b>\n\nDiqqatni jamlang!`, { parse_mode: "HTML" });
+     
+     const { sendNextQuestion } = require('./coreQuiz');
+     await sendNextQuestion(chatId, ctx.telegram);
+  } catch(e) {
+     console.error('cbRoomNextBlock err:', e.message);
+  }
+}
+module.exports = { 
+  createLobby, 
+  cbRoomReady, 
+  cbRoomStart, 
+  cbRoomCancel,
+  cbRoomNextBlock,
+};

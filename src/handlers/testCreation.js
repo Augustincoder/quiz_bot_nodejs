@@ -34,8 +34,14 @@ const MAX_BLOCK_LEN = 50;
 // ─── TUGMALAR GENERATORI ─────────────────────────────────────
 function questionsSummaryKb() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🤖 AI test", "fmt_ai"), Markup.button.callback("📊 Quiz qo'shish", "fmt_quiz")],
-    [Markup.button.callback("📝 Matn orqali", "fmt_text"), Markup.button.callback("📄 Docx fayl", "fmt_docx")],
+    [
+      Markup.button.callback("🤖 AI test", "fmt_ai"),
+      Markup.button.callback("📊 Quiz qo'shish", "fmt_quiz"),
+    ],
+    [
+      Markup.button.callback("📝 Matn orqali", "fmt_text"),
+      Markup.button.callback("📄 Docx fayl", "fmt_docx"),
+    ],
     [Markup.button.callback("👁 Savollarni ko'rib chiqish", "preview_q_0")],
     [Markup.button.callback("✅ Yakunlash va Saqlash", "finish_test_creation")],
     [Markup.button.callback("❌ Bekor qilish", "cancel_creation")],
@@ -214,7 +220,9 @@ async function onSubjectInput(ctx) {
   const result = SubjectSchema.safeParse(ctx.message.text || "");
 
   if (!result.success) {
-    return ctx.reply(`${result.error.errors[0].message}\n\n💡 Fan nomlari 2–50 belgidan iborat bo'lishi va faqat harf, raqam va tire o'z ichiga olishi kerak. Qaytadan kiriting:`);
+    return ctx.reply(
+      `${result.error.errors[0].message}\n\n💡 Fan nomlari 2–50 belgidan iborat bo'lishi va faqat harf, raqam va tire o'z ichiga olishi kerak. Qaytadan kiriting:`,
+    );
   }
   if (!ctx.session || !ctx.session.data) {
     clearState(ctx);
@@ -245,7 +253,9 @@ async function onNameInput(ctx) {
   const result = BlockNameSchema.safeParse(ctx.message.text || "");
 
   if (!result.success) {
-    return ctx.reply(`${result.error.errors[0].message}\n\n💡 Blok nomi 1–40 belgidan iborat bo'lishi kerak. Qaytadan kiriting:`);
+    return ctx.reply(
+      `${result.error.errors[0].message}\n\n💡 Blok nomi 1–40 belgidan iborat bo'lishi kerak. Qaytadan kiriting:`,
+    );
   }
   if (!ctx.session || !ctx.session.data) {
     clearState(ctx);
@@ -277,10 +287,10 @@ async function cbFmt(ctx) {
   if (!data.is_editing && !data.questions) patch.questions = [];
   await updateData(ctx, patch);
 
-  const backBtnAction = data.is_editing
-    ? "back_to_edit_dash"
-    : "preview_back";
-  const backBtnText = data.is_editing ? "🔙 Orqaga" : "🔙 Format tanlashga qaytish";
+  const backBtnAction = data.is_editing ? "back_to_edit_dash" : "preview_back";
+  const backBtnText = data.is_editing
+    ? "🔙 Orqaga"
+    : "🔙 Format tanlashga qaytish";
 
   if (fmt === "ai") {
     const aiText = `🤖 *AI Smart Quiz — Sun'iy Intellekt bilan test yaratish*
@@ -358,7 +368,12 @@ async function promptQuestionCount(ctx) {
           Markup.button.callback("20 ta", "ai_cnt_20"),
         ],
         [Markup.button.callback("🤖 Matnga mos (Avto)", "ai_cnt_auto")],
-        [Markup.button.callback("🔙 Orqaga", data?.is_editing ? "back_to_edit_dash" : "fmt_ai")],
+        [
+          Markup.button.callback(
+            "🔙 Orqaga",
+            data?.is_editing ? "back_to_edit_dash" : "fmt_ai",
+          ),
+        ],
       ]),
     },
   );
@@ -696,8 +711,10 @@ async function cbFinishCreation(ctx) {
   const botInfo = await ctx.telegram.getMe();
   await safeEdit(
     ctx,
-    `🎉 *Muvaffaqiyatli saqlandi!*\n\n📚 Fan: *${data.subject}*\n📝 Blok: *${data.block_name}*\n🔢 Savollar: *${questions.length} ta*\n\n🔗 *Faqat shu blok:*\n\`https://t.me/${botInfo.username}?start=t_${testId}\`\n🔗 *Butun fan:*\n\`https://t.me/${botInfo.username}?start=s_${testId}\``,
+    `🎉 *Muvaffaqiyatli saqlandi!*\n\n📚 Fan: *${data.subject}*\n📝 Blok: *${data.block_name}*\n🔢 Savollar: *${questions.length} ta*\n\n🔗 *Faqat shu blok:*\nhttps://t.me/${botInfo.username}?start=t_${testId}\n🔗 *Butun fan:*\nhttps://t.me/${botInfo.username}?start=s_${testId}`,
     Markup.inlineKeyboard([
+      [Markup.button.url("↗️ Guruhga ulashish (Blok)", `https://t.me/${botInfo.username}?startgroup=t_${testId}`)],
+      [Markup.button.url("🏃 Guruhga ulashish (Marafon)", `https://t.me/${botInfo.username}?startgroup=s_${testId}`)],
       [Markup.button.callback("📂 Mening Testlarim", "my_tests")],
       [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
     ]),
@@ -736,19 +753,35 @@ async function cbMyTests(ctx) {
     );
   }
 
-  const itemsPerPage = 5;
-  const totalPages = Math.ceil(tests.length / itemsPerPage);
-  const currentTests = tests.slice(
+  // 1. Testlarni fanlar (subject) bo'yicha guruhlaymiz
+  const subjectsMap = {};
+  for (const t of tests) {
+    if (!subjectsMap[t.subject]) {
+      subjectsMap[t.subject] = [];
+    }
+    subjectsMap[t.subject].push(t);
+  }
+
+  const uniqueSubjects = Object.keys(subjectsMap);
+  const itemsPerPage = 5; // Bitta sahifada nechta fan ko'rinishi
+  const totalPages = Math.ceil(uniqueSubjects.length / itemsPerPage);
+  const currentSubjects = uniqueSubjects.slice(
     page * itemsPerPage,
     (page + 1) * itemsPerPage,
   );
 
-  const buttons = currentTests.map((t) => [
-    Markup.button.callback(
-      `📝 ${t.subject} - ${t.block_name}`,
-      `manage_test_${t.id}`,
-    ),
-  ]);
+  // 2. Fanlar ro'yxatidan tugmalar yaratamiz
+  const buttons = currentSubjects.map((subj) => {
+    const subjTests = subjectsMap[subj];
+    // cbManageSubj fanni aniqlashi uchun shu fanga tegishli 1-testning id'sini berib yuboramiz
+    const firstTestId = subjTests[0].id;
+    return [
+      Markup.button.callback(
+        `📁 ${subj}  •  ${subjTests.length} ta blok`,
+        `manage_subj_${firstTestId}`,
+      ),
+    ];
+  });
 
   // Navigatsiya tugmalari (Keyingi / Oldingi)
   const navButtons = [];
@@ -768,14 +801,13 @@ async function cbMyTests(ctx) {
 
   await safeEdit(
     ctx,
-    `📂 <b>Mening Testlarim</b> (Sahifa ${page + 1}/${totalPages}):\n\nBu yerda o'zingiz yaratgan shaxsiy testlarni boshqarasiz. Ularni tahrirlash yoki do'stlaringizga ulashishingiz mumkin.\n\n📊 Jami: ${tests.length} ta test`,
+    `📂 <b>Mening Testlarim</b> (Sahifa ${page + 1}/${totalPages}):\n\nQaysi fan bo'yicha testlarni ko'rmoqchisiz?\n\n📊 Jami: ${uniqueSubjects.length} ta fan, ${tests.length} ta test`,
     {
       parse_mode: "HTML",
       ...Markup.inlineKeyboard(buttons),
     },
   );
 }
-
 async function cbManageSubj(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const refId = parseSuffix(ctx.callbackQuery.data, "manage_subj_");
@@ -792,14 +824,13 @@ async function cbManageSubj(ctx) {
       `manage_test_${t.id}`,
     ),
   ]);
-  buttons.push([
-    Markup.button.callback("➕ Bu fanga blok qo'shish", `ct_exist_${refId}`),
-  ]);
+// cbManageSubj oxiridagi tugmalar:
+  buttons.push([Markup.button.url("🏃 Bu fanni guruhda Marafon qilish", `https://t.me/${botInfo.username}?startgroup=s_${refId}`)]);
+  buttons.push([Markup.button.callback("➕ Bu fanga blok qo'shish", `ct_exist_${refId}`)]);
   buttons.push([Markup.button.callback("🔙 Mening Testlarimga", "my_tests")]);
-
   await safeEdit(
     ctx,
-    `📚 *Fan:* ${testData.subject}\n🔗 *Fan havolasi:*\n\`https://t.me/${botInfo.username}?start=s_${refId}\`\n\n📋 Bloklar:`,
+    `📚 *Fan:* ${testData.subject}\n🔗 *Fan havolasi:*\nhttps://t.me/${botInfo.username}?start=s_${refId}\n\n📋 Bloklar:`,
     Markup.inlineKeyboard(buttons),
   );
 }
@@ -813,14 +844,17 @@ async function cbManageTest(ctx) {
 
   await safeEdit(
     ctx,
-    `📝 *Blok Ma\'lumotlari*\n📚 Fan: ${testData.subject}\n🔖 Blok: *${testData.block_name}*\n🔢 Savollar: *${(testData.questions || []).length} ta*\n\n🔗 *Havola:*\n\`https://t.me/${botInfo.username}?start=t_${testId}\``,
+    `📝 * Blok Ma\'lumotlari *\n📚 Fan: ${testData.subject}\n🔖 Blok: * ${testData.block_name} *\n🔢 Savollar: *${(testData.questions || []).length} ta*\n\n🔗 *Havola:*\nhttps://t.me/${botInfo.username}?start=t_${testId}`,
+   
+
     Markup.inlineKeyboard([
-      [Markup.button.callback("▶️ Testni boshlash", `ugc_start_${testId}`)],
+      [Markup.button.url("↗️ Guruhda o'ynash", `https://t.me/${botInfo.username}?startgroup=t_${testId}`)],
+      [Markup.button.callback("▶️ O'zim boshlash (Shaxsiy)", `ugc_start_${testId}`)],
       [Markup.button.callback("✏️ Tahrirlash", `edit_test_${testId}`)],
       [Markup.button.callback("🗑 Blokni o'chirish", `delete_test_${testId}`)],
       [Markup.button.callback("🔙 Fanga qaytish", `manage_subj_${testId}`)],
       [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
-    ]),
+    ])
   );
 }
 

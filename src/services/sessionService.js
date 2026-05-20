@@ -58,13 +58,20 @@ async function deletePollChat(pollId) {
   }
 }
 
+
 // ─── Waiting Rooms ──────────────────────────────────────────
 async function getWaitingRoom(chatId) {
   try {
     const data = await redis.get(`waitingRoom:${chatId}`);
     if (data) {
       const room = JSON.parse(data);
-      room.readyUsers = new Set(room.readyUsers); 
+      // Agar eski kod qolib ketgan bo'lsa (Array bo'lsa), Object ga aylantiramiz
+      if (Array.isArray(room.readyUsers)) {
+        const obj = {};
+        room.readyUsers.forEach(id => obj[id] = 'Foydalanuvchi');
+        room.readyUsers = obj;
+      }
+      // Endi Set kerak emas, chunki ID va Ismlar Object da saqlanmoqda
       return room;
     }
     return null;
@@ -76,8 +83,8 @@ async function getWaitingRoom(chatId) {
 
 async function setWaitingRoom(chatId, data) {
   try {
-    const roomToSave = { ...data, readyUsers: Array.from(data.readyUsers) };
-    await redis.set(`waitingRoom:${chatId}`, JSON.stringify(roomToSave), 'EX', 300);
+    // Array.from kerak emas, Object o'z holicha saqlanadi
+    await redis.set(`waitingRoom:${chatId}`, JSON.stringify(data), 'EX', 300);
   } catch (err) {
     logger.error('sessionService.setWaitingRoom failed', { chatId, error: err.message });
   }

@@ -36,6 +36,7 @@ const {
   cbRoomReady,
   cbRoomStart,
   cbRoomCancel,
+  cbRoomNextBlock,
 } = require("./groupQuizLogic");
 const { cbAdaptiveTest, cbAdaptiveRun } = require("./adaptiveQuiz");
 
@@ -71,10 +72,20 @@ async function cbSubject(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const subjectKey = parseSuffix(ctx.callbackQuery.data, "subj_");
   const subjName = escapeHtml(SUBJECTS[subjectKey] || "Fan");
+  const botInfo = await ctx.telegram.getMe(); // Bot usernamesini olamiz
+  
+  // Asosiy tugmalar (Bloklar) ni olamiz
+  const blocksKb = getBlocksKeyboard(subjectKey, 0);
+  
+  // Eng tepasiga "Guruhda Marafon o'ynash" tugmasini qo'shamiz
+  blocksKb.reply_markup.inline_keyboard.unshift([
+      Markup.button.url("🏃 Butun fanni Guruhda o'ynash (Marafon)", `https://t.me/${botInfo.username}?startgroup=offs_${subjectKey}`)
+  ]);
+
   await safeEdit(
     ctx,
     `📚 <b>${subjName}</b>\n\nQuyidagi blokdan birini tanlang yoki maxsus rejimlardan foydalaning:`,
-    { parse_mode: "HTML", ...getBlocksKeyboard(subjectKey, 0) },
+    { parse_mode: "HTML", ...blocksKb }
   );
 }
 
@@ -374,12 +385,26 @@ async function cbStopTest(ctx) {
     if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => {});
     const chatId = ctx.chat?.id || ctx.from?.id;
     const session = await sessionService.getActiveTest(chatId);
+    const isGroup = ctx.chat?.type !== 'private'; // Guruhni aniqlaymiz
 
     if (!session) {
       if (!ctx.callbackQuery) await safeDelete(ctx);
       return;
     }
 
+    // GURUH UCHUN: Shunchaki to'xtatib, Reyting (finishTest) ni chaqiramiz
+    if (isGroup) {
+      if (!ctx.callbackQuery) {
+          await ctx.reply("🛑 <b>O'yin muddatidan oldin to'xtatildi!</b> Natijalar hisoblanmoqda...", { parse_mode: "HTML" });
+      } else {
+          await safeDelete(ctx);
+          await ctx.telegram.sendMessage(chatId, "🛑 <b>O'yin muddatidan oldin to'xtatildi!</b> Natijalar hisoblanmoqda...", { parse_mode: "HTML" });
+      }
+      const { finishTest } = require('./coreQuiz');
+      return finishTest(chatId, ctx.telegram);
+    }
+
+    // SHAXSIY CHAT UCHUN: (Eski mantiq)
     const tName = resolveTestName(session.testId, session.blockName);
     const { pendingShelfSaves } = require("../core/pendingStore");
     pendingShelfSaves.set(chatId, {
@@ -402,8 +427,7 @@ async function cbStopTest(ctx) {
       `🛑 <b>Test to'xtatildi</b>\n\n` +
       `📝 Test: <b>${escapeHtml(tName)}</b>\n` +
       `📊 Holat: <b>${session.qIdx}</b>-savolda to'xtatildi\n` +
-      `✅ To'g'ri: <b>${session.correct || 0}</b>  ❌ Xato: <b>${(session.mistakes || []).length}</b>\n\n` +
-      `💡 Javonga saqlang va istalgan vaqtda qolgan joyingizdan davom eting!`;
+      `✅ To'g'ri: <b>${session.correct || 0}</b>  ❌ Xato: <b>${(session.mistakes || []).length}</b>`;
 
     const buttons = [
       [Markup.button.callback("📥 Javonga saqlash (Pauza)", "shelf_save_init")],
@@ -411,15 +435,9 @@ async function cbStopTest(ctx) {
     ];
 
     if (ctx.callbackQuery) {
-      await safeEdit(ctx, text, {
-        parse_mode: "HTML",
-        ...Markup.inlineKeyboard(buttons),
-      });
+      await safeEdit(ctx, text, { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) });
     } else {
-      await ctx.reply(text, {
-        parse_mode: "HTML",
-        ...Markup.inlineKeyboard(buttons),
-      });
+      await ctx.reply(text, { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) });
     }
   } catch (e) {
     console.error("To'xtatishda xato:", e.message);
@@ -567,7 +585,6 @@ async function resumeTestFromShelf(ctx, savedTest) {
 }
 
 // ─── REGISTER ────────────────────────────────────────────────
-
 function register(bot) {
   bot.action("official_tests", cbOfficialTests);
   bot.action(/^subj_/, cbSubject);
@@ -588,6 +605,7 @@ function register(bot) {
   bot.action(/^post_start_/, cbPostStart);
   bot.action(/^adaptive_/, cbAdaptiveTest);
   bot.action(/^adp_run_/, cbAdaptiveRun);
+  bot.action("room_next_block", cbRoomNextBlock);
 }
 
 module.exports = {
@@ -605,4 +623,5 @@ module.exports = {
   startUgcTest,
   resumeTestFromShelf,
   sendNextQuestion,
+  
 };

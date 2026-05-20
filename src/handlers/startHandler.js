@@ -12,12 +12,39 @@ async function cmdStart(ctx) {
   clearState(ctx);
   const chatId = ctx.chat.id;
 
+  // ─── GURUHLAR UCHUN TOZA INTERFEYS VA KUTISH ZALI ────────────
+  if (ctx.chat.type !== 'private') {
+    const botInfo = await ctx.telegram.getMe();
+    const args = (ctx.message.text || '').split(' ');
+    
+    // Agar deeplink orqali guruhga qo'shilsa (startgroup=t_123)
+// Agar deeplink orqali guruhga qo'shilsa (startgroup=t_123)
+    if (args.length > 1) {
+      // Ba'zan argument t_123@bot_nomi bo'lib kelishi mumkin, tozalab olamiz:
+      const param = args[1].split('@')[0]; 
+      const { createLobby } = require('./groupQuizLogic');
+      return createLobby(ctx, param); 
+    }
+
+    // Oddiy /start bosilsa
+    return ctx.reply(
+      "👋 <b>Salom, guruh a'zolari!</b>\n\nMen orqali guruhda do'stlar bilan qiziqarli test musobaqalarini o'tkazishingiz mumkin.\n\n👇 Test yaratish yoki profilni ko'rish uchun botning o'ziga o'ting:",
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [[{ text: "🤖 Shaxsiy chatga o'tish", url: `https://t.me/${botInfo.username}` }]]
+        }
+      }
+    );
+  }
+  // ──────────────────────────────────────────────────────────
+
   const fullName = ctx.from.first_name ? `${ctx.from.first_name}${ctx.from.last_name ? ' ' + ctx.from.last_name : ''}` : 'Foydalanuvchi';
 
   await dbService.registerUser(ctx.from.id, fullName, ctx.from.username);
   userNameCache.set(ctx.from.id, fullName);
 
-  // Telemetry
+  const logger = require('../core/logger');
   logger.info('user:start', { userId: ctx.from.id, name: fullName });
 
   let cleared = false;
@@ -34,7 +61,7 @@ async function cmdStart(ctx) {
   }
   if (cleared) await ctx.reply('🔄 Oldingi tugallanmagan sessiya tozalandi. Yangi testga tayyorsiz!');
 
-  // LINK ORQALI KIRGANDA (Deep Linking)
+  // LINK ORQALI KIRGANDA (Deep Linking - Shaxsiy chat uchun)
   const args = (ctx.message.text || '').split(' ');
   if (args.length > 1) {
     const param = args[1];
@@ -88,14 +115,15 @@ async function cmdStop(ctx) {
   clearState(ctx);
   const chatId = ctx.chat.id;
   const userId = ctx.from.id;
+  const isGroup = ctx.chat.type !== 'private'; // Guruh ekanligini aniqlaymiz
 
   const sessionServiceLocal = require('../services/sessionService');
   const room = await sessionServiceLocal.getWaitingRoom(chatId);
 
   if (room) {
-    if (userId === room.initiatorId || ctx.chat.type === 'private') {
+    if (userId === room.initiatorId || !isGroup) {
       await sessionServiceLocal.deleteWaitingRoom(chatId);
-      return ctx.reply('🛑 Test bekor qilindi. Asosiy menyudan yangisini boshlashingiz mumkin.', backToMainKb());
+      return ctx.reply('🛑 Test bekor qilindi.', isGroup ? undefined : backToMainKb());
     }
     return ctx.reply('⚠️ Faqat testni boshlagan foydalanuvchi bekor qila oladi.');
   }
@@ -103,7 +131,7 @@ async function cmdStop(ctx) {
   const session = await sessionServiceLocal.getActiveTest(chatId);
 
   if (session) {
-    if (ctx.chat.type !== 'private' && userId !== session.initiatorId) {
+    if (isGroup && userId !== session.initiatorId) {
       return ctx.reply('⚠️ Faqat testni boshlagan foydalanuvchi to\'xtata oladi.');
     }
 
@@ -116,7 +144,7 @@ async function cmdStop(ctx) {
     }
   }
 
-  await ctx.reply('ℹ️ Hozirda faol test mavjud emas.\n\n👇 Asosiy menyuga qaytib yangi test boshlashingiz mumkin:', backToMainKb());
+  await ctx.reply('ℹ️ Hozirda faol test mavjud emas.', isGroup ? undefined : backToMainKb());
 }
 
 async function cmdMenu(ctx) {
