@@ -222,37 +222,78 @@ function downloadFile(url, destPath) {
 }
 
 // ─── Document Parsing ────────────────────────────────────────
-async function parseDocxQuestions(filePath) {
+async function parseDocxQuestions(filePath, mode = 'hash') {
   const mammoth = require('mammoth');
-  const result  = await mammoth.extractRawText({ path: filePath });
-  const questions = [];
-  for (const block of result.value.split(/\n\s*\n/)) {
-    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-    if (lines.length < 3) continue;
-    const opts = []; let corr = -1;
-    for (let i = 0; i < lines.length - 1; i++) {
-      const line = lines[i + 1];
-      if (line.startsWith('#')) { corr = i; opts.push(line.slice(1).trim()); }
-      else opts.push(line);
-    }
-    if (corr !== -1 && opts.length >= 2) questions.push({ question: lines[0], options: opts, correct_index: corr });
-  }
-  return questions;
+  // Fayldan hamma matnni tortib olamiz
+  const result = await mammoth.extractRawText({ path: filePath });
+  
+  // Olingan matnni aqlli parserimizga beramiz (Shunda Docx da ham ===== lar zo'r ishlaydi)
+  return parseTextQuestions(result.value, mode);
 }
 
-function parseTextQuestions(text) {
+function parseTextQuestions(text, mode = 'hash') {
   const questions = [];
-  for (const block of text.split(/\n\n/)) {
-    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-    if (lines.length < 3) continue;
-    const opts = []; let corr = -1;
-    for (let i = 0; i < lines.length - 1; i++) {
-      const line = lines[i + 1];
-      if (line.startsWith('#')) { corr = i; opts.push(line.slice(1).trim()); }
-      else opts.push(line);
-    }
-    if (corr !== -1 && opts.length >= 2) questions.push({ question: lines[0], options: opts, correct_index: corr });
+
+  // 1. Savollarni bir-biridan ajratish (+++++ yoki qator tashlash orqali)
+  let rawBlocks = [];
+  if (text.includes('+++++')) {
+    rawBlocks = text.split(/\+{5,}/);
+  } else {
+    rawBlocks = text.split(/\n\s*\n/);
   }
+
+  for (const block of rawBlocks) {
+    if (!block.trim()) continue;
+
+    let parts = [];
+    // 2. Savol va javoblarni ajratish (===== yoki keyingi qator orqali)
+    if (block.includes('=====')) {
+      parts = block.split(/={5,}/).map(p => p.trim()).filter(Boolean);
+    } else {
+      parts = block.split('\n').map(p => p.trim()).filter(Boolean);
+    }
+
+    if (parts.length < 3) continue; // Kamida bitta savol va 2 ta javob kerak
+
+    // 3. Savol matnini tozalash (Boshidagi 1., 1) larni qirqish)
+    let questionText = parts[0].replace(/^\d+[\)\.]\s*/, '').trim();
+
+    const opts = [];
+    let correctIdx = -1;
+
+    for (let i = 1; i < parts.length; i++) {
+      let optText = parts[i];
+      let isCorrect = false;
+
+      // To'g'ri javobni izlash rejimlari
+      if (mode === 'hash' && optText.startsWith('#')) {
+        isCorrect = true;
+        optText = optText.substring(1).trim();
+      } else if (mode === 'first' && i === 1) {
+        // "First" rejimida doim eng birinchi turgan javob to'g'ri deb olinadi
+        isCorrect = true;
+      }
+
+      // Javob boshidagi A), b., 1) kabi belgilarni tozalash (Foydalanuvchiga toza matn borishi uchun)
+      optText = optText.replace(/^[a-eA-E1-5][\)\.]\s*/, '').trim();
+
+      if (!optText) continue;
+
+      opts.push(optText);
+      if (isCorrect) correctIdx = opts.length - 1;
+    }
+
+    // Agar first rejimi tanlangan bo'lsa, xavfsizlik uchun index'ni 0 ga tenglaymiz
+    if (mode === 'first' && correctIdx === -1 && opts.length > 0) {
+      correctIdx = 0;
+    }
+
+    // Savol to'liq yasalgan bo'lsa, ro'yxatga qo'shamiz
+    if (correctIdx !== -1 && opts.length >= 2) {
+      questions.push({ question: questionText, options: opts, correct_index: correctIdx });
+    }
+  }
+
   return questions;
 }
 

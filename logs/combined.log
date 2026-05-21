@@ -99,3 +99,39 @@
 {"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-20T21:17:18.500Z"}
 {"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-20T21:22:38.838Z"}
 {"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-20T21:45:23.339Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-21T08:38:03.386Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T08:39:31.651Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-21T08:50:50.298Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-21T08:51:00.762Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T08:51:02.487Z","userId":2014973670}
+{"error":"Cannot read properties of undefined (reading 'safeParse')","level":"error","message":"Session Redis xatosi:","timestamp":"2026-05-21T08:51:48.672Z"}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-21T08:52:18.160Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-21T08:52:29.241Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T08:52:32.919Z","userId":2014973670}
+{"error":"Cannot read properties of undefined (reading 'safeParse')","level":"error","message":"Session Redis xatosi:","timestamp":"2026-05-21T08:52:47.601Z"}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-21T08:54:32.538Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-21T08:54:54.245Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T08:54:57.816Z","userId":2014973670}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T08:56:18.986Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-21T09:06:51.470Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-21T09:06:59.397Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T09:07:05.517Z","userId":2014973670}
+{"error":"data is not defined","level":"error","message":"Session Redis xatosi:","timestamp":"2026-05-21T09:07:37.673Z"}
+{"error":"data is not defined","level":"error","message":"Session Redis xatosi:","timestamp":"2026-05-21T09:07:44.180Z"}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-21T09:10:54.701Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-21T09:11:03.864Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T09:11:06.168Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-21T09:13:50.419Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-21T09:13:59.966Z"}
+{"count":5,"level":"info","message":"ai:generate","timestamp":"2026-05-21T09:15:17.334Z","type":"text"}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-21T09:19:43.024Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-21T10:00:08.318Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T10:00:23.060Z","userId":2014973670}
+{"count":5,"level":"info","message":"ai:generate","timestamp":"2026-05-21T10:01:10.465Z","type":"text"}
+{"error":"Cannot set property callbackQuery of #<Context> which has only a getter","level":"error","message":"Session Redis xatosi:","timestamp":"2026-05-21T10:01:36.077Z"}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-21T10:06:04.850Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-21T10:06:14.365Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T10:06:16.771Z","userId":2014973670}
+{"count":5,"level":"info","message":"ai:generate","timestamp":"2026-05-21T10:06:49.188Z","type":"text"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T10:25:08.883Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-21T12:33:47.512Z"}

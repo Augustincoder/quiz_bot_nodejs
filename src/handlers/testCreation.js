@@ -156,7 +156,9 @@ async function cbEditAddQ(ctx) {
 // ─── 1. YANGI TEST YARATISH BOSQICHLARI ──────────────────────
 async function cbCreateTest(ctx) {
   clearState(ctx);
-  await ctx.answerCbQuery().catch(() => {});
+  // Toast xabar: Foydalanuvchiga tugma ishlaganini bildiramiz
+  await ctx.answerCbQuery("✅ Test yaratish bo'limi ochildi!").catch(() => {});
+
   const tests = await dbService.getUserCreatedTests(ctx.from.id);
   const subjects = {};
   for (const t of tests) {
@@ -167,7 +169,7 @@ async function cbCreateTest(ctx) {
   const buttons = [];
   if (Object.keys(subjects).length > 0) {
     buttons.push([
-      Markup.button.callback("── Mavjud fanlaringiz ──", "ignore"),
+      Markup.button.callback("── Mavjud fanlar (Tezkor tanlash) ──", "ignore"),
     ]);
     for (const [subj, subTests] of Object.entries(subjects)) {
       buttons.push([
@@ -189,6 +191,87 @@ async function cbCreateTest(ctx) {
     ctx,
     "✏️ *Test Yaratish*\n\nO'z shaxsiy testingizni yarating va do'stlaringiz bilan ulashing!\n\n💡 *Qanday ishlaydi:*\n1️⃣ Fan va blok nomini kiriting\n2️⃣ Savollarni matn, Word fayl, yoki AI orqali qo'shing\n3️⃣ Tayyor testni havola orqali ulashing\n\n👇 Boshlash uchun fan tanlang yoki yangi yarating:",
     Markup.inlineKeyboard(buttons),
+  );
+}
+
+async function cbCtNew(ctx) {
+  await ctx.answerCbQuery("📍 1-qadamga o'tildi").catch(() => {});
+  setState(ctx, States.CREATE_SUBJECT);
+  await safeEdit(
+    ctx,
+    "📍 *[1/3] Bosqich: Fan tanlash*\n\n━━━━━━━━━━━━━━━━\nYangi fan nomini kiriting.\n\n💡 _Masalan: Ona tili, Tarix 1-qism, Kardiologiya_\n\n⚠️ Uzunligi: 2–50 belgi.",
+    cancelKb(),
+  );
+}
+
+async function cbCtExist(ctx) {
+  const refId = parseSuffix(ctx.callbackQuery.data, "ct_exist_");
+  const testData = await dbService.getUserTest(refId);
+  if (!testData)
+    return ctx.answerCbQuery("❌ Fan topilmadi", { show_alert: true });
+
+  await ctx.answerCbQuery(`✅ ${testData.subject} tanlandi`).catch(() => {});
+
+  await updateData(ctx, { subject: testData.subject });
+  setState(ctx, States.CREATE_NAME);
+  await safeEdit(
+    ctx,
+    `✅ Fan: *${testData.subject}*\n\n📍 *[2/3] Bosqich: Blok yaratish*\n\n━━━━━━━━━━━━━━━━\nUshbu fan uchun yangi blok nomini kiriting.\n\n💡 _Masalan: 1-Mavzu, Yakuniy test, 1-variant_`,
+    cancelKb(),
+  );
+}
+
+async function onSubjectInput(ctx) {
+  const result = SubjectSchema.safeParse(ctx.message.text || "");
+
+  if (!result.success) {
+    return ctx.reply(
+      `❌ ${result.error.errors[0].message}\n\n💡 Iltimos, qaytadan kiriting:`,
+    );
+  }
+  if (!ctx.session || !ctx.session.data) {
+    clearState(ctx);
+    return ctx.reply(
+      "⏳ Sessiya muddati tugadi. Iltimos, /start ni bosing.",
+      backToMainKb(),
+    );
+  }
+
+  const subject = result.data;
+  await updateData(ctx, { subject });
+  setState(ctx, States.CREATE_NAME);
+  const safeSubject = escapeMarkdown(subject);
+
+  await ctx.reply(
+    `✅ Fan nomi qabul qilindi: *${safeSubject}*\n\n📍 *[2/3] Bosqich: Blok yaratish*\n\n━━━━━━━━━━━━━━━━\nBlok nomini kiriting (1–50 belgi).\n\n💡 _Masalan: 1-Bob, Midterm savollar, Laboratoriya_`,
+    { parse_mode: "Markdown", ...cancelKb() },
+  );
+}
+
+async function onNameInput(ctx) {
+  const result = BlockNameSchema.safeParse(ctx.message.text || "");
+
+  if (!result.success) {
+    return ctx.reply(
+      `❌ ${result.error.errors[0].message}\n\n💡 Iltimos, qaytadan kiriting:`,
+    );
+  }
+  if (!ctx.session || !ctx.session.data) {
+    clearState(ctx);
+    return ctx.reply(
+      "⏳ Sessiya muddati tugadi. Iltimos, /start ni bosing.",
+      backToMainKb(),
+    );
+  }
+
+  const block_name = result.data;
+  await updateData(ctx, { block_name });
+  setState(ctx, States.CREATE_QUESTIONS);
+  const safeBlockName = escapeMarkdown(block_name);
+
+  await ctx.reply(
+    `✅ Blok saqlandi: *${safeBlockName}*\n\n📍 *[3/3] Bosqich: Savollar qo'shish*\n\n━━━━━━━━━━━━━━━━\nQuyidagi usullardan birini tanlang:\n🤖 *AI Smart Quiz* — matn/rasmdan avtomatik\n📊 *Telegram Quiz* — Telegram'ning o'z poll formati\n📝 *Matn* — yozma format (#belgi bilan)\n📄 *Word fayl* — .docx yuklash\n\n_Savollarni qo'shib bo'lgach, "✅ Yakunlash va Saqlash" tugmasini bosing._`,
+    { parse_mode: "Markdown", ...questionsSummaryKb() },
   );
 }
 
@@ -292,6 +375,7 @@ async function cbFmt(ctx) {
     ? "🔙 Orqaga"
     : "🔙 Format tanlashga qaytish";
 
+  // 1. AI REJIMI (Sizning kodingiz, o'zgarishsiz qoldi)
   if (fmt === "ai") {
     const aiText = `🤖 *AI Smart Quiz — Sun'iy Intellekt bilan test yaratish*
 
@@ -328,10 +412,55 @@ AI sizning matn yoki rasmingizdan professional darajada test savollarini yaratib
     return;
   }
 
+  // 2. QUIZ REJIMI (To'g'ridan-to'g'ri o'tkazadi)
+  if (fmt === "quiz") {
+    setState(ctx, States.CREATE_QUESTIONS);
+    await safeEdit(ctx, FORMAT_INSTRUCTIONS[fmt], getDynamicKb(data));
+    return;
+  }
+
+  // 3. TEXT VA DOCX REJIMI (Shu yerda format so'raymiz)
+  if (fmt === "text" || fmt === "docx") {
+    await safeEdit(
+      ctx,
+      `⚙️ *Qaysi usulda o'qiymiz?*\n\nSiz kiritayotgan testlarda to'g'ri javob qanday belgilangan?\n\n🎯 *# bilan:* To'g'ri javob oldida # belgisi bor.\n🥇 *1-javob:* Har doim A (birinchi) variant to'g'ri qilib yozilgan.`,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback(
+              "🎯 To'g'ri javob oldida # bor",
+              `parse_hash_${fmt}`,
+            ),
+          ],
+          [
+            Markup.button.callback(
+              "🥇 Har doim 1-javob to'g'ri",
+              `parse_first_${fmt}`,
+            ),
+          ],
+          [Markup.button.callback(backBtnText, backBtnAction)],
+        ]),
+      },
+    );
+  }
+}
+// TANLANGAN REJIMNI QABUL QILISH VA YO'RIQNOMA BERISH
+async function cbParseModeSelect(ctx) {
+  await ctx.answerCbQuery().catch(() => {});
+  const action = ctx.callbackQuery.data;
+  const parts = action.split("_");
+  const mode = parts[1]; // hash yoki first
+  const fmt = parts[2]; // text yoki docx
+
+  const data = await getData(ctx);
+  // Rejimni xotiraga yozib qo'yamiz (utils.js shundan foydalanadi)
+  await updateData(ctx, { parse_mode: mode });
+
+  // Jarayonni davom ettiramiz
   setState(ctx, States.CREATE_QUESTIONS);
   await safeEdit(ctx, FORMAT_INSTRUCTIONS[fmt], getDynamicKb(data));
 }
-
 // ─── 2. AI YORDAMCHI FUNKSIYALARI (GLOBAL) ─────────────────────
 
 // Matn va savollar soni nisbatini tekshirish (1 savol = 8 so'z)
@@ -353,6 +482,8 @@ function validateAiRequest(text, requestedCount) {
 
 // Sanoqni so'rash menyusi
 async function promptQuestionCount(ctx) {
+  const data = await getData(ctx); // <--- XATONI TO'G'RILOVCHI QATOR SHU
+
   await safeEdit(
     ctx,
     `🔢 <b>Nechta savol tuzamiz?</b>\n\nO'zingizga kerakli savollar sonini tanlang yoki AI o'zi matnga qarab munosib miqdorda tuzsin.`,
@@ -367,6 +498,8 @@ async function promptQuestionCount(ctx) {
           Markup.button.callback("15 ta", "ai_cnt_15"),
           Markup.button.callback("20 ta", "ai_cnt_20"),
         ],
+
+        [Markup.button.callback("25 ta", "ai_cnt_25")],
         [Markup.button.callback("🤖 Matnga mos (Avto)", "ai_cnt_auto")],
         [
           Markup.button.callback(
@@ -524,6 +657,9 @@ async function processAiResult(ctx, msgId, generatedQuestions) {
   const questions = [...(data.questions || []), ...generatedQuestions];
   await updateData(ctx, { questions });
 
+  // XATONI TO'G'RILOVCHI QATOR: AI ishlab bo'lgach oddiy holatga qaytaramiz
+  setState(ctx, States.CREATE_QUESTIONS);
+
   await ctx.telegram.editMessageText(
     ctx.chat.id,
     msgId,
@@ -542,7 +678,7 @@ async function onDocxFile(ctx) {
     return ctx.reply("⚠️ Faqat `.docx` fayl yuboring.");
 
   const status = await ctx.reply("⏳ Fayl o'qilmoqda...");
-  const filePath = path.join(
+  const filePath = require('path').join(
     require("os").tmpdir(),
     `ugc_${ctx.from.id}_${Date.now()}.docx`,
   );
@@ -551,7 +687,7 @@ async function onDocxFile(ctx) {
     const https = require("https");
     const http = require("http");
     await new Promise((resolve, reject) => {
-      const file = fs.createWriteStream(filePath);
+      const file = require('fs').createWriteStream(filePath);
       const req = link.href.startsWith("https") ? https : http;
       req
         .get(link.href, (res) => {
@@ -564,13 +700,15 @@ async function onDocxFile(ctx) {
         .on("error", reject);
     });
 
-    const newQs = await parseDocxQuestions(filePath);
+    // ─── O'ZGARISH SHU YERDA: parse_mode ni berib yuboramiz ───
+    const newQs = await parseDocxQuestions(filePath, data.parse_mode || "hash");
+    
     if (!newQs.length)
       return ctx.telegram.editMessageText(
         ctx.chat.id,
         status.message_id,
         undefined,
-        "❌ Fayldan savol topilmadi!",
+        "❌ Fayldan savol topilmadi! Formatni to'g'ri tanlaganingizga ishonch hosil qiling.",
       );
 
     const questions = [...(data.questions || []), ...newQs];
@@ -590,13 +728,39 @@ async function onDocxFile(ctx) {
       "❌ Xatolik yuz berdi.",
     );
   } finally {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    if (require('fs').existsSync(filePath)) require('fs').unlinkSync(filePath);
   }
 }
 
 async function onQuestionMessage(ctx) {
   const data = await getData(ctx);
   const questions = [...(data.questions || [])];
+  
+  // ─── TAHRIRLASH REJIMI ───
+  if (data.editing_question_index !== undefined) {
+     if (!ctx.message.text) return ctx.reply("⚠️ Iltimos, matn yuboring.");
+     
+     const added = parseTextQuestions(ctx.message.text, data.parse_mode || 'hash');
+     if (!added.length) {
+         return ctx.reply("❌ Formatingiz xato! Iltimos, to'g'ri javob oldiga # qo'yib qayta yuboring.");
+     }
+     
+     // Eski savol o'rniga yangisini joylaymiz
+     const updatedIdx = data.editing_question_index;
+     questions[updatedIdx] = added[0]; 
+     
+     // Xotirani tozalaymiz (tahrirlashdan chiqamiz)
+     await updateData(ctx, { questions, editing_question_index: undefined });
+     
+     const msg = await ctx.reply("✅ Savol muvaffaqiyatli tahrirlandi!");
+     setTimeout(() => ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(()=>{}), 2000);
+     
+     // XATOLIK TO'G'RILANGAN QISM: Telegraf'da callback_query ni xavfsiz chaqirish
+     ctx.update.callback_query = { data: `preview_q_${updatedIdx}` }; 
+     return cbPreviewQuestion(ctx);
+  }
+
+  // ─── YANGI SAVOL QO'SHISH REJIMI ───
   const fmt = data.format;
 
   if (fmt === "quiz") {
@@ -609,7 +773,7 @@ async function onQuestionMessage(ctx) {
     });
   } else if (fmt === "text") {
     if (!ctx.message.text) return;
-    const added = parseTextQuestions(ctx.message.text);
+    const added = parseTextQuestions(ctx.message.text, data.parse_mode || 'hash');
     if (!added.length) return ctx.reply("⚠️ Savol formati xato.");
     questions.push(...added);
   } else return;
@@ -621,11 +785,16 @@ async function onQuestionMessage(ctx) {
   });
 }
 
-// ─── 3. KO'RIB CHIQISH (PREVIEW) VA O'CHIRISH ────────────────
+// ─── 3. KO'RIB CHIQISH (PREVIEW), TAHRIRLASH VA O'CHIRISH ──────
+
 async function cbPreviewQuestion(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const idx = parseInt(parseSuffix(ctx.callbackQuery.data, "preview_q_"), 10);
   const data = await getData(ctx);
+
+  // Har ehtimolga qarshi tahrirlash rejimini tozalab qo'yamiz
+  await updateData(ctx, { editing_question_index: undefined });
+
   const questions = data.questions || [];
 
   if (questions.length === 0) {
@@ -651,12 +820,43 @@ async function cbPreviewQuestion(ctx) {
     parse_mode: "Markdown",
     ...Markup.inlineKeyboard([
       nav,
-      [Markup.button.callback("🗑 Shu savolni o'chirish", `del_q_${validIdx}`)],
+      [
+        Markup.button.callback("✏️ Tahrirlash", `edit_q_${validIdx}`),
+        Markup.button.callback("🗑 O'chirish", `del_q_${validIdx}`),
+      ],
       [Markup.button.callback("🔙 Orqaga qaytish", "preview_back")],
     ]),
   });
 }
 
+async function cbEditQuestionStart(ctx) {
+  await ctx.answerCbQuery("✏️ Savol matni tayyorlanmoqda...").catch(() => {});
+  const idx = parseInt(parseSuffix(ctx.callbackQuery.data, "edit_q_"), 10);
+  const data = await getData(ctx);
+  const q = data.questions[idx];
+
+  let textFormat = `${q.question}\n`;
+  q.options.forEach((opt, i) => {
+    if (i === q.correct_index) textFormat += `#${opt}\n`;
+    else textFormat += `${opt}\n`;
+  });
+
+  await updateData(ctx, { editing_question_index: idx });
+
+  // XATONI TO'G'RILOVCHI QATOR: Tahrirlash bosilganda bot aniq to'g'ri rejimga o'tishini ta'minlaymiz
+  setState(ctx, States.CREATE_QUESTIONS);
+
+  await safeEdit(
+    ctx,
+    `✏️ *Savolni Tahrirlash* (${idx + 1}-savol)\n\nQuyidagi matnni nusxalang (ustiga bossangiz nusxalanadi), xatoni to'g'rilab, botga qayta yuboring:\n\n\`\`\`\n${textFormat}\`\`\`\n\n💡 _To'g'ri javob oldida # bo'lishi shart._`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("❌ Bekor qilish", `preview_q_${idx}`)],
+      ]),
+    },
+  );
+}
 async function cbDeleteQuestion(ctx) {
   await ctx.answerCbQuery().catch(() => {});
 
@@ -691,37 +891,58 @@ async function cbFinishCreation(ctx) {
   const data = await getData(ctx);
   const questions = data.questions || [];
   if (!questions.length)
-    return ctx
-      .answerCbQuery("❌ Savollar yo'q!", { show_alert: true })
-      .catch(() => {});
-  await ctx.answerCbQuery().catch(() => {});
+    return ctx.answerCbQuery("❌ Kamida 1 ta savol qo'shishingiz kerak!", { show_alert: true }).catch(() => {});
+  
+  await ctx.answerCbQuery("✅ Test muvaffaqiyatli saqlandi!").catch(() => {});
 
-  let testId = data.editing_test_id;
-  if (testId) {
-    await dbService.updateUserTestQuestions(testId, ctx.from.id, questions);
+  const CHUNK_SIZE = 25; // Har bir blokdagi maksimal savollar soni
+  let testIds = [];
+
+  if (data.editing_test_id) {
+    // Agar eski testni tahrirlayotgan bo'lsa, shunchaki yangilaymiz
+    await dbService.updateUserTestQuestions(data.editing_test_id, ctx.from.id, questions);
+    testIds.push(data.editing_test_id);
   } else {
-    testId = await dbService.saveUserTest(
-      ctx.from.id,
-      data.subject,
-      data.block_name,
-      questions,
-    );
+    // YANGI TEST YARATISH: Avto-bo'lish (Chunking)
+    if (questions.length <= CHUNK_SIZE) {
+      // Savollar oz bo'lsa, bitta qilib saqlaymiz
+      const tId = await dbService.saveUserTest(ctx.from.id, data.subject, data.block_name, questions);
+      testIds.push(tId);
+    } else {
+      // 25 tadan bo'lib chiqamiz
+      const chunks = [];
+      for (let i = 0; i < questions.length; i += CHUNK_SIZE) {
+        chunks.push(questions.slice(i, i + CHUNK_SIZE));
+      }
+      
+      // Har bir qismni alohida blok qilib yozamiz
+      for (let i = 0; i < chunks.length; i++) {
+        const chunkName = `${data.block_name} (${i + 1}-qism)`;
+        const tId = await dbService.saveUserTest(ctx.from.id, data.subject, chunkName, chunks[i]);
+        testIds.push(tId);
+      }
+    }
   }
 
   const botInfo = await ctx.telegram.getMe();
+  const firstTestId = testIds[0];
+  
+  const chunkMsg = testIds.length > 1 
+    ? `\n⚠️ *Avto-bo'lish:* Savollar ko'pligi uchun tizim ularni avtomatik *${testIds.length} ta blokga* ajratdi va fanga joyladi.`
+    : `\n🔗 *Faqat shu blok:*\n\`https://t.me/${botInfo.username}?start=t_${firstTestId}\``;
+
   await safeEdit(
     ctx,
-    `🎉 *Muvaffaqiyatli saqlandi!*\n\n📚 Fan: *${data.subject}*\n📝 Blok: *${data.block_name}*\n🔢 Savollar: *${questions.length} ta*\n\n🔗 *Faqat shu blok:*\nhttps://t.me/${botInfo.username}?start=t_${testId}\n🔗 *Butun fan:*\nhttps://t.me/${botInfo.username}?start=s_${testId}`,
+    `🎉 *Muvaffaqiyatli saqlandi!*\n\n📚 Fan: *${data.subject}*\n📝 Asosiy Blok: *${data.block_name}*\n🔢 Jami Savollar: *${questions.length} ta*${chunkMsg}\n\n🔗 *Butun fanni o'ynash (Marafon):*\n\`https://t.me/${botInfo.username}?start=s_${firstTestId}\``,
     Markup.inlineKeyboard([
-      [Markup.button.url("↗️ Guruhga ulashish (Blok)", `https://t.me/${botInfo.username}?startgroup=t_${testId}`)],
-      [Markup.button.url("🏃 Guruhga ulashish (Marafon)", `https://t.me/${botInfo.username}?startgroup=s_${testId}`)],
+      [Markup.button.callback("➕ Shu fanga yana blok qo'shish", `ct_exist_${firstTestId}`)],
+      [Markup.button.url("↗️ Guruhda o'ynash", `https://t.me/${botInfo.username}?startgroup=s_${firstTestId}`)],
       [Markup.button.callback("📂 Mening Testlarim", "my_tests")],
       [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
     ]),
   );
   clearState(ctx);
 }
-
 async function cbCancelCreation(ctx) {
   clearState(ctx);
   await ctx.answerCbQuery().catch(() => {});
@@ -731,9 +952,8 @@ async function cbCancelCreation(ctx) {
 // src/handlers/testCreation.js fayli ichida:
 
 async function cbMyTests(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
+  await ctx.answerCbQuery("📂 Testlaringiz yuklanmoqda...").catch(() => {});
 
-  // Sahifani aniqlaymiz (agar birinchi marta kirsa 0)
   let page = 0;
   if (ctx.callbackQuery.data.startsWith("my_tests_")) {
     page = parseInt(ctx.callbackQuery.data.replace("my_tests_", ""), 10);
@@ -753,27 +973,23 @@ async function cbMyTests(ctx) {
     );
   }
 
-  // 1. Testlarni fanlar (subject) bo'yicha guruhlaymiz
+  // Fanlar bo'yicha guruhlaymiz
   const subjectsMap = {};
   for (const t of tests) {
-    if (!subjectsMap[t.subject]) {
-      subjectsMap[t.subject] = [];
-    }
+    if (!subjectsMap[t.subject]) subjectsMap[t.subject] = [];
     subjectsMap[t.subject].push(t);
   }
 
   const uniqueSubjects = Object.keys(subjectsMap);
-  const itemsPerPage = 5; // Bitta sahifada nechta fan ko'rinishi
+  const itemsPerPage = 5;
   const totalPages = Math.ceil(uniqueSubjects.length / itemsPerPage);
   const currentSubjects = uniqueSubjects.slice(
     page * itemsPerPage,
     (page + 1) * itemsPerPage,
   );
 
-  // 2. Fanlar ro'yxatidan tugmalar yaratamiz
   const buttons = currentSubjects.map((subj) => {
     const subjTests = subjectsMap[subj];
-    // cbManageSubj fanni aniqlashi uchun shu fanga tegishli 1-testning id'sini berib yuboramiz
     const firstTestId = subjTests[0].id;
     return [
       Markup.button.callback(
@@ -783,7 +999,6 @@ async function cbMyTests(ctx) {
     ];
   });
 
-  // Navigatsiya tugmalari (Keyingi / Oldingi)
   const navButtons = [];
   if (page > 0)
     navButtons.push(
@@ -795,17 +1010,12 @@ async function cbMyTests(ctx) {
     );
 
   if (navButtons.length > 0) buttons.push(navButtons);
-
-  // ORQAGA tugmasi to'g'ridan-to'g'ri asosiy menyuga qaytadi
   buttons.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
 
   await safeEdit(
     ctx,
     `📂 <b>Mening Testlarim</b> (Sahifa ${page + 1}/${totalPages}):\n\nQaysi fan bo'yicha testlarni ko'rmoqchisiz?\n\n📊 Jami: ${uniqueSubjects.length} ta fan, ${tests.length} ta test`,
-    {
-      parse_mode: "HTML",
-      ...Markup.inlineKeyboard(buttons),
-    },
+    { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) },
   );
 }
 async function cbManageSubj(ctx) {
@@ -824,9 +1034,16 @@ async function cbManageSubj(ctx) {
       `manage_test_${t.id}`,
     ),
   ]);
-// cbManageSubj oxiridagi tugmalar:
-  buttons.push([Markup.button.url("🏃 Bu fanni guruhda Marafon qilish", `https://t.me/${botInfo.username}?startgroup=s_${refId}`)]);
-  buttons.push([Markup.button.callback("➕ Bu fanga blok qo'shish", `ct_exist_${refId}`)]);
+  // cbManageSubj oxiridagi tugmalar:
+  buttons.push([
+    Markup.button.url(
+      "🏃 Bu fanni guruhda Marafon qilish",
+      `https://t.me/${botInfo.username}?startgroup=s_${refId}`,
+    ),
+  ]);
+  buttons.push([
+    Markup.button.callback("➕ Bu fanga blok qo'shish", `ct_exist_${refId}`),
+  ]);
   buttons.push([Markup.button.callback("🔙 Mening Testlarimga", "my_tests")]);
   await safeEdit(
     ctx,
@@ -845,16 +1062,25 @@ async function cbManageTest(ctx) {
   await safeEdit(
     ctx,
     `📝 * Blok Ma\'lumotlari *\n📚 Fan: ${testData.subject}\n🔖 Blok: * ${testData.block_name} *\n🔢 Savollar: *${(testData.questions || []).length} ta*\n\n🔗 *Havola:*\nhttps://t.me/${botInfo.username}?start=t_${testId}`,
-   
 
     Markup.inlineKeyboard([
-      [Markup.button.url("↗️ Guruhda o'ynash", `https://t.me/${botInfo.username}?startgroup=t_${testId}`)],
-      [Markup.button.callback("▶️ O'zim boshlash (Shaxsiy)", `ugc_start_${testId}`)],
+      [
+        Markup.button.url(
+          "↗️ Guruhda o'ynash",
+          `https://t.me/${botInfo.username}?startgroup=t_${testId}`,
+        ),
+      ],
+      [
+        Markup.button.callback(
+          "▶️ O'zim boshlash (Shaxsiy)",
+          `ugc_start_${testId}`,
+        ),
+      ],
       [Markup.button.callback("✏️ Tahrirlash", `edit_test_${testId}`)],
       [Markup.button.callback("🗑 Blokni o'chirish", `delete_test_${testId}`)],
       [Markup.button.callback("🔙 Fanga qaytish", `manage_subj_${testId}`)],
       [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
-    ])
+    ]),
   );
 }
 
@@ -911,6 +1137,9 @@ function register(bot) {
   bot.action("ai_mode_image", cbAiModeImage);
   bot.action(/^ai_cnt_/, cbAiCount);
 
+  bot.action(/^edit_q_/, cbEditQuestionStart);
+
+  bot.action(/^parse_(hash|first)_(text|docx)/, cbParseModeSelect);
   bot.action("ignore", (ctx) => ctx.answerCbQuery().catch(() => {}));
 }
 

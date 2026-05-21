@@ -11,8 +11,8 @@ const SubjectSchema = z.string()
   .max(50, "Maksimal 50 ta belgi ruxsat etiladi")
   .regex(nameRegex, "Faqat harflar, raqamlar, probel va odatiy belgilar mumkin");
 
-const BlockSchema = z.string()
-  .min(2, "Kamida 2 ta belgi bo'lishi kerak")
+const BlockNameSchema = z.string()
+  .min(1, "Kamida 1 ta belgi bo'lishi kerak")
   .max(50, "Maksimal 50 ta belgi ruxsat etiladi")
   .regex(nameRegex, "Faqat harflar, raqamlar, probel va odatiy belgilar mumkin");
 
@@ -23,12 +23,21 @@ function validateSubject(name) {
 }
 
 function validateBlockName(name) {
-  const result = BlockSchema.safeParse(name);
+  const result = BlockNameSchema.safeParse(name);
   if (!result.success) return result.error.errors[0].message;
   return null;
 }
 
+// Markdown belgilarini xavfsiz holatga keltirish uchun
+function escapeMarkdown(text) {
+  if (!text) return '';
+  return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+}
+
 module.exports = {
+  SubjectSchema,
+  BlockNameSchema,
   validateSubject,
-  validateBlockName
+  validateBlockName,
+  escapeMarkdown
 };
