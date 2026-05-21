@@ -31,8 +31,7 @@ const {
   resolveTestName,
 } = require("./coreQuiz");
 const {
-  initAndStartTest,
-  sendWaitingRoomMessage,
+
   cbRoomReady,
   cbRoomStart,
   cbRoomCancel,
@@ -67,7 +66,69 @@ async function cbOfficialTests(ctx) {
     { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) },
   );
 }
+async function sendWaitingRoomMessage(ctx, chatId, subjectKey, testId, qCount) {
+  const room = await sessionService.getWaitingRoom(chatId);
+  const users = Array.from(room.readyUsers || []);
+  const text = `🎯 <b>Kutish Zali</b>\n\n` +
+               `📚 Fan: <b>${subjectKey}</b>\n` +
+               `🔢 Savollar: <b>${qCount} ta</b>\n\n` +
+               `👥 Qatnashchilar: ${users.length}\n` +
+               (users.length ? users.map((u, i) => `${i + 1}. ${u.name || 'Foydalanuvchi'}`).join('\n') : "<i>Hali hech kim yo'q</i>");
+  
+  const buttons = [
+    [Markup.button.callback('✋ Men ham qatnashaman', 'room_ready')],
+    [
+      Markup.button.callback('▶️ Boshlash', 'room_start'),
+      Markup.button.callback('❌ Bekor qilish', 'room_cancel')
+    ]
+  ];
 
+  await ctx.telegram.sendMessage(chatId, text, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
+}
+
+async function initAndStartTest(chatId, telegram, subjectKey, testId, testData, initiatorId, chatType) {
+  const sessionQ = prepareShuffledQuestions(testData.questions || []);
+  const subjName = SUBJECTS[subjectKey] || subjectKey;
+  const blockName = testData.block_name || (String(testId).startsWith('ugc_') ? 'Maxsus Test' : `${testId}-Blok`);
+  
+  await sessionService.setActiveTest(chatId, {
+    chatType,
+    initiatorId,
+    subjectKey,
+    testId,
+    blockName: blockName,
+    sessionQuestions: sessionQ,
+    qIdx: 0,
+    startTime: Date.now(),
+    pollId: null,
+    msgId: null,
+    correct: 0,
+    wrong: 0,
+    mistakes: [],
+    consecutiveTimeouts: 0,
+    groupScores: {},
+    finished: false,
+    status: 'preparing' 
+  });
+
+  if (chatType === 'private') {
+    const text = `📚 <b>Fan:</b> ${escapeHtml(subjName)}\n🔖 <b>Blok:</b> ${escapeHtml(blockName)}\n🔢 <b>Savollar:</b> ${sessionQ.length} ta\n\n🚀 <b>Testga tayyormisiz?</b>\nBoshlash uchun pastdagi tugmani bosing!`;
+    
+    await telegram.sendMessage(chatId, text, {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [[{ text: "▶️ Boshlash", callback_data: "user_ready_start" }]]
+      }
+    });
+  } else {
+    // Guruh uchun darhol boshlash
+    const session = await sessionService.getActiveTest(chatId);
+    session.status = 'running';
+    session.startTime = Date.now();
+    await sessionService.setActiveTest(chatId, session);
+    await sendNextQuestion(chatId, telegram);
+  }
+}
 async function cbSubject(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const subjectKey = parseSuffix(ctx.callbackQuery.data, "subj_");
@@ -336,19 +397,24 @@ async function cbUserReadyStart(ctx) {
     session.startTime = Date.now();
     await sessionService.setActiveTest(chatId, session);
 
-    await safeEdit(ctx, "⏳ <b>Diqqat! Test boshlanmoqda...</b>\n\n<b>3️⃣</b>", {
+    // Fan va blok nomini olish
+    const subjName = SUBJECTS[session.subjectKey] || session.subjectKey;
+    const blockName = session.blockName || "Test";
+    const header = `📚 <b>Fan:</b> ${escapeHtml(subjName)}\n🔖 <b>Blok:</b> ${escapeHtml(blockName)}\n\n`;
+
+    await safeEdit(ctx, header + "⏳ <b>Diqqat! Test boshlanmoqda...</b>\n\n<b>3️⃣</b>", {
       parse_mode: "HTML",
     });
     await wait(1000);
-    await safeEdit(ctx, "⏳ <b>Diqqat! Test boshlanmoqda...</b>\n\n<b>2️⃣</b>", {
+    await safeEdit(ctx, header + "⏳ <b>Diqqat! Test boshlanmoqda...</b>\n\n<b>2️⃣</b>", {
       parse_mode: "HTML",
     });
     await wait(1000);
-    await safeEdit(ctx, "⏳ <b>Diqqat! Test boshlanmoqda...</b>\n\n<b>1️⃣</b>", {
+    await safeEdit(ctx, header + "⏳ <b>Diqqat! Test boshlanmoqda...</b>\n\n<b>1️⃣</b>", {
       parse_mode: "HTML",
     });
     await wait(1000);
-    await safeEdit(ctx, "🚀 <b>Kamarlarni taqing! BOSHLADIK!</b> Omad yor bo'lsin, muvaffaqiyat sizga! 🍀", {
+    await safeEdit(ctx, header + "🚀 <b>Kamarlarni taqing! BOSHLADIK!</b> Omad yor bo'lsin, muvaffaqiyat sizga! 🍀", {
       parse_mode: "HTML",
     });
 

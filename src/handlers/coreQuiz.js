@@ -539,4 +539,10 @@ module.exports = {
   questionTimeout,
   lastMistakesCache,
   resolveTestName,
+  getCacheEntry,
+  setCacheEntry,
+  groupTestCache,
+  activePollsCache,
+  buildFinishButtons,
+  
 };

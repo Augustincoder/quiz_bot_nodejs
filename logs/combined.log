@@ -135,3 +135,27 @@
 {"count":5,"level":"info","message":"ai:generate","timestamp":"2026-05-21T10:06:49.188Z","type":"text"}
 {"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T10:25:08.883Z","userId":2014973670}
 {"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-21T12:33:47.512Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-21T12:38:47.133Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T12:39:09.782Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-21T12:42:49.548Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-21T12:43:00.101Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T12:43:05.115Z","userId":2014973670}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T12:43:13.723Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-21T12:44:09.580Z"}
+{"level":"info","message":"📦 BullMQ queues paused","timestamp":"2026-05-21T12:44:09.878Z"}
+{"level":"info","message":"👷 BullMQ workers closed","timestamp":"2026-05-21T12:44:10.240Z"}
+{"level":"info","message":"📡 Sentry flushed","timestamp":"2026-05-21T12:44:10.248Z"}
+{"level":"info","message":"🔌 Redis connection closed","timestamp":"2026-05-21T12:44:10.445Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-21T12:44:21.821Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T12:44:29.293Z","userId":2014973670}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T12:44:37.483Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-21T12:51:05.980Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-21T12:51:49.141Z"}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-21T12:54:57.540Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-21T12:55:07.699Z"}
+{"chatId":"2014973670","correct":1,"elapsed":16,"level":"info","message":"test:finish","percent":25,"subject":"Qy","testId":"ugc_110","timestamp":"2026-05-21T12:55:31.860Z","wrong":3}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T12:59:30.980Z","userId":2014973670}
+{"chatId":"2014973670","correct":0,"elapsed":28,"level":"info","message":"test:finish","percent":0,"subject":"Qy","testId":"ugc_109","timestamp":"2026-05-21T13:00:03.441Z","wrong":1}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T13:04:06.759Z","userId":2014973670}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-21T13:04:42.500Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-21T13:05:27.287Z"}
