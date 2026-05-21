@@ -376,20 +376,20 @@ async function main() {
   app.use(express.json({ limit: "50mb" }));
   app.use("/api/admin", adminRouter);
 
-  // const http = require("http");
-  // const { initSocket } = require("./src/socket");
+  const http = require("http");
+  const { initSocket } = require("./src/socket");
 
-  // const server = http.createServer(app);
+  const server = http.createServer(app);
 
-  // // Attach Socket.io
-  // initSocket(server);
+  // Attach Socket.io
+  initSocket(server);
 
-  // const port = parseInt(process.env.PORT || "8080", 10);
-  // app.get("/", (_, res) => res.send("Bot 100% aktiv va ishlab turibdi! 🚀"));
+  const port = parseInt(process.env.PORT || "8080", 10);
+  app.get("/", (_, res) => res.send("Bot 100% aktiv va ishlab turibdi! 🚀"));
 
-  // server.listen(port, () =>
-  //   console.log(`🌐 Web & Socket.io server ishga tushdi (Port: ${port})`)
-  // );
+  server.listen(port, () =>
+    console.log(`🌐 Web & Socket.io server ishga tushdi (Port: ${port})`)
+  );
 
   // Avtomatik Dars Jadvali tarqatish funksiyasi
 
