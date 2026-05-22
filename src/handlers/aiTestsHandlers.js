@@ -6,12 +6,141 @@ const dbService = require('../services/dbService');
 const { ADMIN_ID, SUBJECTS } = require('../config/config');
 const { States, setState, clearState, updateData, getData, getState, safeEdit, backToMainKb, escapeHtml, sanitizeForTelegram, isAdmin, adminGuard, parseSuffix, safeAnswerCb } = require('../core/utils');
 
-// ─── AI TESTS MENU ─────────────────────────────────────────────
+// ============================================
+// 📊 AI ADMIN RATE LIMITING
+// ============================================
+
+// Admin-specific rate limiting (kam qattiq, lekin baribir nazorat)
+const adminAIUsage = new Map(); // { adminId: { count: number, resetTime: timestamp } }
+
+const ADMIN_AI_LIMITS = {
+  HOURLY_LIMIT: 250,        // Admin soatiga 20 ta AI test yarata oladi
+  DAILY_LIMIT: 1000,        // Kuniga 100 ta
+  COOLDOWN_SECONDS: 5     // Har bir so'rov orasida 10 soniya
+};
+
+/**
+ * Admin uchun AI rate limit tekshiruvi
+ */
+function checkAdminAILimit(adminId) {
+  const now = Date.now();
+  const userLimit = adminAIUsage.get(adminId);
+
+  if (!userLimit) {
+    adminAIUsage.set(adminId, {
+      hourlyCount: 1,
+      dailyCount: 1,
+      hourlyResetTime: now + 60 * 60 * 1000,
+      dailyResetTime: now + 24 * 60 * 60 * 1000,
+      lastRequestTime: now
+    });
+    return { allowed: true, remaining: ADMIN_AI_LIMITS.DAILY_LIMIT - 1 };
+  }
+
+  // Hourly reset
+  if (now > userLimit.hourlyResetTime) {
+    userLimit.hourlyCount = 0;
+    userLimit.hourlyResetTime = now + 60 * 60 * 1000;
+  }
+
+  // Daily reset
+  if (now > userLimit.dailyResetTime) {
+    userLimit.dailyCount = 0;
+    userLimit.dailyResetTime = now + 24 * 60 * 60 * 1000;
+  }
+
+  // Cooldown check (har bir so'rov orasida)
+  const timeSinceLastRequest = (now - userLimit.lastRequestTime) / 1000;
+  if (timeSinceLastRequest < ADMIN_AI_LIMITS.COOLDOWN_SECONDS) {
+    const waitTime = Math.ceil(ADMIN_AI_LIMITS.COOLDOWN_SECONDS - timeSinceLastRequest);
+    return {
+      allowed: false,
+      reason: 'cooldown',
+      waitTime,
+      message: `⏳ Iltimos, ${waitTime} soniya kuting.`
+    };
+  }
+
+  // Hourly limit check
+  if (userLimit.hourlyCount >= ADMIN_AI_LIMITS.HOURLY_LIMIT) {
+    const minutesLeft = Math.ceil((userLimit.hourlyResetTime - now) / 60000);
+    return {
+      allowed: false,
+      reason: 'hourly_limit',
+      minutesLeft,
+      message: `⚠️ Soatlik limit tugadi (${ADMIN_AI_LIMITS.HOURLY_LIMIT} ta). ${minutesLeft} daqiqadan keyin qayta urinib ko'ring.`
+    };
+  }
+
+  // Daily limit check
+  if (userLimit.dailyCount >= ADMIN_AI_LIMITS.DAILY_LIMIT) {
+    const hoursLeft = Math.ceil((userLimit.dailyResetTime - now) / 3600000);
+    return {
+      allowed: false,
+      reason: 'daily_limit',
+      hoursLeft,
+      message: `⚠️ Kunlik limit tugadi (${ADMIN_AI_LIMITS.DAILY_LIMIT} ta). ${hoursLeft} soatdan keyin qayta urinib ko'ring.`
+    };
+  }
+
+  // Increment counters
+  userLimit.hourlyCount++;
+  userLimit.dailyCount++;
+  userLimit.lastRequestTime = now;
+
+  return {
+    allowed: true,
+    remaining: ADMIN_AI_LIMITS.DAILY_LIMIT - userLimit.dailyCount
+  };
+}
+
+/**
+ * Admin AI usage statistikasini olish
+ */
+function getAdminAIStats(adminId) {
+  const usage = adminAIUsage.get(adminId);
+  if (!usage) {
+    return {
+      hourly: { used: 0, limit: ADMIN_AI_LIMITS.HOURLY_LIMIT },
+      daily: { used: 0, limit: ADMIN_AI_LIMITS.DAILY_LIMIT }
+    };
+  }
+
+  return {
+    hourly: {
+      used: usage.hourlyCount,
+      limit: ADMIN_AI_LIMITS.HOURLY_LIMIT,
+      remaining: ADMIN_AI_LIMITS.HOURLY_LIMIT - usage.hourlyCount
+    },
+    daily: {
+      used: usage.dailyCount,
+      limit: ADMIN_AI_LIMITS.DAILY_LIMIT,
+      remaining: ADMIN_AI_LIMITS.DAILY_LIMIT - usage.dailyCount
+    }
+  };
+}
+
+// ============================================
+// 🤖 AI TESTS MENU
+// ============================================
+
 async function cbAdminAiTests(ctx) {
   await ctx.answerCbQuery().catch(() => {});
+  
+  // Admin statistikasini ko'rsatish
+  const stats = getAdminAIStats(ctx.from.id);
+  const statsText = `\n\n📊 <b>Sizning limitingiz:</b>\n` +
+    `├ Soatlik: ${stats.hourly.used}/${stats.hourly.limit}\n` +
+    `└ Kunlik: ${stats.daily.used}/${stats.daily.limit}`;
+  
   const buttons = Object.entries(SUBJECTS).map(([k, v]) => [Markup.button.callback(v, `ai_tests_subj_${k}`)]);
+  buttons.push([Markup.button.callback('📊 Limitlar', 'admin_ai_stats')]);
   buttons.push([Markup.button.callback('❌ Bekor qilish', 'admin_cancel')]);
-  await safeEdit(ctx, "🤖 <b>AI Testlar</b>\n\nQaysi fanga AI test yaratmoqchisiz?", { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
+  
+  await safeEdit(ctx, 
+    `🤖 <b>AI Testlar</b>\n\nQaysi fanga AI test yaratmoqchisiz?${statsText}`,
+    { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }
+  );
   setState(ctx, States.ADMIN_AI_TESTS_SUBJECT);
 }
 
@@ -60,10 +189,19 @@ async function cbAiTestsType(ctx) {
   }
 }
 
-// ─── TEXT BASED AI TEST ────────────────────────────────────────
+// ============================================
+// 📝 TEXT BASED AI TEST (with rate limiting)
+// ============================================
+
 async function onAiTestsText(ctx) {
   const text = ctx.message.text;
   if (!text) return;
+  
+  // 🔒 Rate limit tekshiruvi
+  const limitCheck = checkAdminAILimit(ctx.from.id);
+  if (!limitCheck.allowed) {
+    return ctx.reply(limitCheck.message, { parse_mode: 'HTML' });
+  }
   
   let count = 'auto';
   if (text.toLowerCase() === 'auto') {
@@ -76,7 +214,10 @@ async function onAiTestsText(ctx) {
   await updateData(ctx, { ai_test_text: text, ai_test_count: count });
   setState(ctx, States.ADMIN_AI_TESTS_GENERATE);
   
-  const status = await ctx.reply("⏳ <b>AI test yaratilmoqda...</b>", { parse_mode: 'HTML' });
+  const status = await ctx.reply(
+    `⏳ <b>AI test yaratilmoqda...</b>\n\n📊 Qolgan limit: ${limitCheck.remaining}/${ADMIN_AI_LIMITS.DAILY_LIMIT}`,
+    { parse_mode: 'HTML' }
+  );
   
   try {
     const questions = await aiService.generateQuizFromText(text, count);
@@ -106,7 +247,10 @@ async function onAiTestsText(ctx) {
   }
 }
 
-// ─── IMAGE BASED AI TEST ───────────────────────────────────────
+// ============================================
+// 🖼 IMAGE BASED AI TEST (with rate limiting)
+// ============================================
+
 async function onAiTestsImage(ctx) {
   const photo = ctx.message.photo;
   if (!photo) {
@@ -124,6 +268,12 @@ async function onAiTestsImage(ctx) {
     return ctx.reply("⚠️ Iltimos, rasm yuboring yoki 'auto' deb yozing.");
   }
   
+  // 🔒 Rate limit tekshiruvi
+  const limitCheck = checkAdminAILimit(ctx.from.id);
+  if (!limitCheck.allowed) {
+    return ctx.reply(limitCheck.message, { parse_mode: 'HTML' });
+  }
+  
   const data = await getData(ctx);
   let count = data.ai_test_count || 'auto';
   
@@ -135,7 +285,10 @@ async function onAiTestsImage(ctx) {
   await updateData(ctx, { ai_test_count: count });
   setState(ctx, States.ADMIN_AI_TESTS_GENERATE);
   
-  const status = await ctx.reply("⏳ <b>AI test yaratilmoqda...</b>", { parse_mode: 'HTML' });
+  const status = await ctx.reply(
+    `⏳ <b>AI test yaratilmoqda...</b>\n\n📊 Qolgan limit: ${limitCheck.remaining}/${ADMIN_AI_LIMITS.DAILY_LIMIT}`,
+    { parse_mode: 'HTML' }
+  );
   
   try {
     // Rasmni temporary faylga yuklab olish
@@ -189,7 +342,10 @@ async function onAiTestsImage(ctx) {
   }
 }
 
-// ─── ADAPTIVE AI TEST ───────────────────────────────────────────
+// ============================================
+// 🔄 ADAPTIVE AI TEST (with rate limiting)
+// ============================================
+
 async function onAiTestsAdaptiveUser(ctx) {
   const text = ctx.message.text;
   if (!text || !/^\d+$/.test(text)) {
@@ -210,6 +366,13 @@ async function onAiTestsAdaptiveUser(ctx) {
 
 async function onAiTestsAdaptiveCount(ctx) {
   const text = ctx.message.text;
+  
+  // 🔒 Rate limit tekshiruvi
+  const limitCheck = checkAdminAILimit(ctx.from.id);
+  if (!limitCheck.allowed) {
+    return ctx.reply(limitCheck.message, { parse_mode: 'HTML' });
+  }
+  
   let count = 'auto';
   if (text && text.toLowerCase() !== 'auto') {
     count = text.trim();
@@ -221,7 +384,10 @@ async function onAiTestsAdaptiveCount(ctx) {
   const data = await getData(ctx);
   const userId = data.adaptive_user_id;
   
-  const status = await ctx.reply("⏳ <b>AI test yaratilmoqda...</b>", { parse_mode: 'HTML' });
+  const status = await ctx.reply(
+    `⏳ <b>AI test yaratilmoqda...</b>\n\n📊 Qolgan limit: ${limitCheck.remaining}/${ADMIN_AI_LIMITS.DAILY_LIMIT}`,
+    { parse_mode: 'HTML' }
+  );
   
   try {
     // Foydalanuvchi statistikasidan xatolarni olish
@@ -264,7 +430,10 @@ async function onAiTestsAdaptiveCount(ctx) {
   }
 }
 
-// ─── AI TESTS ACTIONS ──────────────────────────────────────────
+// ============================================
+// 🎬 AI TESTS ACTIONS
+// ============================================
+
 async function cbAiTestsPreview(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const data = await getData(ctx);
@@ -300,15 +469,18 @@ async function cbAiTestsSave(ctx) {
     const success = await dbService.saveOfficialTest(subject, testId, questions);
     
     if (!success) {
-      return ctx.answerCbQuery("❌ Supabase'ga saqlashda xatolik.", { show_alert: true }).catch(() => {})     ;
+      return ctx.answerCbQuery("❌ Supabase'ga saqlashda xatolik.", { show_alert: true }).catch(() => {});
     }
+    
+    const stats = getAdminAIStats(ctx.from.id);
     
     await safeEdit(ctx,
       `✅ <b>AI test saqlandi!</b>\n\n` +
       `📚 Fan: <b>${escapeHtml(SUBJECTS[subject] || subject)}</b>\n` +
       `🏷 Turi: <b>${type === 'text' ? 'Matn asosida' : type === 'image' ? 'Rasmdan' : 'Adaptiv'}</b>\n` +
       `🔖 ID: <b>${testId}</b>\n` +
-      `🔢 Savollar: <b>${questions.length} ta</b>`,
+      `🔢 Savollar: <b>${questions.length} ta</b>\n\n` +
+      `📊 Bugungi limitingiz: ${stats.daily.used}/${stats.daily.limit}`,
       { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Admin panel', 'admin_panel_main')]]) },
     );
     clearState(ctx);
@@ -320,6 +492,13 @@ async function cbAiTestsSave(ctx) {
 
 async function cbAiTestsRegenerate(ctx) {
   await ctx.answerCbQuery().catch(() => {});
+  
+  // 🔒 Rate limit tekshiruvi
+  const limitCheck = checkAdminAILimit(ctx.from.id);
+  if (!limitCheck.allowed) {
+    return ctx.answerCbQuery(limitCheck.message, { show_alert: true }).catch(() => {});
+  }
+  
   const data = await getData(ctx);
   const subject = data.subject;
   const type = data.ai_test_type;
@@ -328,7 +507,10 @@ async function cbAiTestsRegenerate(ctx) {
     return safeAnswerCb(ctx, '❌ Ma\'lumotlar yetishmaydi!', { show_alert: true });
   }
   
-  const status = await ctx.reply("⏳ <b>AI test qayta yaratilmoqda...</b>", { parse_mode: 'HTML' });
+  const status = await ctx.reply(
+    `⏳ <b>AI test qayta yaratilmoqda...</b>\n\n📊 Qolgan limit: ${limitCheck.remaining}/${ADMIN_AI_LIMITS.DAILY_LIMIT}`,
+    { parse_mode: 'HTML' }
+  );
   
   try {
     let questions = null;
@@ -373,9 +555,38 @@ async function cbAiTestsRegenerate(ctx) {
   }
 }
 
-// parseSuffix is imported from core/utils
+// ============================================
+// 📊 ADMIN AI STATISTICS
+// ============================================
 
-// ─── REGISTER ──────────────────────────────────────────────────
+async function cbAdminAiStats(ctx) {
+  await ctx.answerCbQuery().catch(() => {});
+  
+  const stats = getAdminAIStats(ctx.from.id);
+  
+  const text = `📊 <b>AI Test Limitlari</b>\n\n` +
+    `<b>Soatlik limit:</b>\n` +
+    `├ Ishlatilgan: ${stats.hourly.used}/${stats.hourly.limit}\n` +
+    `└ Qolgan: ${stats.hourly.remaining}\n\n` +
+    `<b>Kunlik limit:</b>\n` +
+    `├ Ishlatilgan: ${stats.daily.used}/${stats.daily.limit}\n` +
+    `└ Qolgan: ${stats.daily.remaining}\n\n` +
+    `⏱ <b>Cooldown:</b> ${ADMIN_AI_LIMITS.COOLDOWN_SECONDS} soniya\n\n` +
+    `<i>Limitlar har soat va har kecha avtomatik tiklanadi.</i>`;
+  
+  await safeEdit(ctx, text, {
+    parse_mode: 'HTML',
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Orqaga', 'admin_ai_tests')],
+      [Markup.button.callback('🏠 Asosiy menyu', 'admin_panel_main')]
+    ])
+  });
+}
+
+// ============================================
+// 🔗 REGISTRATION
+// ============================================
+
 function register(bot) {
   bot.action('admin_ai_tests', adminGuard(cbAdminAiTests));
   bot.action(/^ai_tests_subj_/, adminGuard(cbAiTestsSubj));
@@ -383,6 +594,7 @@ function register(bot) {
   bot.action('ai_tests_preview', adminGuard(cbAiTestsPreview));
   bot.action('ai_tests_save', adminGuard(cbAiTestsSave));
   bot.action('ai_tests_regenerate', adminGuard(cbAiTestsRegenerate));
+  bot.action('admin_ai_stats', adminGuard(cbAdminAiStats));
   
   // Wire text handlers inside register to avoid modifying index.js
   bot.on('message', async (ctx, next) => {
@@ -418,4 +630,6 @@ module.exports = {
   cbAiTestsPreview,
   cbAiTestsSave,
   cbAiTestsRegenerate,
+  cbAdminAiStats,
+  getAdminAIStats, // Export for potential monitoring
 };

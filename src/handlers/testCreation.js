@@ -48,7 +48,17 @@ function questionsSummaryKb() {
     [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
   ]);
 }
-
+function autoDocxKb() {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback(
+        "📄 Word fayl orqali avtomatik yuklash",
+        "auto_docx",
+      ),
+    ],
+    [Markup.button.callback("❌ Bekor qilish", "cancel_creation")],
+  ]);
+}
 function getDynamicKb(data) {
   if (data.is_editing) {
     return Markup.inlineKeyboard([
@@ -72,7 +82,7 @@ function cancelKb(cb = "cancel_creation") {
 const FORMAT_INSTRUCTIONS = {
   quiz: "📊 *Quiz Formati*\n\nTelegram'ning o'z quiz funksiyasidan foydalaning:\n\n1️⃣ 📎 (Biriktirish) belgisini bosing\n2️⃣ *Poll* → *Quiz* rejimini tanlang\n3️⃣ Savol va javob variantlarini kiriting\n4️⃣ To'g'ri javobni belgilab yuboring\n\n💡 _Har bir quiz ayrima xabar sifatida yuboriladi._",
   text: "📝 *Matn Formati*\n\nQuyidagi ko'rinishda yuboring (bir yoki bir nechta savol):\n```\nO'zbekiston poytaxti qayer?\n#Toshkent\nSamarqand\nBuxoro\nNamangan\n```\n\n💡 _To'g'ri javob oldiga # belgisi qo'yiladi. Savollar orasiga bo'sh qator qo'shing._",
-  docx: "📄 *Word (.docx) Formati*\n\nFaylni quyidagicha tayyorlang:\n```\nSavol matni?\n#To'g'ri javob\nNoto'g'ri javob 1\nNoto'g'ri javob 2\nNoto'g'ri javob 3\n```\n\n💡 _Har bir savolda 2–6 ta javob varianti bo'lishi kerak. Tayyor .docx faylni shu chatga yuboring._",
+docx: "📄 *Word (.docx) Formati*\n\n⚠️ *Muxim:* Fayl boshidagi kirish so'zlari, sarlavha yoki fanga oid boshqa ma'lumotlarni o'chirib tashlang. Matn to'g'ridan-to'g'ri *1-savoldan* boshlanishi shart!\n\nFaylni quyidagicha tayyorlang:\n```\nSavol matni?\n#To'g'ri javob\nNoto'g'ri javob 1\nNoto'g'ri javob 2\n```\n\n💡 _Tayyor .docx faylni shu chatga yuboring._",
 };
 
 // ─── TAHRIRLASH DASHBOARD ────────────────────────────────────
@@ -216,8 +226,8 @@ async function cbCtExist(ctx) {
   setState(ctx, States.CREATE_NAME);
   await safeEdit(
     ctx,
-    `✅ Fan: *${testData.subject}*\n\n📍 *[2/3] Bosqich: Blok yaratish*\n\n━━━━━━━━━━━━━━━━\nUshbu fan uchun yangi blok nomini kiriting.\n\n💡 _Masalan: 1-Mavzu, Yakuniy test, 1-variant_`,
-    cancelKb(),
+    `✅ Fan: *${testData.subject}*\n\n📍 *[2/3] Bosqich: Blok yaratish*\n\n━━━━━━━━━━━━━━━━\nUshbu fan uchun yangi blok nomini kiriting Yoki to'g'ridan-to'g'ri fayl yuklang:`,
+    autoDocxKb(),
   );
 }
 
@@ -243,8 +253,8 @@ async function onSubjectInput(ctx) {
   const safeSubject = escapeMarkdown(subject);
 
   await ctx.reply(
-    `✅ Fan nomi qabul qilindi: *${safeSubject}*\n\n📍 *[2/3] Bosqich: Blok yaratish*\n\n━━━━━━━━━━━━━━━━\nBlok nomini kiriting (1–50 belgi).\n\n💡 _Masalan: 1-Bob, Midterm savollar, Laboratoriya_`,
-    { parse_mode: "Markdown", ...cancelKb() },
+    `✅ Fan nomi qabul qilindi: *${safeSubject}*\n\n📍 *[2/3] Bosqich: Blok yaratish*\n\n━━━━━━━━━━━━━━━━\nBlok nomini kiriting Yoki to'g'ridan-to'g'ri Word fayl yuklang:\n\n💡 _Masalan: 1-Bob, Midterm savollar_`,
+    { parse_mode: "Markdown", ...autoDocxKb() },
   );
 }
 
@@ -271,92 +281,6 @@ async function onNameInput(ctx) {
 
   await ctx.reply(
     `✅ Blok saqlandi: *${safeBlockName}*\n\n📍 *[3/3] Bosqich: Savollar qo'shish*\n\n━━━━━━━━━━━━━━━━\nQuyidagi usullardan birini tanlang:\n🤖 *AI Smart Quiz* — matn/rasmdan avtomatik\n📊 *Telegram Quiz* — Telegram'ning o'z poll formati\n📝 *Matn* — yozma format (#belgi bilan)\n📄 *Word fayl* — .docx yuklash\n\n_Savollarni qo'shib bo'lgach, "✅ Yakunlash va Saqlash" tugmasini bosing._`,
-    { parse_mode: "Markdown", ...questionsSummaryKb() },
-  );
-}
-
-async function cbCtNew(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
-  setState(ctx, States.CREATE_SUBJECT);
-  await safeEdit(
-    ctx,
-    "📝 *Yangi Fan — 1-qadam*\n\nFan nomini kiriting.\n\n💡 _Masalan: Anatomiya, Kirish testi, IELTS Reading_\n\n⚠️ Faqat harflar, raqamlar va tire ishlatiladi (2–50 belgi).",
-    cancelKb(),
-  );
-}
-
-async function cbCtExist(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
-  const refId = parseSuffix(ctx.callbackQuery.data, "ct_exist_");
-  const testData = await dbService.getUserTest(refId);
-  if (!testData) return;
-  await updateData(ctx, { subject: testData.subject });
-  setState(ctx, States.CREATE_NAME);
-  await safeEdit(
-    ctx,
-    `✅ Fan: *${testData.subject}*\n\n📝 *Yangi Blok — 2-qadam*\n\nBlok nomini kiriting.\n\n💡 _Masalan: 1-Mavzu, Biokimyo Lab, Final tayyorgarlik_`,
-    cancelKb(),
-  );
-}
-
-async function onSubjectInput(ctx) {
-  const result = SubjectSchema.safeParse(ctx.message.text || "");
-
-  if (!result.success) {
-    return ctx.reply(
-      `${result.error.errors[0].message}\n\n💡 Fan nomlari 2–50 belgidan iborat bo'lishi va faqat harf, raqam va tire o'z ichiga olishi kerak. Qaytadan kiriting:`,
-    );
-  }
-  if (!ctx.session || !ctx.session.data) {
-    clearState(ctx);
-    return ctx.reply(
-      "⏳ Sessiya muddati tugadi. Xavotir olmang — bu xavfsizlik uchun. Iltimos, qaytadan boshlang.",
-      backToMainKb(),
-    );
-  }
-
-  // 3. Tozalangan va xavfsiz matnni olamiz
-  const subject = result.data;
-
-  // 4. Ma'lumotni keshga saqlaymiz va keyingi qadamga o'tamiz
-  await updateData(ctx, { subject });
-  setState(ctx, States.CREATE_NAME);
-
-  // Markdown qulab tushmasligi uchun maxsus funksiyamizdan o'tkazib chiqaramiz
-  const safeSubject = escapeMarkdown(subject);
-
-  await ctx.reply(
-    `✅ Fan: *${safeSubject}*\n\n📝 *2-qadam: Blok nomi*\n\nBlok nomini kiriting (1–40 belgi).\n\n💡 _Masalan: 1-Bob, Midterm savollar, Laboratoriya_`,
-    { parse_mode: "Markdown", ...cancelKb() },
-  );
-}
-
-async function onNameInput(ctx) {
-  // Zod orqali tekshirish
-  const result = BlockNameSchema.safeParse(ctx.message.text || "");
-
-  if (!result.success) {
-    return ctx.reply(
-      `${result.error.errors[0].message}\n\n💡 Blok nomi 1–40 belgidan iborat bo'lishi kerak. Qaytadan kiriting:`,
-    );
-  }
-  if (!ctx.session || !ctx.session.data) {
-    clearState(ctx);
-    return ctx.reply(
-      "⏳ Sessiya muddati tugadi. Xavotir olmang — bu xavfsizlik uchun. Iltimos, qaytadan boshlang.",
-      backToMainKb(),
-    );
-  }
-
-  const block_name = result.data;
-
-  await updateData(ctx, { block_name });
-  setState(ctx, States.CREATE_QUESTIONS);
-
-  const safeBlockName = escapeMarkdown(block_name);
-
-  await ctx.reply(
-    `✅ Blok: *${safeBlockName}*\n\n📝 *3-qadam: Savollarni qo'shish*\n\nQuyidagi usullardan birini tanlang:\n🤖 *AI Smart Quiz* — matn/rasmdan avtomatik\n📊 *Telegram Quiz* — Telegram'ning o'z poll formati\n📝 *Matn* — yozma format (#belgi bilan)\n📄 *Word fayl* — .docx yuklash\n\n_Barcha savollarni qo'shib bo'lgach, "✅ Yakunlash va Saqlash" tugmasini bosing._`,
     { parse_mode: "Markdown", ...questionsSummaryKb() },
   );
 }
@@ -446,6 +370,7 @@ AI sizning matn yoki rasmingizdan professional darajada test savollarini yaratib
   }
 }
 // TANLANGAN REJIMNI QABUL QILISH VA YO'RIQNOMA BERISH
+// TANLANGAN REJIMNI QABUL QILISH VA YO'RIQNOMA BERISH
 async function cbParseModeSelect(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const action = ctx.callbackQuery.data;
@@ -456,10 +381,21 @@ async function cbParseModeSelect(ctx) {
   const data = await getData(ctx);
   // Rejimni xotiraga yozib qo'yamiz (utils.js shundan foydalanadi)
   await updateData(ctx, { parse_mode: mode });
-
-  // Jarayonni davom ettiramiz
   setState(ctx, States.CREATE_QUESTIONS);
-  await safeEdit(ctx, FORMAT_INSTRUCTIONS[fmt], getDynamicKb(data));
+
+  // Agar "Avtomatik Docx" rejimidan kelayotgan bo'lsa (blok nomi hali yo'q yoki avto), 
+  // ortiqcha tugmalarni chiqarmaymiz.
+  let keyboard = getDynamicKb(data);
+  
+  if (fmt === "docx" && (!data.block_name || action.includes("auto"))) {
+    // Toza, ortiqcha menyularsiz ko'rinish
+    keyboard = cancelKb(); 
+  } else if (fmt === "docx") {
+    // Normal Docx rejimida ham ortiqcha format tugmalari kerak emas
+    keyboard = cancelKb();
+  }
+
+  await safeEdit(ctx, FORMAT_INSTRUCTIONS[fmt], { parse_mode: "Markdown", ...keyboard });
 }
 // ─── 2. AI YORDAMCHI FUNKSIYALARI (GLOBAL) ─────────────────────
 
@@ -674,20 +610,45 @@ async function processAiResult(ctx, msgId, generatedQuestions) {
 async function onDocxFile(ctx) {
   const data = await getData(ctx);
   const doc = ctx.message.document;
-  if (!doc || !doc.file_name.endsWith(".docx"))
-    return ctx.reply("⚠️ Faqat `.docx` fayl yuboring.");
 
-  const status = await ctx.reply("⏳ Fayl o'qilmoqda...");
-  const filePath = require('path').join(
+  // 🛡 1. KIBERXAVFSIZLIK: Fayl formati va hajmini qat'iy tekshirish
+  const validMime =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const MAX_FILE_SIZE = 2 * 1024 * 1024; // Maksimal 2 MB
+
+  if (!doc) return;
+
+  if (!doc.file_name.endsWith(".docx") || doc.mime_type !== validMime) {
+    return ctx.reply(
+      "⚠️ *Xavfsizlik tizimi:* Faqat toza `.docx` (Word) formatidagi fayllar qabul qilinadi.",
+      { parse_mode: "Markdown" },
+    );
+  }
+
+  if (doc.file_size > MAX_FILE_SIZE) {
+    return ctx.reply(
+      "⚠️ *Fayl hajmi juda katta!* Iltimos, xotirani ortiqcha zo‘riqtirmaslik uchun 2 MB gacha bo‘lgan fayl yuklang.",
+      { parse_mode: "Markdown" },
+    );
+  }
+  // Avto-nomlash (Agar Blok nomi yozilmay "Avtomatik yuklash" bosilgan bo'lsa)
+  let bName = data.block_name;
+  if (!bName) {
+    bName = doc.file_name.replace(".docx", "").replace(/_/g, " ").substring(0, 50);
+    await updateData(ctx, { block_name: bName });
+  }
+  const status = await ctx.reply("⏳ Fayl xavfsizlikdan o‘tdi, o‘qilmoqda...");
+  const filePath = require("path").join(
     require("os").tmpdir(),
     `ugc_${ctx.from.id}_${Date.now()}.docx`,
   );
+
   try {
     const link = await ctx.telegram.getFileLink(doc.file_id);
     const https = require("https");
     const http = require("http");
     await new Promise((resolve, reject) => {
-      const file = require('fs').createWriteStream(filePath);
+      const file = require("fs").createWriteStream(filePath);
       const req = link.href.startsWith("https") ? https : http;
       req
         .get(link.href, (res) => {
@@ -700,24 +661,42 @@ async function onDocxFile(ctx) {
         .on("error", reject);
     });
 
-    // ─── O'ZGARISH SHU YERDA: parse_mode ni berib yuboramiz ───
     const newQs = await parseDocxQuestions(filePath, data.parse_mode || "hash");
-    
-    if (!newQs.length)
+
+    if (!newQs.length) {
       return ctx.telegram.editMessageText(
         ctx.chat.id,
         status.message_id,
         undefined,
-        "❌ Fayldan savol topilmadi! Formatni to'g'ri tanlaganingizga ishonch hosil qiling.",
+        "❌ Fayldan savol topilmadi! Formatni to‘g‘ri tanlaganingizga ishonch hosil qiling.",
       );
+    }
 
-    const questions = [...(data.questions || []), ...newQs];
+    // 🛡 2. ANTI-SPAM (DDoS himoya): Maksimal savollar limitini o‘rnatish
+    const MAX_QUESTIONS = 250;
+    let finalQs = newQs;
+    let limitMsg = "";
+
+    // Agar fayl ichidagi savollar 250 tadan oshsa, ortiqchasini kesib tashlaymiz
+    if (newQs.length > MAX_QUESTIONS) {
+      finalQs = newQs.slice(0, MAX_QUESTIONS);
+      limitMsg = `\n\n⚠️ *Limit himoyasi:* Faylda savollar juda ko‘p bo‘lgani uchun tizim barqarorligini saqlash maqsadida faqat dastlabki 250 ta savol qabul qilindi.`;
+    }
+
+    const questions = [...(data.questions || []), ...finalQs];
+
+    // Agar jami yig‘indi (oldindan bor savollar bilan qo‘shganda) 250 dan oshsa:
+    if (questions.length > MAX_QUESTIONS) {
+      questions.length = MAX_QUESTIONS;
+      limitMsg = `\n\n⚠️ *Limitga yetildi:* Bitta blokda maksimal 250 ta savol bo‘lishi mumkin.`;
+    }
+
     await updateData(ctx, { questions });
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       status.message_id,
       undefined,
-      `✅ *Fayl o'qildi!* (${newQs.length} ta qo'shildi)\n📊 Jami: *${questions.length} ta*`,
+      `✅ *Fayl o‘qildi!* (${finalQs.length} ta savol qo‘shildi)\n📊 Jami: *${questions.length} ta* ${limitMsg}`,
       { parse_mode: "Markdown", ...getDynamicKb(data) },
     );
   } catch (e) {
@@ -725,39 +704,48 @@ async function onDocxFile(ctx) {
       ctx.chat.id,
       status.message_id,
       undefined,
-      "❌ Xatolik yuz berdi.",
+      "❌ Xatolik yuz berdi. Fayl buzilgan bo‘lishi mumkin.",
     );
   } finally {
-    if (require('fs').existsSync(filePath)) require('fs').unlinkSync(filePath);
+    if (require("fs").existsSync(filePath)) require("fs").unlinkSync(filePath);
   }
 }
 
 async function onQuestionMessage(ctx) {
   const data = await getData(ctx);
   const questions = [...(data.questions || [])];
-  
+
   // ─── TAHRIRLASH REJIMI ───
   if (data.editing_question_index !== undefined) {
-     if (!ctx.message.text) return ctx.reply("⚠️ Iltimos, matn yuboring.");
-     
-     const added = parseTextQuestions(ctx.message.text, data.parse_mode || 'hash');
-     if (!added.length) {
-         return ctx.reply("❌ Formatingiz xato! Iltimos, to'g'ri javob oldiga # qo'yib qayta yuboring.");
-     }
-     
-     // Eski savol o'rniga yangisini joylaymiz
-     const updatedIdx = data.editing_question_index;
-     questions[updatedIdx] = added[0]; 
-     
-     // Xotirani tozalaymiz (tahrirlashdan chiqamiz)
-     await updateData(ctx, { questions, editing_question_index: undefined });
-     
-     const msg = await ctx.reply("✅ Savol muvaffaqiyatli tahrirlandi!");
-     setTimeout(() => ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(()=>{}), 2000);
-     
-     // XATOLIK TO'G'RILANGAN QISM: Telegraf'da callback_query ni xavfsiz chaqirish
-     ctx.update.callback_query = { data: `preview_q_${updatedIdx}` }; 
-     return cbPreviewQuestion(ctx);
+    if (!ctx.message.text) return ctx.reply("⚠️ Iltimos, matn yuboring.");
+
+    const added = parseTextQuestions(
+      ctx.message.text,
+      data.parse_mode || "hash",
+    );
+    if (!added.length) {
+      return ctx.reply(
+        "❌ Formatingiz xato! Iltimos, to'g'ri javob oldiga # qo'yib qayta yuboring.",
+      );
+    }
+
+    // Eski savol o'rniga yangisini joylaymiz
+    const updatedIdx = data.editing_question_index;
+    questions[updatedIdx] = added[0];
+
+    // Xotirani tozalaymiz (tahrirlashdan chiqamiz)
+    await updateData(ctx, { questions, editing_question_index: undefined });
+
+    const msg = await ctx.reply("✅ Savol muvaffaqiyatli tahrirlandi!");
+    setTimeout(
+      () =>
+        ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(() => {}),
+      2000,
+    );
+
+    // XATOLIK TO'G'RILANGAN QISM: Telegraf'da callback_query ni xavfsiz chaqirish
+    ctx.update.callback_query = { data: `preview_q_${updatedIdx}` };
+    return cbPreviewQuestion(ctx);
   }
 
   // ─── YANGI SAVOL QO'SHISH REJIMI ───
@@ -773,7 +761,10 @@ async function onQuestionMessage(ctx) {
     });
   } else if (fmt === "text") {
     if (!ctx.message.text) return;
-    const added = parseTextQuestions(ctx.message.text, data.parse_mode || 'hash');
+    const added = parseTextQuestions(
+      ctx.message.text,
+      data.parse_mode || "hash",
+    );
     if (!added.length) return ctx.reply("⚠️ Savol formati xato.");
     questions.push(...added);
   } else return;
@@ -891,8 +882,12 @@ async function cbFinishCreation(ctx) {
   const data = await getData(ctx);
   const questions = data.questions || [];
   if (!questions.length)
-    return ctx.answerCbQuery("❌ Kamida 1 ta savol qo'shishingiz kerak!", { show_alert: true }).catch(() => {});
-  
+    return ctx
+      .answerCbQuery("❌ Kamida 1 ta savol qo'shishingiz kerak!", {
+        show_alert: true,
+      })
+      .catch(() => {});
+
   await ctx.answerCbQuery("✅ Test muvaffaqiyatli saqlandi!").catch(() => {});
 
   const CHUNK_SIZE = 25; // Har bir blokdagi maksimal savollar soni
@@ -900,13 +895,22 @@ async function cbFinishCreation(ctx) {
 
   if (data.editing_test_id) {
     // Agar eski testni tahrirlayotgan bo'lsa, shunchaki yangilaymiz
-    await dbService.updateUserTestQuestions(data.editing_test_id, ctx.from.id, questions);
+    await dbService.updateUserTestQuestions(
+      data.editing_test_id,
+      ctx.from.id,
+      questions,
+    );
     testIds.push(data.editing_test_id);
   } else {
     // YANGI TEST YARATISH: Avto-bo'lish (Chunking)
     if (questions.length <= CHUNK_SIZE) {
       // Savollar oz bo'lsa, bitta qilib saqlaymiz
-      const tId = await dbService.saveUserTest(ctx.from.id, data.subject, data.block_name, questions);
+      const tId = await dbService.saveUserTest(
+        ctx.from.id,
+        data.subject,
+        data.block_name,
+        questions,
+      );
       testIds.push(tId);
     } else {
       // 25 tadan bo'lib chiqamiz
@@ -914,11 +918,16 @@ async function cbFinishCreation(ctx) {
       for (let i = 0; i < questions.length; i += CHUNK_SIZE) {
         chunks.push(questions.slice(i, i + CHUNK_SIZE));
       }
-      
+
       // Har bir qismni alohida blok qilib yozamiz
       for (let i = 0; i < chunks.length; i++) {
         const chunkName = `${data.block_name} (${i + 1}-qism)`;
-        const tId = await dbService.saveUserTest(ctx.from.id, data.subject, chunkName, chunks[i]);
+        const tId = await dbService.saveUserTest(
+          ctx.from.id,
+          data.subject,
+          chunkName,
+          chunks[i],
+        );
         testIds.push(tId);
       }
     }
@@ -926,17 +935,28 @@ async function cbFinishCreation(ctx) {
 
   const botInfo = await ctx.telegram.getMe();
   const firstTestId = testIds[0];
-  
-  const chunkMsg = testIds.length > 1 
-    ? `\n⚠️ *Avto-bo'lish:* Savollar ko'pligi uchun tizim ularni avtomatik *${testIds.length} ta blokga* ajratdi va fanga joyladi.`
-    : `\n🔗 *Faqat shu blok:*\n\`https://t.me/${botInfo.username}?start=t_${firstTestId}\``;
+
+  const chunkMsg =
+    testIds.length > 1
+      ? `\n⚠️ *Avto-bo'lish:* Savollar ko'pligi uchun tizim ularni avtomatik *${testIds.length} ta blokga* ajratdi va fanga joyladi.`
+      : `\n🔗 *Faqat shu blok:*\n\`https://t.me/${botInfo.username}?start=t_${firstTestId}\``;
 
   await safeEdit(
     ctx,
     `🎉 *Muvaffaqiyatli saqlandi!*\n\n📚 Fan: *${data.subject}*\n📝 Asosiy Blok: *${data.block_name}*\n🔢 Jami Savollar: *${questions.length} ta*${chunkMsg}\n\n🔗 *Butun fanni o'ynash (Marafon):*\n\`https://t.me/${botInfo.username}?start=s_${firstTestId}\``,
     Markup.inlineKeyboard([
-      [Markup.button.callback("➕ Shu fanga yana blok qo'shish", `ct_exist_${firstTestId}`)],
-      [Markup.button.url("↗️ Guruhda o'ynash", `https://t.me/${botInfo.username}?startgroup=s_${firstTestId}`)],
+      [
+        Markup.button.callback(
+          "➕ Shu fanga yana blok qo'shish",
+          `ct_exist_${firstTestId}`,
+        ),
+      ],
+      [
+        Markup.button.url(
+          "↗️ Guruhda o'ynash",
+          `https://t.me/${botInfo.username}?startgroup=s_${firstTestId}`,
+        ),
+      ],
       [Markup.button.callback("📂 Mening Testlarim", "my_tests")],
       [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
     ]),
@@ -1109,7 +1129,25 @@ async function cbConfirmDelete(ctx) {
     ]),
   );
 }
+async function cbAutoDocx(ctx) {
+  await ctx.answerCbQuery().catch(() => {});
+  // Blok nomini hozircha bo'sh qoldiramiz (Keyin fayl nomidan oladi)
+  await updateData(ctx, { block_name: null, format: "docx" });
+  setState(ctx, States.CREATE_DOCX);
 
+  await safeEdit(
+    ctx,
+    `⚙️ *Qaysi usulda o'qiymiz?*\n\nWord fayldagi testlarda to'g'ri javob qanday belgilangan?\n\n🎯 *# bilan:* To'g'ri javob oldida # belgisi bor.\n🥇 *1-javob:* Har doim A (birinchi) variant to'g'ri.`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("🎯 To'g'ri javob oldida # bor", `parse_hash_docx`)],
+        [Markup.button.callback("🥇 Har doim 1-javob to'g'ri", `parse_first_docx`)],
+        [Markup.button.callback("🔙 Bekor qilish", "cancel_creation")]
+      ])
+    }
+  );
+}
 function register(bot) {
   bot.action("create_test", cbCreateTest);
   bot.action("ct_new", cbCtNew);
@@ -1136,6 +1174,8 @@ function register(bot) {
   bot.action("ai_mode_questions", cbAiModeQuestions);
   bot.action("ai_mode_image", cbAiModeImage);
   bot.action(/^ai_cnt_/, cbAiCount);
+
+  bot.action("auto_docx", cbAutoDocx);
 
   bot.action(/^edit_q_/, cbEditQuestionStart);
 
