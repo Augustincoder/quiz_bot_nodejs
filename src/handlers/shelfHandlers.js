@@ -1,5 +1,5 @@
 "use strict";
-
+const redisConnection = require("../services/redisService");
 const dbService = require("../services/dbService");
 const {
   States,
@@ -15,66 +15,68 @@ const logger = require("../core/logger");
 // ==========================================
 // 1. JAVONGA SAQLASH (SAVE) MANTIQI
 // ==========================================
+// ─── TESTNI JAVONGA SAQLASH (REDIS ORQALI) ────────────────────
 async function cbShelfSaveInit(ctx) {
+  await ctx.answerCbQuery("⏳ Saqlanmoqda...").catch(() => {});
+  const chatId = ctx.chat.id;
+
   try {
-    const chatId = ctx.chat?.id || ctx.from?.id;
-    const pendingTest = pendingShelfSaves.get(chatId);
-
-    if (!pendingTest) {
-      return ctx
-        .answerCbQuery(
-          "⚠️ Saqlash uchun test topilmadi yoki bu amaliyot eskirgan.",
-          { show_alert: true },
-        )
-        .catch(() => {});
+    // 1. RAM o'rniga ishonchli Redis xotirasidan o'qiymiz
+    const rawData = await redisConnection.get(`shelf_pending:${chatId}`);
+    
+    // Agar xotira muddati tugagan bo'lsa yoki allaqachon saqlangan bo'lsa
+    if (!rawData) {
+      return safeEdit(
+        ctx, 
+        "⚠️ <b>Ma'lumot topilmadi!</b>\n\nBu test allaqachon saqlangan yoki xotira muddati (24 soat) tugagan. Iltimos, menyudan yangi test ishlashni boshlang.", 
+        { 
+          parse_mode: "HTML", 
+          ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]]) 
+        }
+      );
     }
-    await ctx.answerCbQuery().catch(() => {});
 
-    const shelf = await dbService.getUserShelf(ctx.from.id);
-    const folders = Object.keys(shelf || {});
-    const buttons = [];
+    const data = JSON.parse(rawData);
 
-    folders.forEach((folder) => {
-      buttons.push([
-        Markup.button.callback(
-          `📁 ${folder} (${shelf[folder].length} ta)`,
-          `sh_save_${folder}`,
-        ),
-      ]);
+    // 2. Ma'lumotlarni asosiy bazaga (PostgreSQL) yozamiz
+    // (Loyihangizdagi dbService funksiyasiga moslab yozilgan)
+    await dbService.saveToShelf(ctx.from.id, {
+      test_id: data.testId,
+      test_name: data.testName,
+      subject: data.subject,
+      questions: data.questions,
+      progress: data.progress
     });
 
-    buttons.push([
-      Markup.button.callback("➕ Yangi papka yaratish", "sh_new_folder"),
-    ]);
-    buttons.push([
-      Markup.button.callback("❌ Bekor qilish", "sh_cancel"),
-      Markup.button.callback("🏠 Asosiy Menyu", "back_to_main"),
-    ]);
+    // 3. Saqlab bo'lingach, qulupnaydek toza bo'lishi uchun Redis'dan tozalab tashlaymiz
+    await redisConnection.del(`shelf_pending:${chatId}`);
 
-    const text = `📥 *Javonga saqlash*
+    // 4. Foydalanuvchiga muvaffaqiyatli saqlanganini bildiramiz
+    await safeEdit(
+      ctx,
+      `📥 <b>Muvaffaqiyatli saqlandi!</b>\n\n📚 Fan: <b>${data.subject}</b>\n🔖 Blok: <b>${data.testName}</b>\n\nSiz bu testni shaxsiy javoningizga saqladingiz. Xohlagan vaqtingiz <i>"Javon"</i> menyusi orqali qayta ishlashingiz mumkin. ✅`,
+      {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("📚 Javonga o'tish", "menu_shelf")],
+          [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]
+        ])
+      }
+    );
 
-📝 Test: *${pendingTest.testName}*
-📚 Fan: *${pendingTest.subject}*
-
-━━━━━━━━━━━━━━━━
-*Qaysi papkaga saqlaymiz?*
-
-Mavjud papkani tanlang yoki yangi yarating.
-
-💡 *Maslahat:* Papkani sanasi yoki mavzu bo'yicha nomlang (masalan: "15-Aprel imtihon", "Takrorlash")`;
-
-    await safeEdit(ctx, text, {
-      parse_mode: "Markdown",
-      ...Markup.inlineKeyboard(buttons),
-    });
   } catch (error) {
-    console.error("cbShelfSaveInit xatosi:", error);
-    await ctx
-      .answerCbQuery("❌ Tizimda xatolik yuz berdi.", { show_alert: true })
-      .catch(() => {});
+    console.error(`Javonga saqlashda xatolik [Chat: ${chatId}]:`, error.message);
+    
+    await safeEdit(
+      ctx,
+      "❌ <b>Tizimli xatolik!</b>\n\nJavonga saqlashda kutilmagan xatolik yuz berdi. Iltimos, birozdan so'ng yana urinib ko'ring.",
+      { 
+        parse_mode: "HTML", 
+        ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]]) 
+      }
+    );
   }
 }
-
 async function cbShelfNewFolder(ctx) {
   try {
     await ctx.answerCbQuery().catch(() => {});

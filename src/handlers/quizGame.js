@@ -512,81 +512,101 @@ async function cbForceFinish(ctx) {
   await finishTest(ctx.chat.id, ctx.telegram);
 }
 
+// ─── TESTNI TO'XTATISH VA JAVONGA YO'NALTIRISH ─────────────
+// ─── 1. PAUZA MENYUSI (/stop Yoki To'xtatish bosilganda) ─────────────
 async function cbStopTest(ctx) {
-  try {
-    if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => {});
-    const chatId = ctx.chat?.id || ctx.from?.id;
-    const session = await sessionService.getActiveTest(chatId);
-    const isGroup = ctx.chat?.type !== "private"; // Guruhni aniqlaymiz
+  const isCb = !!ctx.callbackQuery;
+  if (isCb) await ctx.answerCbQuery("⏸ Pauza...").catch(() => {});
+  const chatId = ctx.chat.id;
 
-    if (!session) {
-      if (!ctx.callbackQuery) await safeDelete(ctx);
-      return;
-    }
-
-    // GURUH UCHUN: Shunchaki to'xtatib, Reyting (finishTest) ni chaqiramiz
-    if (isGroup) {
-      if (!ctx.callbackQuery) {
-        await ctx.reply(
-          "🛑 <b>O'yin muddatidan oldin to'xtatildi!</b> Natijalar hisoblanmoqda...",
-          { parse_mode: "HTML" },
-        );
-      } else {
-        await safeDelete(ctx);
-        await ctx.telegram.sendMessage(
-          chatId,
-          "🛑 <b>O'yin muddatidan oldin to'xtatildi!</b> Natijalar hisoblanmoqda...",
-          { parse_mode: "HTML" },
-        );
-      }
-      const { finishTest } = require("./coreQuiz");
-      return finishTest(chatId, ctx.telegram);
-    }
-
-    // SHAXSIY CHAT UCHUN: (Eski mantiq)
-    const tName = resolveTestName(session.testId, session.blockName);
-    const { pendingShelfSaves } = require("../core/pendingStore");
-    pendingShelfSaves.set(chatId, {
-      testId: session.testId,
-      testName: tName,
-      subject: session.subjectKey,
-      questions: session.sessionQuestions || [],
-      progress: {
-        current_index: session.qIdx || 0,
-        correct: session.correct || 0,
-        mistakes: session.mistakes || [],
-      },
-    });
-
-    if (session.pollId)
-      await sessionService.deletePollChat(session.pollId).catch(() => {});
-    await sessionService.deleteActiveTest(chatId).catch(() => {});
-
-    const text =
-      `🛑 <b>Test to'xtatildi</b>\n\n` +
-      `📝 Test: <b>${escapeHtml(tName)}</b>\n` +
-      `📊 Holat: <b>${session.qIdx}</b>-savolda to'xtatildi\n` +
-      `✅ To'g'ri: <b>${session.correct || 0}</b>  ❌ Xato: <b>${(session.mistakes || []).length}</b>`;
-
-    const buttons = [
-      [Markup.button.callback("📥 Javonga saqlash (Pauza)", "shelf_save_init")],
-      [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
-    ];
-
-    if (ctx.callbackQuery) {
-      await safeEdit(ctx, text, {
-        parse_mode: "HTML",
-        ...Markup.inlineKeyboard(buttons),
-      });
-    } else {
-      await ctx.reply(text, {
-        parse_mode: "HTML",
-        ...Markup.inlineKeyboard(buttons),
-      });
-    }
-  } catch (e) {
-    console.error("To'xtatishda xato:", e.message);
+  const session = await sessionService.getActiveTest(chatId);
+  if (!session) {
+    const msg = "⚠️ Faol test topilmadi yoki allaqachon yakunlangan.";
+    const kbd = { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]]) };
+    return isCb ? safeEdit(ctx, msg, kbd) : ctx.reply(msg, kbd);
   }
+
+  const total = session.sessionQuestions ? session.sessionQuestions.length : 0;
+  const answered = session.qIdx || 0;
+
+  const text = `⏸ <b>Test to'xtatib turildi (Pauza)!</b>\n\n` +
+               `📊 <b>Hozirgi holat:</b>\n` +
+               `Jami savollar: ${total} ta\n` +
+               `Ishlandi: ${answered} ta\n` +
+               `To'g'ri: ${session.correct || 0} ta\n\n` +
+               `<i>Nima qilamiz? Quyidagilardan birini tanlang:</i>`;
+
+  const buttons = [
+    [Markup.button.callback("▶️ Davom etish", "pause_resume")],
+    [Markup.button.callback("🏁 Hozirgi natija bilan yakunlash", "pause_finish")],
+    [Markup.button.callback("📥 Javonga saqlash (Keyin davom etish)", "pause_shelf")],
+    [Markup.button.callback("🗑 Butunlay bekor qilish", "force_finish")]
+  ];
+
+  if (isCb) {
+    await safeEdit(ctx, text, { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) });
+  } else {
+    await ctx.reply(text, { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) });
+  }
+}
+
+// ─── 2. DAVOM ETISH (Resume) ─────────────
+async function cbPauseResume(ctx) {
+  await ctx.answerCbQuery("▶️ Test davom etmoqda...").catch(() => {});
+  await safeDelete(ctx); // Pauza menyusini o'chiramiz
+  await ctx.reply("▶️ <b>Test davom etmoqda!</b>\n\n<i>Iltimos, yuqoridagi oxirgi faol savolga (so'rovnomaga) javob bering.</i>", { parse_mode: "HTML" });
+}
+
+// ─── 3. SHU YERDA YAKUNLASH VA NATIJANI KO'RISH (Finish) ─────────────
+async function cbPauseFinish(ctx) {
+  await ctx.answerCbQuery("🏁 Yakunlanmoqda...").catch(() => {});
+  await safeDelete(ctx); // Pauza menyusini o'chiramiz
+  
+  // Asosiy dvijokdagi yakunlash funksiyasini chaqiramiz
+  const { finishTest } = require('./coreQuiz');
+  await finishTest(ctx.chat.id, ctx.telegram);
+}
+
+// ─── 4. JAVONGA SAQLASH UCHUN TAYYORLASH (Shelf) ─────────────
+async function cbPauseShelf(ctx) {
+  await ctx.answerCbQuery("📥 Javon uchun tayyorlanmoqda...").catch(() => {});
+  const chatId = ctx.chat.id;
+  const session = await sessionService.getActiveTest(chatId);
+  
+  if (!session) return safeEdit(ctx, "⚠️ Faol test topilmadi.");
+
+  // Chala qolgan ma'lumotlarni yig'amiz
+  const shelfData = {
+    testId: session.testId,
+    testName: session.blockName || "Noma'lum blok",
+    subject: session.subjectKey || "Noma'lum fan",
+    questions: session.sessionQuestions || [],
+    progress: {
+      current_index: session.qIdx || 0,
+      correct: session.correct || 0,
+      mistakes: session.mistakes || [],
+    },
+  };
+
+  // 1. Redisga xavfsiz saqlaymiz (Oldingi qadamda qilgan himoyamiz)
+  const redisConnection = require("../services/redisService");
+  await redisConnection.set(`shelf_pending:${chatId}`, JSON.stringify(shelfData), "EX", 86400).catch(()=>{});
+
+  // 2. Faol testni tozalaymiz
+  if (session.pollId) await sessionService.deletePollChat(session.pollId).catch(() => {});
+  await sessionService.deleteActiveTest(chatId).catch(() => {});
+
+  await safeEdit(
+    ctx,
+    `🛑 <b>Test to'xtatildi va Javon uchun tayyorlandi!</b>\n\nSiz testni oxirigacha ishlashni xohlamadingiz. Pastdagi tugmani bosib uni shaxsiy javoningizga saqlab qo'ying.`,
+    {
+      parse_mode: "HTML",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("📥 Tasdiqlash va Javonga saqlash", "shelf_save_init")],
+        [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]
+      ])
+    }
+  );
 }
 
 // ─── POST-TEST ACTIONS (ERROR REVIEW & MASTERY) ──────────────
@@ -1015,7 +1035,25 @@ async function resumeTestFromShelf(ctx, savedTest) {
     console.error("resumeTestFromShelf error:", e.message);
   }
 }
+// ─── MAJBURIY TO'XTATISH (FORCE FINISH) ───
+async function cbForceFinish(ctx) {
+  await ctx.answerCbQuery("🛑 Test to'xtatildi!").catch(() => {});
+  
+  // Faol test xotirasini butunlay tozalab tashlaymiz
+  await sessionService.deleteActiveTest(ctx.chat.id).catch(() => {});
 
+  await safeEdit(
+    ctx,
+    "✅ <b>Faol test majburiy to'xtatildi va xotira tozalandi.</b>\n\nEndi hech qanday xatoliksiz bemalol yangi test boshlashingiz mumkin.",
+    {
+      parse_mode: "HTML",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("➕ Yangi test boshlash", "menu_test")],
+        [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]
+      ])
+    }
+  );
+}
 // ─── REGISTER ────────────────────────────────────────────────
 function register(bot) {
   bot.action("official_tests", cbOfficialTests);
@@ -1043,6 +1081,11 @@ function register(bot) {
   bot.action(/^adaptive_/, cbAdaptiveTest);
   bot.action(/^adp_run_/, cbAdaptiveRun);
   bot.action("room_next_block", cbRoomNextBlock);
+
+  bot.action("force_finish", cbForceFinish);
+  bot.action("pause_resume", cbPauseResume);
+  bot.action("pause_finish", cbPauseFinish);
+  bot.action("pause_shelf", cbPauseShelf);
 }
 
 module.exports = {

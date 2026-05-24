@@ -290,7 +290,8 @@ async function finishTest(chatId, telegram) {
         `⏱ Vaqt: <b>${time}</b>` +
         funFeedback;
 
-      pendingShelfSaves.set(chatId, {
+     // Eski RAM qatorini (pendingShelfSaves.set...) o'chirib, shuni qo'ying:
+      const shelfData = {
         testId: tId,
         testName: tName,
         subject: session.subjectKey,
@@ -300,7 +301,10 @@ async function finishTest(chatId, telegram) {
           correct: session.correct || 0,
           mistakes: session.mistakes || [],
         },
-      });
+      };
+
+      // Redisga 24 soatga (86400 soniya) saqlaymiz! Endi server o'chib yonsa ham yo'qolmaydi.
+      await redisConnection.set(`shelf_pending:${chatId}`, JSON.stringify(shelfData), "EX", 86400).catch(e => console.error("Redis shelf save error:", e));
 
       // 🔴 FIX: ReferenceError ning oldi olindi va to'g'ri hisob-kitob kiritildi
       const mistakesCount = (session.mistakes || []).length;
