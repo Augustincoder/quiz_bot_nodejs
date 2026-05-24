@@ -220,3 +220,15 @@
 {"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-24T07:25:34.576Z"}
 {"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-24T07:25:37.669Z","userId":2014973670}
 {"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-24T07:37:03.267Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-24T07:51:02.400Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-24T07:51:03.476Z","userId":2014973670}
+{"chatId":"2014973670","correct":4,"elapsed":17,"level":"info","message":"test:finish","percent":40,"subject":"ai","testId":"ugc_17","timestamp":"2026-05-24T07:53:23.312Z","wrong":6}
+{"chatId":"2014973670","correct":4,"elapsed":24,"level":"info","message":"test:finish","percent":40,"subject":"ai","testId":"ugc_17","timestamp":"2026-05-24T07:54:17.395Z","wrong":6}
+{"chatId":"2014973670","correct":3,"elapsed":21,"level":"info","message":"test:finish","percent":30,"subject":"ai","testId":"ugc_17","timestamp":"2026-05-24T07:54:48.354Z","wrong":7}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-24T08:41:15.973Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-24T08:41:29.476Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-24T08:42:28.758Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-24T08:44:58.004Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-24T08:45:07.426Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-24T08:49:14.493Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-24T08:50:04.209Z"}
