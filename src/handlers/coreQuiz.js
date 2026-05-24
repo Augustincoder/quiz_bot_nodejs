@@ -86,7 +86,7 @@ function buildFinishButtons(tId, subjectKey, mistakesCount = 0) {
     btns.push([
       Markup.button.callback(
         `🔄 Xatolar ustida ishlash (${mistakesCount} ta)`,
-        "wm_menu",
+        `wm_menu_${subjectKey}`,
       ),
     ]);
   }
@@ -290,7 +290,7 @@ async function finishTest(chatId, telegram) {
         `⏱ Vaqt: <b>${time}</b>` +
         funFeedback;
 
-     // Eski RAM qatorini (pendingShelfSaves.set...) o'chirib, shuni qo'ying:
+      // Eski RAM qatorini (pendingShelfSaves.set...) o'chirib, shuni qo'ying:
       const shelfData = {
         testId: tId,
         testName: tName,
@@ -304,7 +304,9 @@ async function finishTest(chatId, telegram) {
       };
 
       // Redisga 24 soatga (86400 soniya) saqlaymiz! Endi server o'chib yonsa ham yo'qolmaydi.
-      await redisConnection.set(`shelf_pending:${chatId}`, JSON.stringify(shelfData), "EX", 86400).catch(e => console.error("Redis shelf save error:", e));
+      await redisConnection
+        .set(`shelf_pending:${chatId}`, JSON.stringify(shelfData), "EX", 86400)
+        .catch((e) => console.error("Redis shelf save error:", e));
 
       // 🔴 FIX: ReferenceError ning oldi olindi va to'g'ri hisob-kitob kiritildi
       const mistakesCount = (session.mistakes || []).length;
