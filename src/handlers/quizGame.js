@@ -1,5 +1,5 @@
 "use strict";
-
+const redisConnection = require("../services/redisService");
 const { Markup } = require("telegraf");
 const { SUBJECTS } = require("../config/config");
 const dbService = require("../services/dbService");
@@ -589,7 +589,7 @@ async function cbPauseShelf(ctx) {
   };
 
   // 1. Redisga xavfsiz saqlaymiz (Oldingi qadamda qilgan himoyamiz)
-  const redisConnection = require("../services/redisService");
+  // const redisConnection = require("../services/redisService");
   await redisConnection.set(`shelf_pending:${chatId}`, JSON.stringify(shelfData), "EX", 86400).catch(()=>{});
 
   // 2. Faol testni tozalaymiz
@@ -842,53 +842,49 @@ async function sendNextInlineMistake(ctx) {
   }
 }
 
-// Interaktiv javobni tutib olish (Tekshirish)
+// Interaktiv javobni tekshirish (HIMOYALANGAN)
 async function cbWmAns(ctx) {
-  const state = await wmCache.get(ctx.chat.id);
-  if (!state || !state.queue || !state.queue.length) {
-    return ctx
-      .answerCbQuery(
-        "⚠️ Sessiya eskirgan yoki o'yin yakunlangan. Iltimos, menyudan qayta boshlang.",
-        { show_alert: true },
-      )
-      .catch(() => {});
-  }
+  try {
+    const chatId = ctx.chat.id;
+    
+    // Redisdan o'qiymiz
+    const rawState = await redisConnection.get(`wm_state:${chatId}`);
+    if (!rawState) {
+        return ctx.answerCbQuery("⚠️ Sessiya eskirgan yoki o'yin yakunlangan. Qayta boshlang.", { show_alert: true }).catch(()=>{});
+    }
+    
+    const state = JSON.parse(rawState);
+    const queue = state.queue || [];
+    if (!queue.length) return ctx.answerCbQuery().catch(()=>{});
 
-  const isCorrect = parseSuffix(ctx.callbackQuery.data, "wm_ans_") === "1";
-  const queue = state.queue;
-  const q = queue.shift(); // Savolni navbatdan oldik
+    const isCorrect = parseSuffix(ctx.callbackQuery.data, "wm_ans_") === "1";
+    const q = queue.shift(); 
+    
+    // Taymer tekshiruvi (15 soniya)
+    const elapsed = Date.now() - (state.startTime || Date.now());
+    const isTimeout = elapsed > 15000;
 
-  // Timer tekshiruvi (15 soniya = 15000 millisoniya)
-  const elapsed = Date.now() - (state.startTime || Date.now());
-  const isTimeout = elapsed > 15000;
+    if (isCorrect && !isTimeout) {
+        await ctx.answerCbQuery("✅ Ajoyib! To'g'ri.").catch(()=>{});
+        // Holatni yangilab saqlaymiz
+        await redisConnection.set(`wm_state:${chatId}`, JSON.stringify(state), "EX", 3600);
+        return sendNextInlineMistake(ctx); 
+    } else {
+        // Xato yoki Taymer tugagan bo'lsa
+        queue.push(q);
+        await redisConnection.set(`wm_state:${chatId}`, JSON.stringify(state), "EX", 3600);
+        
+        const correctText = q.correct_ans || (q.options ? q.options[q.correct_index] : "Noma'lum");
+        const failMsg = isTimeout ? `⏳ <b>Vaqt tugadi!</b> (15 soniyadan o'tib ketdi)` : `❌ <b>Yana xato qildingiz!</b>`;
 
-  if (isCorrect && !isTimeout) {
-    await ctx.answerCbQuery("✅ Ajoyib! To'g'ri.").catch(() => {});
-    await wmCache.set(ctx.chat.id, state); // Yangilangan navbatni saqlaymiz
-    return sendNextInlineMistake(ctx);
-  } else {
-    // Xato qildi yoki Vaqt tugadi -> Ro'yxat eng oxiriga qaytaramiz
-    queue.push(q);
-    await wmCache.set(ctx.chat.id, state);
-
-    const correctText =
-      q.correct_ans || (q.options ? q.options[q.correct_index] : "Noma'lum");
-
-    // Xato sababini ajratamiz
-    let failMsg = isTimeout
-      ? `⏳ <b>Vaqt tugadi!</b> (15 soniyadan o'tib ketdi)`
-      : `❌ <b>Yana xato qildingiz!</b>`;
-
-    await safeEdit(
-      ctx,
-      `${failMsg}\n\nTo'g'ri javob:\n<b>✅ ${escapeHtml(String(correctText))}</b>\n\n<i>Bu savol ro'yxat oxiriga tushdi, uni to'g'ri topmaguningizcha o'yin tugamaydi!</i>`,
-      {
-        parse_mode: "HTML",
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback("➡️ Davom etish", "wm_next")],
-        ]),
-      },
-    );
+        await safeEdit(ctx, `${failMsg}\n\nTo'g'ri javob:\n<b>✅ ${escapeHtml(String(correctText))}</b>\n\n<i>Bu savol ro'yxat oxiriga tushdi, uni to'g'ri topmaguningizcha o'yin tugamaydi!</i>`, {
+            parse_mode: "HTML",
+            ...Markup.inlineKeyboard([[Markup.button.callback("➡️ Davom etish", "wm_next")]])
+        });
+    }
+  } catch (error) {
+    console.error(`[cbWmAns Xatosi - Chat: ${ctx.chat.id}]:`, error);
+    await ctx.answerCbQuery("❌ Javobni tekshirishda xatolik yuz berdi!", { show_alert: true }).catch(()=>{});
   }
 }
 
