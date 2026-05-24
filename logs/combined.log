@@ -177,3 +177,46 @@
 {"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-22T08:15:41.936Z"}
 {"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-22T08:15:48.176Z","userId":2014973670}
 {"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-22T08:26:38.958Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-22T08:44:55.564Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-22T08:44:57.950Z","userId":2014973670}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-22T08:51:41.888Z","userId":2014973670}
+{"count":3,"level":"warn","message":"Rate limited","timestamp":"2026-05-22T09:22:42.969Z","type":"message","userId":8272452095}
+{"count":4,"level":"warn","message":"Rate limited","timestamp":"2026-05-22T09:22:42.972Z","type":"message","userId":8272452095}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-22T09:28:47.769Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-22T09:29:09.144Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-22T09:29:26.304Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-22T09:59:59.341Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-22T10:00:10.739Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-22T10:00:13.845Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-22T10:14:40.029Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-22T10:14:49.440Z"}
+{"error":"questions is not defined","level":"error","message":"Session Redis xatosi:","timestamp":"2026-05-22T10:15:49.312Z"}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-22T10:18:50.057Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-22T10:19:01.214Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-22T10:22:50.204Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-22T10:25:44.855Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-22T10:25:54.928Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-22T10:25:56.984Z","userId":2014973670}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-23T15:28:47.273Z"}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-23T15:28:56.131Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-23T15:29:55.041Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-23T15:30:06.094Z","userId":2014973670}
+{"error":"FORMAT_INSTRUCTIONS is not defined","level":"error","message":"Session Redis xatosi:","timestamp":"2026-05-23T15:30:26.205Z"}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-23T16:11:51.993Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-23T16:12:02.419Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-23T16:12:09.387Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-23T16:14:32.919Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-23T16:14:42.886Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-23T16:14:48.474Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-23T16:21:38.931Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-23T16:21:51.107Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-23T16:21:54.605Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-23T16:30:55.166Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-23T19:52:44.119Z"}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-23T20:04:23.518Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-24T07:15:51.294Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-24T07:15:55.539Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-24T07:25:25.522Z"}
+{"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-24T07:25:34.576Z"}
+{"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-24T07:25:37.669Z","userId":2014973670}
+{"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-24T07:37:03.267Z"}

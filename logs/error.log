@@ -5,3 +5,5 @@
 {"error":"data is not defined","level":"error","message":"Session Redis xatosi:","timestamp":"2026-05-21T09:07:37.673Z"}
 {"error":"data is not defined","level":"error","message":"Session Redis xatosi:","timestamp":"2026-05-21T09:07:44.180Z"}
 {"error":"Cannot set property callbackQuery of #<Context> which has only a getter","level":"error","message":"Session Redis xatosi:","timestamp":"2026-05-21T10:01:36.077Z"}
+{"error":"questions is not defined","level":"error","message":"Session Redis xatosi:","timestamp":"2026-05-22T10:15:49.312Z"}
+{"error":"FORMAT_INSTRUCTIONS is not defined","level":"error","message":"Session Redis xatosi:","timestamp":"2026-05-23T15:30:26.205Z"}

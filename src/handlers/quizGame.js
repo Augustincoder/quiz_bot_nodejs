@@ -31,7 +31,6 @@ const {
   resolveTestName,
 } = require("./coreQuiz");
 const {
-
   cbRoomReady,
   cbRoomStart,
   cbRoomCancel,
@@ -69,28 +68,44 @@ async function cbOfficialTests(ctx) {
 async function sendWaitingRoomMessage(ctx, chatId, subjectKey, testId, qCount) {
   const room = await sessionService.getWaitingRoom(chatId);
   const users = Array.from(room.readyUsers || []);
-  const text = `🎯 <b>Kutish Zali</b>\n\n` +
-               `📚 Fan: <b>${subjectKey}</b>\n` +
-               `🔢 Savollar: <b>${qCount} ta</b>\n\n` +
-               `👥 Qatnashchilar: ${users.length}\n` +
-               (users.length ? users.map((u, i) => `${i + 1}. ${u.name || 'Foydalanuvchi'}`).join('\n') : "<i>Hali hech kim yo'q</i>");
-  
+  const text =
+    `🎯 <b>Kutish Zali</b>\n\n` +
+    `📚 Fan: <b>${subjectKey}</b>\n` +
+    `🔢 Savollar: <b>${qCount} ta</b>\n\n` +
+    `👥 Qatnashchilar: ${users.length}\n` +
+    (users.length
+      ? users.map((u, i) => `${i + 1}. ${u.name || "Foydalanuvchi"}`).join("\n")
+      : "<i>Hali hech kim yo'q</i>");
+
   const buttons = [
-    [Markup.button.callback('✋ Men ham qatnashaman', 'room_ready')],
+    [Markup.button.callback("✋ Men ham qatnashaman", "room_ready")],
     [
-      Markup.button.callback('▶️ Boshlash', 'room_start'),
-      Markup.button.callback('❌ Bekor qilish', 'room_cancel')
-    ]
+      Markup.button.callback("▶️ Boshlash", "room_start"),
+      Markup.button.callback("❌ Bekor qilish", "room_cancel"),
+    ],
   ];
 
-  await ctx.telegram.sendMessage(chatId, text, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
+  await ctx.telegram.sendMessage(chatId, text, {
+    parse_mode: "HTML",
+    ...Markup.inlineKeyboard(buttons),
+  });
 }
 
-async function initAndStartTest(chatId, telegram, subjectKey, testId, testData, initiatorId, chatType) {
+async function initAndStartTest(
+  chatId,
+  telegram,
+  subjectKey,
+  testId,
+  testData,
+  initiatorId,
+  chatType,
+) {
   const sessionQ = prepareShuffledQuestions(testData.questions || []);
   const subjName = SUBJECTS[subjectKey] || subjectKey;
-  const blockName = testData.block_name || (String(testId).startsWith('ugc_') ? 'Maxsus Test' : `${testId}-Blok`);
-  
+  const blockName =
+    testData.block_name ||
+    (String(testId).startsWith("ugc_") ? "Maxsus Test" : `${testId}-Blok`);
+
   await sessionService.setActiveTest(chatId, {
     chatType,
     initiatorId,
@@ -108,22 +123,24 @@ async function initAndStartTest(chatId, telegram, subjectKey, testId, testData, 
     consecutiveTimeouts: 0,
     groupScores: {},
     finished: false,
-    status: 'preparing' 
+    status: "preparing",
   });
 
-  if (chatType === 'private') {
+  if (chatType === "private") {
     const text = `📚 <b>Fan:</b> ${escapeHtml(subjName)}\n🔖 <b>Blok:</b> ${escapeHtml(blockName)}\n🔢 <b>Savollar:</b> ${sessionQ.length} ta\n\n🚀 <b>Testga tayyormisiz?</b>\nBoshlash uchun pastdagi tugmani bosing!`;
-    
+
     await telegram.sendMessage(chatId, text, {
-      parse_mode: 'HTML',
+      parse_mode: "HTML",
       reply_markup: {
-        inline_keyboard: [[{ text: "▶️ Boshlash", callback_data: "user_ready_start" }]]
-      }
+        inline_keyboard: [
+          [{ text: "▶️ Boshlash", callback_data: "user_ready_start" }],
+        ],
+      },
     });
   } else {
     // Guruh uchun darhol boshlash
     const session = await sessionService.getActiveTest(chatId);
-    session.status = 'running';
+    session.status = "running";
     session.startTime = Date.now();
     await sessionService.setActiveTest(chatId, session);
     await sendNextQuestion(chatId, telegram);
@@ -134,19 +151,22 @@ async function cbSubject(ctx) {
   const subjectKey = parseSuffix(ctx.callbackQuery.data, "subj_");
   const subjName = escapeHtml(SUBJECTS[subjectKey] || "Fan");
   const botInfo = await ctx.telegram.getMe(); // Bot usernamesini olamiz
-  
+
   // Asosiy tugmalar (Bloklar) ni olamiz
   const blocksKb = getBlocksKeyboard(subjectKey, 0);
-  
+
   // Eng tepasiga "Guruhda Marafon o'ynash" tugmasini qo'shamiz
   blocksKb.reply_markup.inline_keyboard.unshift([
-      Markup.button.url("🏃 Butun fanni Guruhda o'ynash (Marafon)", `https://t.me/${botInfo.username}?startgroup=offs_${subjectKey}`)
+    Markup.button.url(
+      "🏃 Butun fanni Guruhda o'ynash (Marafon)",
+      `https://t.me/${botInfo.username}?startgroup=offs_${subjectKey}`,
+    ),
   ]);
 
   await safeEdit(
     ctx,
     `📚 <b>${subjName}</b>\n\nQuyidagi blokdan birini tanlang yoki maxsus rejimlardan foydalaning:`,
-    { parse_mode: "HTML", ...blocksKb }
+    { parse_mode: "HTML", ...blocksKb },
   );
 }
 
@@ -174,10 +194,12 @@ async function cbStartTest(ctx) {
   try {
     const existing = await sessionService.getActiveTest(chatId);
     if (existing)
-      return ctx.answerCbQuery(
-        "⚠️ Hozirda faol test mavjud. Avval uni yakunlang yoki /stop buyrug'i bilan to'xtating.",
-        { show_alert: true },
-      ).catch(() => {});
+      return ctx
+        .answerCbQuery(
+          "⚠️ Hozirda faol test mavjud. Avval uni yakunlang yoki /stop buyrug'i bilan to'xtating.",
+          { show_alert: true },
+        )
+        .catch(() => {});
 
     const isMock = ctx.callbackQuery.data.startsWith("mock_");
     let subjectKey, testId, testData;
@@ -188,9 +210,11 @@ async function cbStartTest(ctx) {
         (t) => t.questions || [],
       );
       if (!allQs.length)
-        return ctx.answerCbQuery("❌ Bu fanda savollar yo'q!", {
-          show_alert: true,
-        }).catch(() => {});
+        return ctx
+          .answerCbQuery("❌ Bu fanda savollar yo'q!", {
+            show_alert: true,
+          })
+          .catch(() => {});
       shuffleArray(allQs);
       testData = { questions: allQs.slice(0, 25), block_name: "Aralash Test" };
       testId = "mock";
@@ -201,7 +225,9 @@ async function cbStartTest(ctx) {
       subjectKey = parts.slice(0, -1).join("_");
       testData = (memDb[subjectKey] || {})[testId];
       if (!testData)
-        return ctx.answerCbQuery("❌ Test topilmadi!", { show_alert: true }).catch(() => {});
+        return ctx
+          .answerCbQuery("❌ Test topilmadi!", { show_alert: true })
+          .catch(() => {});
     }
 
     await safeDelete(ctx);
@@ -248,14 +274,21 @@ async function cbPostStart(ctx) {
   try {
     const existing = await sessionService.getActiveTest(chatId);
     if (existing)
-      return ctx.answerCbQuery("⚠️ Hozirda faol test mavjud. Avval uni yakunlang yoki /stop buyrug'i bilan to'xtating.", {
-        show_alert: true,
-      }).catch(() => {});
+      return ctx
+        .answerCbQuery(
+          "⚠️ Hozirda faol test mavjud. Avval uni yakunlang yoki /stop buyrug'i bilan to'xtating.",
+          {
+            show_alert: true,
+          },
+        )
+        .catch(() => {});
 
     const memDb = require("../core/bot").memoryDb || {};
     const testData = (memDb[subjectKey] || {})[testId];
     if (!testData)
-      return ctx.answerCbQuery("❌ Test topilmadi!", { show_alert: true }).catch(() => {});
+      return ctx
+        .answerCbQuery("❌ Test topilmadi!", { show_alert: true })
+        .catch(() => {});
 
     try {
       await ctx.editMessageReplyMarkup({});
@@ -381,15 +414,18 @@ async function cbUserReadyStart(ctx) {
   try {
     const session = await sessionService.getActiveTest(chatId);
     if (!session || session.status !== "preparing") {
-      return ctx.answerCbQuery(
-        "⚠️ Test topilmadi yoki allaqachon boshlangan!",
-        { show_alert: true },
-      ).catch(() => {});
+      return ctx
+        .answerCbQuery("⚠️ Test topilmadi yoki allaqachon boshlangan!", {
+          show_alert: true,
+        })
+        .catch(() => {});
     }
     if (session.initiatorId !== ctx.from.id) {
-      return ctx.answerCbQuery("⚠️ Bu sizning testingiz emas!", {
-        show_alert: true,
-      }).catch(() => {});
+      return ctx
+        .answerCbQuery("⚠️ Bu sizning testingiz emas!", {
+          show_alert: true,
+        })
+        .catch(() => {});
     }
 
     await ctx.answerCbQuery().catch(() => {});
@@ -402,21 +438,38 @@ async function cbUserReadyStart(ctx) {
     const blockName = session.blockName || "Test";
     const header = `📚 <b>Fan:</b> ${escapeHtml(subjName)}\n🔖 <b>Blok:</b> ${escapeHtml(blockName)}\n\n`;
 
-    await safeEdit(ctx, header + "⏳ <b>Diqqat! Test boshlanmoqda...</b>\n\n<b>3️⃣</b>", {
-      parse_mode: "HTML",
-    });
+    await safeEdit(
+      ctx,
+      header + "⏳ <b>Diqqat! Test boshlanmoqda...</b>\n\n<b>3️⃣</b>",
+      {
+        parse_mode: "HTML",
+      },
+    );
     await wait(1000);
-    await safeEdit(ctx, header + "⏳ <b>Diqqat! Test boshlanmoqda...</b>\n\n<b>2️⃣</b>", {
-      parse_mode: "HTML",
-    });
+    await safeEdit(
+      ctx,
+      header + "⏳ <b>Diqqat! Test boshlanmoqda...</b>\n\n<b>2️⃣</b>",
+      {
+        parse_mode: "HTML",
+      },
+    );
     await wait(1000);
-    await safeEdit(ctx, header + "⏳ <b>Diqqat! Test boshlanmoqda...</b>\n\n<b>1️⃣</b>", {
-      parse_mode: "HTML",
-    });
+    await safeEdit(
+      ctx,
+      header + "⏳ <b>Diqqat! Test boshlanmoqda...</b>\n\n<b>1️⃣</b>",
+      {
+        parse_mode: "HTML",
+      },
+    );
     await wait(1000);
-    await safeEdit(ctx, header + "🚀 <b>Kamarlarni taqing! BOSHLADIK!</b> Omad yor bo'lsin, muvaffaqiyat sizga! 🍀", {
-      parse_mode: "HTML",
-    });
+    await safeEdit(
+      ctx,
+      header +
+        "🚀 <b>Kamarlarni taqing! BOSHLADIK!</b> Omad yor bo'lsin, muvaffaqiyat sizga! 🍀",
+      {
+        parse_mode: "HTML",
+      },
+    );
 
     await sendNextQuestion(chatId, ctx.telegram);
   } catch (e) {
@@ -430,7 +483,9 @@ async function cbResumeTest(ctx) {
   try {
     const session = await sessionService.getActiveTest(chatId);
     if (!session)
-      return ctx.answerCbQuery("❌ Test topilmadi.", { show_alert: true }).catch(() => {});
+      return ctx
+        .answerCbQuery("❌ Test topilmadi.", { show_alert: true })
+        .catch(() => {});
     session.consecutiveTimeouts = 0;
     await sessionService.setActiveTest(chatId, session);
     await safeDelete(ctx);
@@ -451,7 +506,7 @@ async function cbStopTest(ctx) {
     if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => {});
     const chatId = ctx.chat?.id || ctx.from?.id;
     const session = await sessionService.getActiveTest(chatId);
-    const isGroup = ctx.chat?.type !== 'private'; // Guruhni aniqlaymiz
+    const isGroup = ctx.chat?.type !== "private"; // Guruhni aniqlaymiz
 
     if (!session) {
       if (!ctx.callbackQuery) await safeDelete(ctx);
@@ -461,12 +516,19 @@ async function cbStopTest(ctx) {
     // GURUH UCHUN: Shunchaki to'xtatib, Reyting (finishTest) ni chaqiramiz
     if (isGroup) {
       if (!ctx.callbackQuery) {
-          await ctx.reply("🛑 <b>O'yin muddatidan oldin to'xtatildi!</b> Natijalar hisoblanmoqda...", { parse_mode: "HTML" });
+        await ctx.reply(
+          "🛑 <b>O'yin muddatidan oldin to'xtatildi!</b> Natijalar hisoblanmoqda...",
+          { parse_mode: "HTML" },
+        );
       } else {
-          await safeDelete(ctx);
-          await ctx.telegram.sendMessage(chatId, "🛑 <b>O'yin muddatidan oldin to'xtatildi!</b> Natijalar hisoblanmoqda...", { parse_mode: "HTML" });
+        await safeDelete(ctx);
+        await ctx.telegram.sendMessage(
+          chatId,
+          "🛑 <b>O'yin muddatidan oldin to'xtatildi!</b> Natijalar hisoblanmoqda...",
+          { parse_mode: "HTML" },
+        );
       }
-      const { finishTest } = require('./coreQuiz');
+      const { finishTest } = require("./coreQuiz");
       return finishTest(chatId, ctx.telegram);
     }
 
@@ -501,9 +563,15 @@ async function cbStopTest(ctx) {
     ];
 
     if (ctx.callbackQuery) {
-      await safeEdit(ctx, text, { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) });
+      await safeEdit(ctx, text, {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard(buttons),
+      });
     } else {
-      await ctx.reply(text, { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) });
+      await ctx.reply(text, {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard(buttons),
+      });
     }
   } catch (e) {
     console.error("To'xtatishda xato:", e.message);
@@ -512,74 +580,149 @@ async function cbStopTest(ctx) {
 
 // ─── POST-TEST ACTIONS ────────────────────────────────────────
 
+// ─── POST-TEST ACTIONS (ERROR REVIEW & AI TUTOR) ──────────────
+
 async function cbReviewMistakes(ctx) {
   await ctx.answerCbQuery().catch(() => {});
-  const mistakes = await lastMistakesCache.get(ctx.chat.id) || [];
-  if (!mistakes.length)
-    return ctx.answerCbQuery("🎉 Bu testda xato yo'q edi!", {
-      show_alert: true,
-    }).catch(() => {});
 
-  const parts = [`📑 <b>Xatolar Tahlili</b> — <i>${mistakes.length} ta xato topildi</i>\n\nQuyida har bir xato uchun siz bergan va to'g'ri javob ko'rsatilgan:`];
-  for (let i = 0; i < Math.min(mistakes.length, 20); i++) {
-    parts.push(
-      `<b>${i + 1}.</b> ${escapeHtml(mistakes[i].question)}\n` +
-        `❌ ${escapeHtml(mistakes[i].wrong_ans)}\n` +
-        `✅ ${escapeHtml(mistakes[i].correct_ans)}`,
-    );
+  // Sahifani aniqlash (Default: 0)
+  let page = 0;
+  if (ctx.callbackQuery.data.startsWith("review_mistakes_")) {
+    page = parseInt(ctx.callbackQuery.data.replace("review_mistakes_", ""), 10);
   }
-  if (mistakes.length > 20)
-    parts.push(`<i>...va yana ${mistakes.length - 20} ta xato</i>`);
+
+  const mistakes = (await lastMistakesCache.get(ctx.chat.id)) || [];
+  if (!mistakes.length) {
+    return ctx
+      .answerCbQuery("🎉 Bu testda xato yo'q edi!", { show_alert: true })
+      .catch(() => {});
+  }
+
+  const ITEMS_PER_PAGE = 5; // Bitta sahifada 5 ta xato ko'rinadi
+  const totalPages = Math.ceil(mistakes.length / ITEMS_PER_PAGE);
+  const validPage = Math.max(0, Math.min(page, totalPages - 1));
+
+  const startIdx = validPage * ITEMS_PER_PAGE;
+  const currentMistakes = mistakes.slice(startIdx, startIdx + ITEMS_PER_PAGE);
+
+  const parts = [
+    `📑 <b>Xatolar Tahlili</b> — <i>${mistakes.length} ta xato topildi</i>\n` +
+      `_Sahifa: ${validPage + 1} / ${totalPages}_\n`,
+  ];
+
+  currentMistakes.forEach((m, i) => {
+    parts.push(
+      `<b>${startIdx + i + 1}.</b> ${escapeHtml(m.question)}\n` +
+        `❌ <i>Sizning javob: ${escapeHtml(m.wrong_ans)}</i>\n` +
+        `✅ <b>To'g'ri javob: ${escapeHtml(m.correct_ans)}</b>`,
+    );
+  });
+
+  const navRow = [];
+  if (validPage > 0)
+    navRow.push(
+      Markup.button.callback(
+        "⬅️ Oldingi 5 ta",
+        `review_mistakes_${validPage - 1}`,
+      ),
+    );
+  if (validPage < totalPages - 1)
+    navRow.push(
+      Markup.button.callback(
+        "Keyingi 5 ta ➡️",
+        `review_mistakes_${validPage + 1}`,
+      ),
+    );
+
+  const buttons = [];
+  if (navRow.length > 0) buttons.push(navRow);
+
+  // AI faqat shu sahifadagi 5 ta xatoni tahlil qiladi (Token va kutish vaqti tejaladi)
+  buttons.push([
+    Markup.button.callback(
+      "🤖 AI Tutor: Shu 5 ta xatoni tahlil qilish",
+      `ai_explain_mistakes_${validPage}`,
+    ),
+  ]);
+
+  buttons.push([Markup.button.callback("🔙 Asosiy Menyu", "post_main")]);
 
   await safeEdit(ctx, parts.join("\n\n"), {
     parse_mode: "HTML",
-    ...Markup.inlineKeyboard([
-      [
-        Markup.button.callback(
-          "🤖 AI Tutor: Xatolarni tahlil qilish",
-          "ai_explain_mistakes",
-        ),
-      ],
-      [
-        Markup.button.callback("🔙 Natijaga qaytish", "post_main"),
-        Markup.button.callback("🏠 Asosiy Menyu", "back_to_main"),
-      ],
-    ]),
+    ...Markup.inlineKeyboard(buttons),
   });
 }
 
+// AI Tutor Endi faqat kerakli sahifani tahlil qiladi
 async function cbAiExplainMistakes(ctx) {
   await ctx.answerCbQuery().catch(() => {});
-  const mistakes = await lastMistakesCache.get(ctx.chat.id) || [];
-  if (!mistakes.length)
-    return ctx.answerCbQuery("Xatolar topilmadi!", { show_alert: true }).catch(() => {});
+
+  let page = 0;
+  if (ctx.callbackQuery.data.startsWith("ai_explain_mistakes_")) {
+    page = parseInt(
+      ctx.callbackQuery.data.replace("ai_explain_mistakes_", ""),
+      10,
+    );
+  }
+
+  const mistakes = (await lastMistakesCache.get(ctx.chat.id)) || [];
+  if (!mistakes.length) return;
+
+  const startIdx = page * 5;
+  const currentMistakes = mistakes.slice(startIdx, startIdx + 5); // Faqat hozirgi sahifadagi 5 ta xato
 
   await safeEdit(
     ctx,
-    "🧠 <i>AI Tutor xatolaringizni tahlil qilmoqda va har biriga tushuntirish yozmoqda...</i>\n\n⏳ <i>Bu bir necha soniya vaqt olishi mumkin.</i>",
+    `🧠 <i>AI Tutor hozirgi sahifadagi ${currentMistakes.length} ta xatolaringizni tahlil qilmoqda...</i>\n\n⏳ <i>Iltimos, kuting.</i>`,
     { parse_mode: "HTML" },
   );
 
   try {
-    const explanation = await aiService.explainMistakesBatch(mistakes);
-    await safeEdit(ctx, `🤖 <b>AI Tutor Tahlili:</b>\n\n${explanation}`, {
-      parse_mode: "HTML",
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
-      ]),
-    });
+    const explanation = await aiService.explainMistakesBatch(currentMistakes);
+
+    await safeEdit(
+      ctx,
+      `🤖 <b>AI Tutor Tahlili (Sahifa: ${page + 1}):</b>\n\n${explanation}`,
+      {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback(
+              "🔙 Xatolarga qaytish",
+              `review_mistakes_${page}`,
+            ),
+          ], // Tahlildan so'ng yana shu xatolar sahifasiga qaytish
+          [Markup.button.callback("🏠 Asosiy Menyu", "post_main")],
+        ]),
+      },
+    );
   } catch (e) {
     console.error("cbAiExplainMistakes error:", e.message);
-    await safeEdit(ctx, "⚠️ AI tahlilida kutilmagan xatolik yuz berdi.\n\nIltimos, bir ozdan so'ng qaytadan urinib ko'ring. Muammo davom etsa, adminga murojaat qiling.", backToMainKb());
+    await safeEdit(
+      ctx,
+      "⚠️ AI tahlilida kutilmagan xatolik yuz berdi.\n\nIltimos, bir ozdan so'ng qaytadan urinib ko'ring.",
+      Markup.inlineKeyboard([
+        [
+          Markup.button.callback(
+            "🔙 Xatolarga qaytish",
+            `review_mistakes_${page}`,
+          ),
+        ],
+      ]),
+    );
   }
 }
 
 async function cbPostMain(ctx) {
   await safeAnswerCb(ctx);
-  await safeEdit(ctx, "🏛 <b>Asosiy Menyu</b>\n\nQuyidagi bo'limlardan birini tanlang:", {
-    parse_mode: "HTML",
-    ...getMainKeyboard(),
-  });
+  await safeEdit(
+    ctx,
+    "🏛 <b>Asosiy Menyu</b>\n\nQuyidagi bo'limlardan birini tanlang:",
+    {
+      parse_mode: "HTML",
+      ...getMainKeyboard(),
+    },
+  );
 }
 
 async function cbPostSubj(ctx) {
@@ -664,8 +807,10 @@ function register(bot) {
   bot.action("user_ready_start", cbUserReadyStart);
   bot.action("resume_test", cbResumeTest);
   bot.action("force_finish", cbForceFinish);
-  bot.action("review_mistakes", cbReviewMistakes);
-  bot.action("ai_explain_mistakes", cbAiExplainMistakes);
+
+  bot.action(/^review_mistakes/, cbReviewMistakes);
+  bot.action(/^ai_explain_mistakes/, cbAiExplainMistakes);
+
   bot.action("post_main", cbPostMain);
   bot.action(/^post_subj_/, cbPostSubj);
   bot.action(/^post_start_/, cbPostStart);
@@ -689,5 +834,4 @@ module.exports = {
   startUgcTest,
   resumeTestFromShelf,
   sendNextQuestion,
-  
 };

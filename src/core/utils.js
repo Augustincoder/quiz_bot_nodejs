@@ -232,32 +232,25 @@ async function parseDocxQuestions(filePath, mode = 'hash') {
 }
 
 function parseTextQuestions(text, mode = 'hash') {
-  const questions = [];
+  const valid = [];
+  const invalid = []; // Xato matnlarni yig'ish uchun
 
-  // 1. Savollarni bir-biridan ajratish (+++++ yoki qator tashlash orqali)
-  let rawBlocks = [];
-  if (text.includes('+++++')) {
-    rawBlocks = text.split(/\+{5,}/);
-  } else {
-    rawBlocks = text.split(/\n\s*\n/);
-  }
+  // 1. Savollarni bir-biridan ajratish
+  let rawBlocks = text.includes('+++++') ? text.split(/\+{5,}/) : text.split(/\n\s*\n/);
 
   for (const block of rawBlocks) {
     if (!block.trim()) continue;
 
-    let parts = [];
-    // 2. Savol va javoblarni ajratish (===== yoki keyingi qator orqali)
-    if (block.includes('=====')) {
-      parts = block.split(/={5,}/).map(p => p.trim()).filter(Boolean);
-    } else {
-      parts = block.split('\n').map(p => p.trim()).filter(Boolean);
+    let parts = block.includes('=====') ? block.split(/={5,}/) : block.split('\n');
+    parts = parts.map(p => p.trim()).filter(Boolean);
+
+    // Agar matnda savol va kamida 1 ta javob bo'lmasa, demak u xato
+    if (parts.length < 2) {
+      invalid.push(block.trim());
+      continue;
     }
 
-    if (parts.length < 3) continue; // Kamida bitta savol va 2 ta javob kerak
-
-    // 3. Savol matnini tozalash (Boshidagi 1., 1) larni qirqish)
     let questionText = parts[0].replace(/^\d+[\)\.]\s*/, '').trim();
-
     const opts = [];
     let correctIdx = -1;
 
@@ -265,36 +258,34 @@ function parseTextQuestions(text, mode = 'hash') {
       let optText = parts[i];
       let isCorrect = false;
 
-      // To'g'ri javobni izlash rejimlari
       if (mode === 'hash' && optText.startsWith('#')) {
         isCorrect = true;
         optText = optText.substring(1).trim();
       } else if (mode === 'first' && i === 1) {
-        // "First" rejimida doim eng birinchi turgan javob to'g'ri deb olinadi
         isCorrect = true;
       }
 
-      // Javob boshidagi A), b., 1) kabi belgilarni tozalash (Foydalanuvchiga toza matn borishi uchun)
       optText = optText.replace(/^[a-eA-E1-5][\)\.]\s*/, '').trim();
-
       if (!optText) continue;
 
       opts.push(optText);
       if (isCorrect) correctIdx = opts.length - 1;
     }
 
-    // Agar first rejimi tanlangan bo'lsa, xavfsizlik uchun index'ni 0 ga tenglaymiz
     if (mode === 'first' && correctIdx === -1 && opts.length > 0) {
       correctIdx = 0;
     }
 
-    // Savol to'liq yasalgan bo'lsa, ro'yxatga qo'shamiz
+    // Savol to'liq yasalgan bo'lsa `valid` ga, aks holda `invalid` ga
     if (correctIdx !== -1 && opts.length >= 2) {
-      questions.push({ question: questionText, options: opts, correct_index: correctIdx });
+      valid.push({ question: questionText, options: opts, correct_index: correctIdx });
+    } else {
+      invalid.push(block.trim());
     }
   }
 
-  return questions;
+  // Endi funksiya obyekt qaytaradi
+  return { valid, invalid };
 }
 
 // ─── Admin Guard (Shared) ────────────────────────────────────
