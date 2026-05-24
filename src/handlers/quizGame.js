@@ -193,14 +193,25 @@ async function cbStartTest(ctx) {
 
   try {
     const existing = await sessionService.getActiveTest(chatId);
-    if (existing)
-      return ctx
-        .answerCbQuery(
-          "⚠️ Hozirda faol test mavjud. Avval uni yakunlang yoki /stop buyrug'i bilan to'xtating.",
-          { show_alert: true },
-        )
+    if (existing) {
+      await ctx
+        .answerCbQuery("⚠️ Faol test mavjud!", { show_alert: false })
         .catch(() => {});
-
+      return ctx.reply(
+        "⚠️ <b>Sizda tugallanmagan (yoki qotib qolgan) test bor.</b>\n\nYangi test boshlashdan oldin uni to'xtatishingiz kerak:",
+        {
+          parse_mode: "HTML",
+          ...Markup.inlineKeyboard([
+            [
+              Markup.button.callback(
+                "🛑 Faol testni to'xtatish",
+                "force_finish",
+              ),
+            ],
+          ]),
+        },
+      );
+    }
     const isMock = ctx.callbackQuery.data.startsWith("mock_");
     let subjectKey, testId, testData;
 
@@ -588,9 +599,11 @@ async function cbReviewMistakes(ctx) {
   const match = ctx.callbackQuery.data.match(/review_mistakes_(\d+)/);
   if (match) page = parseInt(match[1], 10);
 
-  const mistakes = await lastMistakesCache.get(ctx.chat.id) || [];
+  const mistakes = (await lastMistakesCache.get(ctx.chat.id)) || [];
   if (!mistakes.length) {
-    return ctx.answerCbQuery("🎉 Bu testda xato yo'q edi!", { show_alert: true }).catch(() => {});
+    return ctx
+      .answerCbQuery("🎉 Bu testda xato yo'q edi!", { show_alert: true })
+      .catch(() => {});
   }
 
   const ITEMS_PER_PAGE = 5;
@@ -600,51 +613,88 @@ async function cbReviewMistakes(ctx) {
   const currentMistakes = mistakes.slice(startIdx, startIdx + ITEMS_PER_PAGE);
 
   const parts = [
-    `📑 <b>Xatolar Tahlili</b> — <i>${mistakes.length} ta xato topildi</i>\n_Sahifa: ${validPage + 1} / ${totalPages}_\n`
+    `📑 <b>Xatolar Tahlili</b> — <i>${mistakes.length} ta xato topildi</i>\n_Sahifa: ${validPage + 1} / ${totalPages}_\n`,
   ];
 
   currentMistakes.forEach((m, i) => {
     parts.push(
       `<b>${startIdx + i + 1}.</b> ${escapeHtml(String(m.question || "Savol matni yo'q"))}\n` +
-      `❌ <i>Sizning javob: ${escapeHtml(String(m.wrong_ans || "-"))}</i>\n` +
-      `✅ <b>To'g'ri javob: ${escapeHtml(String(m.correct_ans || "-"))}</b>`
+        `❌ <i>Sizning javob: ${escapeHtml(String(m.wrong_ans || "-"))}</i>\n` +
+        `✅ <b>To'g'ri javob: ${escapeHtml(String(m.correct_ans || "-"))}</b>`,
     );
   });
 
   const navRow = [];
-  if (validPage > 0) navRow.push(Markup.button.callback("⬅️ Oldingi 5 ta", `review_mistakes_${validPage - 1}`));
-  if (validPage < totalPages - 1) navRow.push(Markup.button.callback("Keyingi 5 ta ➡️", `review_mistakes_${validPage + 1}`));
+  if (validPage > 0)
+    navRow.push(
+      Markup.button.callback(
+        "⬅️ Oldingi 5 ta",
+        `review_mistakes_${validPage - 1}`,
+      ),
+    );
+  if (validPage < totalPages - 1)
+    navRow.push(
+      Markup.button.callback(
+        "Keyingi 5 ta ➡️",
+        `review_mistakes_${validPage + 1}`,
+      ),
+    );
 
   const buttons = [];
   if (navRow.length > 0) buttons.push(navRow);
-  buttons.push([Markup.button.callback("🤖 AI Tutor: Shu 5 ta xatoni tahlil qilish", `ai_explain_mistakes_${validPage}`)]);
+  buttons.push([
+    Markup.button.callback(
+      "🤖 AI Tutor: Shu 5 ta xatoni tahlil qilish",
+      `ai_explain_mistakes_${validPage}`,
+    ),
+  ]);
   buttons.push([Markup.button.callback("🔙 Natijaga qaytish", "post_main")]);
 
-  await safeEdit(ctx, parts.join("\n\n"), { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) });
+  await safeEdit(ctx, parts.join("\n\n"), {
+    parse_mode: "HTML",
+    ...Markup.inlineKeyboard(buttons),
+  });
 }
+
+const wmCache = {
+  set: async (chatId, data) =>
+    await redisConnection.set(
+      `wm_state:${chatId}`,
+      JSON.stringify(data),
+      "EX",
+      3600,
+    ),
+  get: async (chatId) => {
+    const d = await redisConnection.get(`wm_state:${chatId}`);
+    return d ? JSON.parse(d) : null;
+  },
+  del: async (chatId) => await redisConnection.del(`wm_state:${chatId}`),
+};
 // ─── ERROR MASTERY (XATOLAR USTIDA ISHLASH) ───────────────────
 
 // 1. Format tanlash menyusi
 async function cbWorkMistakesMenu(ctx) {
   await ctx.answerCbQuery().catch(() => {});
-  const mistakes = await lastMistakesCache.get(ctx.chat.id) || [];
+  const mistakes = (await lastMistakesCache.get(ctx.chat.id)) || [];
   if (!mistakes.length) {
-    return ctx.answerCbQuery("🎉 Bu testda xato yo'q edi!", { show_alert: true }).catch(() => {});
+    return ctx
+      .answerCbQuery("🎉 Bu testda xato yo'q edi!", { show_alert: true })
+      .catch(() => {});
   }
 
   await safeEdit(
     ctx,
     `🔄 <b>Xatolar ustida ishlash</b>\n\nSizda jami <b>${mistakes.length} ta</b> xato bor. Qaysi usulda qayta ishlamoqchisiz?\n\n` +
-    `🕹 <b>Interaktiv:</b> Ekranda bitta-bitta chiqadi. Xato topsangiz navbat oxiriga tushadi.\n` +
-    `📊 <b>Klassik Quiz:</b> Odatiy Telegram test shaklida.`,
+      `🕹 <b>Interaktiv:</b> Ekranda bitta-bitta chiqadi. Xato topsangiz navbat oxiriga tushadi.\n` +
+      `📊 <b>Klassik Quiz:</b> Odatiy Telegram test shaklida.`,
     {
       parse_mode: "HTML",
       ...Markup.inlineKeyboard([
         [Markup.button.callback("🕹 Interaktiv Rejim", "wm_start_inline")],
         [Markup.button.callback("📊 Klassik Quiz", "wm_start_quiz")],
-        [Markup.button.callback("🔙 Asosiy Menyuga", "post_main")]
-      ])
-    }
+        [Markup.button.callback("🔙 Asosiy Menyuga", "post_main")],
+      ]),
+    },
   );
 }
 
@@ -685,34 +735,35 @@ async function cbWmStartQuiz(ctx) {
 // 3. Interaktiv Rejimni (Kardochkalar) boshlash
 async function cbWmStartInline(ctx) {
   await ctx.answerCbQuery().catch(() => {});
-  const mistakes = await lastMistakesCache.get(ctx.chat.id) || [];
+  const mistakes = (await lastMistakesCache.get(ctx.chat.id)) || [];
   if (!mistakes.length) return;
 
-  // Xotirani xavfsiz yangilash (Tizimning o'zi avto-saqlaydi)
-  if (!ctx.session) ctx.session = { data: {} };
-  if (!ctx.session.data) ctx.session.data = {};
-  
-  ctx.session.data.wm_queue = [...mistakes];
-  ctx.session.data.wm_total = mistakes.length;
+  // Xotirani ishonchli Redis ga yozamiz
+  await wmCache.set(ctx.chat.id, {
+    queue: [...mistakes],
+    total: mistakes.length,
+    startTime: Date.now(),
+  });
 
   await sendNextInlineMistake(ctx);
 }
-
 // Interaktiv o'yin jarayoni
 async function sendNextInlineMistake(ctx) {
-  const data = ctx.session.data;
-  const queue = data.wm_queue || [];
+  const state = await wmCache.get(ctx.chat.id);
+  if (!state) return;
 
+  const queue = state.queue || [];
+
+  // G'alaba ekrani (O'yin oxiriga yetganda)
   if (queue.length === 0) {
-    data.wm_queue = null;
-    await sessionService.updateSession(ctx.chat.id, data);
+    await wmCache.del(ctx.chat.id); // Xotirani tozalaymiz
     return safeEdit(
       ctx,
-      `🎉 <b>Tabriklaymiz! Barcha xatolarni yengdingiz!</b>\n\nSiz <b>${data.wm_total} ta</b> xatoning barchasini qayta ishlab, to'g'ri javoblarni o'zlashtirdingiz. Sizning miyangiz endi bu savollarni unutmaydi! 🧠💪`,
+      `🎉 <b>Tabriklaymiz! Barcha xatolarni yengdingiz!</b>\n\nSiz <b>${state.total} ta</b> xatoning barchasini qayta ishlab, to'g'ri javoblarni o'zlashtirdingiz. Sizning miyangiz endi bu savollarni unutmaydi! 🧠💪`,
       {
         parse_mode: "HTML",
         ...Markup.inlineKeyboard([
-          [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
+          [Markup.button.callback("🏠 Asosiy Menyuga qaytish", "back_to_main")],
         ]),
       },
     );
@@ -721,34 +772,41 @@ async function sendNextInlineMistake(ctx) {
   const q = queue[0];
   const qText = q.question || "Savol matni";
 
-  // Agar original variantlar bo'lmasa, uni 2 talik qilib avto-yasaymiz
+  // To'liq variantlarni tiklash
   let options = q.options;
   let correctIdx = q.correct_index;
   if (!options) {
+    // Agar o'tgan safargi eski xotira bo'lib qolsa, qulamasligi uchun himoya
     options = [q.correct_ans, q.wrong_ans].sort(() => Math.random() - 0.5);
     correctIdx = options.indexOf(q.correct_ans);
   }
 
-  // Telegram limitiga tushmaslik uchun javoblarni tugmaga emas, matnga chizamiz
-  let text = `🎯 <b>Xatolar ustida ishlash</b> (Qoldi: ${queue.length} ta)\n━━━━━━━━━━━━━━━━\n<b>Savol:</b>\n${escapeHtml(qText)}\n\n`;
+  // Savol ekranga chiqish arafasida Taymerni yangilaymiz!
+  state.startTime = Date.now();
+  await wmCache.set(ctx.chat.id, state);
+
+  let text =
+    `🎯 <b>Xatolar ustida ishlash</b> (Qoldi: ${queue.length} ta)\n` +
+    `⏱ <i>Vaqt limiti: 15 soniya</i>\n━━━━━━━━━━━━━━━━\n` +
+    `<b>Savol:</b>\n${escapeHtml(String(qText))}\n\n`;
 
   const buttons = [];
-  const labels = ["A", "B", "C", "D", "E", "F"];
+  const labels = ["A", "B", "C", "D", "E", "F", "G", "H"];
   let row = [];
 
   options.forEach((opt, i) => {
     const isCorrect = i === correctIdx;
-    text += `<b>${labels[i]})</b> ${escapeHtml(opt)}\n`;
+    text += `<b>${labels[i]})</b> ${escapeHtml(String(opt))}\n`;
     row.push(
       Markup.button.callback(`${labels[i]}`, `wm_ans_${isCorrect ? 1 : 0}`),
     );
 
-    // Qatorga 2 tadan tugma yig'ish
     if (row.length === 2 || i === options.length - 1) {
       buttons.push(row);
       row = [];
     }
   });
+
   buttons.push([Markup.button.callback("🔙 To'xtatish", "post_main")]);
 
   if (ctx.callbackQuery) {
@@ -766,26 +824,52 @@ async function sendNextInlineMistake(ctx) {
 
 // Interaktiv javobni tutib olish (Tekshirish)
 async function cbWmAns(ctx) {
-   const isCorrect = parseSuffix(ctx.callbackQuery.data, "wm_ans_") === "1";
-   if (!ctx.session || !ctx.session.data) return ctx.answerCbQuery().catch(()=>{});
-   
-   const queue = ctx.session.data.wm_queue || [];
-   if (!queue.length) return ctx.answerCbQuery().catch(()=>{});
+  const state = await wmCache.get(ctx.chat.id);
+  if (!state || !state.queue || !state.queue.length) {
+    return ctx
+      .answerCbQuery(
+        "⚠️ Sessiya eskirgan yoki o'yin yakunlangan. Iltimos, menyudan qayta boshlang.",
+        { show_alert: true },
+      )
+      .catch(() => {});
+  }
 
-   const q = queue.shift();
+  const isCorrect = parseSuffix(ctx.callbackQuery.data, "wm_ans_") === "1";
+  const queue = state.queue;
+  const q = queue.shift(); // Savolni navbatdan oldik
 
-   if (isCorrect) {
-      await ctx.answerCbQuery("✅ Ajoyib! To'g'ri.").catch(()=>{});
-      return sendNextInlineMistake(ctx); 
-   } else {
-      queue.push(q);
-      const correctText = q.correct_ans || (q.options ? q.options[q.correct_index] : "Noma'lum");
+  // Timer tekshiruvi (15 soniya = 15000 millisoniya)
+  const elapsed = Date.now() - (state.startTime || Date.now());
+  const isTimeout = elapsed > 15000;
 
-      await safeEdit(ctx, `❌ <b>Yana xato qildingiz!</b>\n\nTo'g'ri javob:\n<b>✅ ${escapeHtml(String(correctText))}</b>\n\n<i>Bu savol ro'yxat oxiriga tushdi, uni to'g'ri topmaguningizcha o'yin tugamaydi.</i>`, {
-         parse_mode: "HTML",
-         ...Markup.inlineKeyboard([[Markup.button.callback("➡️ Davom etish", "wm_next")]])
-      });
-   }
+  if (isCorrect && !isTimeout) {
+    await ctx.answerCbQuery("✅ Ajoyib! To'g'ri.").catch(() => {});
+    await wmCache.set(ctx.chat.id, state); // Yangilangan navbatni saqlaymiz
+    return sendNextInlineMistake(ctx);
+  } else {
+    // Xato qildi yoki Vaqt tugadi -> Ro'yxat eng oxiriga qaytaramiz
+    queue.push(q);
+    await wmCache.set(ctx.chat.id, state);
+
+    const correctText =
+      q.correct_ans || (q.options ? q.options[q.correct_index] : "Noma'lum");
+
+    // Xato sababini ajratamiz
+    let failMsg = isTimeout
+      ? `⏳ <b>Vaqt tugadi!</b> (15 soniyadan o'tib ketdi)`
+      : `❌ <b>Yana xato qildingiz!</b>`;
+
+    await safeEdit(
+      ctx,
+      `${failMsg}\n\nTo'g'ri javob:\n<b>✅ ${escapeHtml(String(correctText))}</b>\n\n<i>Bu savol ro'yxat oxiriga tushdi, uni to'g'ri topmaguningizcha o'yin tugamaydi!</i>`,
+      {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("➡️ Davom etish", "wm_next")],
+        ]),
+      },
+    );
+  }
 }
 
 async function cbWmNext(ctx) {

@@ -5,6 +5,7 @@ const mutex = require("../core/mutex");
 const { SUBJECTS } = require("../config/config");
 const dbService = require("../services/dbService");
 const sessionService = require("../services/sessionService");
+// const redisConnection = require("../services/redisService");
 const logger = require("../core/logger");
 const {
   userNameCache,
@@ -76,11 +77,18 @@ function resolveTestName(tId, blockName) {
 // ─── TUGMALARNI YASASH FUNKSIYASI (YANGILANGAN) ───
 function buildFinishButtons(tId, subjectKey, mistakesCount = 0) {
   const btns = [];
-  
+
   // Agar xatolar bo'lsa, 2 ta tugmani ham chiqaramiz
   if (mistakesCount > 0) {
-    btns.push([Markup.button.callback("❌ Xatolarni ko'rish", "review_mistakes")]);
-    btns.push([Markup.button.callback(`🔄 Xatolar ustida ishlash (${mistakesCount} ta)`, "wm_menu")]);
+    btns.push([
+      Markup.button.callback("❌ Xatolarni ko'rish", "review_mistakes"),
+    ]);
+    btns.push([
+      Markup.button.callback(
+        `🔄 Xatolar ustida ishlash (${mistakesCount} ta)`,
+        "wm_menu",
+      ),
+    ]);
   }
 
   const sid = String(tId);
@@ -92,7 +100,9 @@ function buildFinishButtons(tId, subjectKey, mistakesCount = 0) {
       ),
     ]);
   } else if (sid === "mock") {
-    btns.push([Markup.button.callback("🎲 Yana aralash", `mock_${subjectKey}`)]);
+    btns.push([
+      Markup.button.callback("🎲 Yana aralash", `mock_${subjectKey}`),
+    ]);
   } else if (sid === "adaptive") {
     btns.push([
       Markup.button.callback("🎯 Yana adaptiv", `adaptive_${subjectKey}`),
@@ -120,7 +130,7 @@ function buildFinishButtons(tId, subjectKey, mistakesCount = 0) {
     Markup.button.callback("🔙 Fan menyusi", `post_subj_${subjectKey}`),
     Markup.button.callback("🏠 Asosiy", "post_main"),
   ]);
-  
+
   return btns;
 }
 
@@ -245,7 +255,7 @@ async function finishTest(chatId, telegram) {
       const pct = safePercent(session.correct, total);
 
       // Telemetry
-      logger.info('test:finish', {
+      logger.info("test:finish", {
         chatId,
         subject: session.subjectKey,
         testId: tId,
@@ -294,17 +304,17 @@ async function finishTest(chatId, telegram) {
 
       // 🔴 FIX: ReferenceError ning oldi olindi va to'g'ri hisob-kitob kiritildi
       const mistakesCount = (session.mistakes || []).length;
-      buttons = buildFinishButtons(
-        tId,
-        session.subjectKey,
-        mistakesCount
-      );
-
-    }  else { 
+      buttons = buildFinishButtons(tId, session.subjectKey, mistakesCount);
+    } else {
       // ─── GURUH TESTLARI (MARAFON VA REYTING) ───
-      const { getCacheEntry, groupTestCache } = require('./coreQuiz') || {}; 
-      const localGetCacheEntry = getCacheEntry || function(cache, key) { const e = cache.get(key); return e ? e.data : null; };
-      
+      const { getCacheEntry, groupTestCache } = require("./coreQuiz") || {};
+      const localGetCacheEntry =
+        getCacheEntry ||
+        function (cache, key) {
+          const e = cache.get(key);
+          return e ? e.data : null;
+        };
+
       const groupEntry = localGetCacheEntry(groupTestCache, chatId);
       if (groupEntry) {
         session.groupScores = groupEntry.scores;
@@ -315,69 +325,107 @@ async function finishTest(chatId, telegram) {
       if (session.isMarathon) {
         if (!session.marathonGlobalScores) session.marathonGlobalScores = {};
         for (const [uid, sc] of Object.entries(session.groupScores)) {
-            if (!session.marathonGlobalScores[uid]) {
-                session.marathonGlobalScores[uid] = { name: sc.name, correct: 0, wrong: 0 };
-            }
-            session.marathonGlobalScores[uid].correct += sc.correct;
-            session.marathonGlobalScores[uid].wrong += sc.wrong;
+          if (!session.marathonGlobalScores[uid]) {
+            session.marathonGlobalScores[uid] = {
+              name: sc.name,
+              correct: 0,
+              wrong: 0,
+            };
+          }
+          session.marathonGlobalScores[uid].correct += sc.correct;
+          session.marathonGlobalScores[uid].wrong += sc.wrong;
         }
       }
 
       // Qaysi reytingni ko'rsatishni aniqlaymiz (Oraliq yoki Yakuniy)
-      const scoresToUse = (session.isMarathon && session.currentBlockIdx >= session.marathonBlocks.length - 1) 
-                          ? session.marathonGlobalScores 
-                          : (session.isMarathon ? session.groupScores : session.groupScores);
-      
+      const scoresToUse =
+        session.isMarathon &&
+        session.currentBlockIdx >= session.marathonBlocks.length - 1
+          ? session.marathonGlobalScores
+          : session.isMarathon
+            ? session.groupScores
+            : session.groupScores;
+
       const entries = Object.values(scoresToUse);
       const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"];
-      
+
       const body = entries.length
-        ? entries.sort((a, b) => b.correct - a.correct).map((s, i) => `${medals[i] ?? "🔸"} <b>${s.name}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`).join("\n")
+        ? entries
+            .sort((a, b) => b.correct - a.correct)
+            .map(
+              (s, i) =>
+                `${medals[i] ?? "🔸"} <b>${s.name}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`,
+            )
+            .join("\n")
         : "😔 Hech kim javob bermadi.";
 
       // MARAFON: Agar hali bloklar qolgan bo'lsa
-      if (session.isMarathon && session.currentBlockIdx < session.marathonBlocks.length - 1) {
-          session.currentBlockIdx++;
-          const nextBlock = session.marathonBlocks[session.currentBlockIdx];
-          const { prepareShuffledQuestions } = require('../core/questionUtils');
-          session.sessionQuestions = prepareShuffledQuestions(nextBlock.questions);
-          session.testId = nextBlock.id || nextBlock.test_id;
-          session.blockName = nextBlock.block_name;
-          session.qIdx = 0;
-          session.groupScores = {}; // Keyingi blok uchun tozalaymiz
-          session.finished = false; // Sessiyani ochiq qoldiramiz
-          
-          await sessionService.setActiveTest(chatId, session);
-          
-          text = `🏁 <b>${session.currentBlockIdx}-Blok Yakunlandi!</b>\n\n🏆 <b>Bu blok bo'yicha oraliq natijalar:</b>\n${body}\n\n⏳ <i>Keyingi navbat: <b>${nextBlock.block_name}</b></i>`;
-          
-          await telegram.sendMessage(chatId, text, { 
-              parse_mode: "HTML",
-              reply_markup: {
-                  inline_keyboard: [[{ text: "▶️ Keyingi blokni boshlash", callback_data: "room_next_block" }]]
-              }
-          });
-          
-          return; // Sessiyani o'chirmaymiz
-      } else {
-          // YAKUNIY REYTING (Oddiy blok yoki Marafon oxiri)
-          const botInfo = await telegram.getMe();
-          const shareLink = `https://t.me/share/url?url=https://t.me/${botInfo.username}?startgroup=${session.isMarathon ? 's' : 't'}_${session.isMarathon ? session.marathonBlocks[0].test_id : tId}&text=🏆 Bizning guruh reytingimiz chiroyli chiqdi! Siz ham do'stlar bilan o'ynang.`;
+      if (
+        session.isMarathon &&
+        session.currentBlockIdx < session.marathonBlocks.length - 1
+      ) {
+        session.currentBlockIdx++;
+        const nextBlock = session.marathonBlocks[session.currentBlockIdx];
+        const { prepareShuffledQuestions } = require("../core/questionUtils");
+        session.sessionQuestions = prepareShuffledQuestions(
+          nextBlock.questions,
+        );
+        session.testId = nextBlock.id || nextBlock.test_id;
+        session.blockName = nextBlock.block_name;
+        session.qIdx = 0;
+        session.groupScores = {}; // Keyingi blok uchun tozalaymiz
+        session.finished = false; // Sessiyani ochiq qoldiramiz
 
-          if (session.isMarathon) {
-              const globalEntries = Object.values(session.marathonGlobalScores).sort((a, b) => b.correct - a.correct);
-              const globalBody = globalEntries.length 
-                  ? globalEntries.map((s, i) => `${medals[i] ?? "🔸"} <b>${s.name}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`).join("\n")
-                  : "😔 Hech kim javob bermadi.";
-                  
-              text = `🏆 <b>MARAFON YAKUNLANDI!</b>\n\n📚 Fan: <b>${subjName}</b>\nJami: <b>${session.marathonBlocks.length} ta blok</b> o'ynaldi\n⏱ Umumiy vaqt: <b>${time}</b>\n\n👑 <b>YAKUNIY CHEMPIONLAR REYTINGI:</b>\n${globalBody}`;
-          } else {
-              text = `🏁 <b>Musobaqa Yakunlandi!</b>\n\n📚 Fan: <b>${subjName}</b>\n🔖 Blok: <b>${tName}</b>\n⏱ Vaqt: <b>${time}</b>\n\n🏆 <b>Yakuniy Reyting:</b>\n${body}`;
-          }
-          
-          buttons = [
-             [Markup.button.url("↗️ Do'stlarga maqtanib qo'yish (Ulashish)", shareLink)],
-          ];
+        await sessionService.setActiveTest(chatId, session);
+
+        text = `🏁 <b>${session.currentBlockIdx}-Blok Yakunlandi!</b>\n\n🏆 <b>Bu blok bo'yicha oraliq natijalar:</b>\n${body}\n\n⏳ <i>Keyingi navbat: <b>${nextBlock.block_name}</b></i>`;
+
+        await telegram.sendMessage(chatId, text, {
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "▶️ Keyingi blokni boshlash",
+                  callback_data: "room_next_block",
+                },
+              ],
+            ],
+          },
+        });
+
+        return; // Sessiyani o'chirmaymiz
+      } else {
+        // YAKUNIY REYTING (Oddiy blok yoki Marafon oxiri)
+        const botInfo = await telegram.getMe();
+        const shareLink = `https://t.me/share/url?url=https://t.me/${botInfo.username}?startgroup=${session.isMarathon ? "s" : "t"}_${session.isMarathon ? session.marathonBlocks[0].test_id : tId}&text=🏆 Bizning guruh reytingimiz chiroyli chiqdi! Siz ham do'stlar bilan o'ynang.`;
+
+        if (session.isMarathon) {
+          const globalEntries = Object.values(
+            session.marathonGlobalScores,
+          ).sort((a, b) => b.correct - a.correct);
+          const globalBody = globalEntries.length
+            ? globalEntries
+                .map(
+                  (s, i) =>
+                    `${medals[i] ?? "🔸"} <b>${s.name}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`,
+                )
+                .join("\n")
+            : "😔 Hech kim javob bermadi.";
+
+          text = `🏆 <b>MARAFON YAKUNLANDI!</b>\n\n📚 Fan: <b>${subjName}</b>\nJami: <b>${session.marathonBlocks.length} ta blok</b> o'ynaldi\n⏱ Umumiy vaqt: <b>${time}</b>\n\n👑 <b>YAKUNIY CHEMPIONLAR REYTINGI:</b>\n${globalBody}`;
+        } else {
+          text = `🏁 <b>Musobaqa Yakunlandi!</b>\n\n📚 Fan: <b>${subjName}</b>\n🔖 Blok: <b>${tName}</b>\n⏱ Vaqt: <b>${time}</b>\n\n🏆 <b>Yakuniy Reyting:</b>\n${body}`;
+        }
+
+        buttons = [
+          [
+            Markup.button.url(
+              "↗️ Do'stlarga maqtanib qo'yish (Ulashish)",
+              shareLink,
+            ),
+          ],
+        ];
       }
     }
 
@@ -433,6 +481,8 @@ async function handlePollAnswer(pollAnswer, telegram) {
         question: qData.question,
         correct_ans: qData.correct_text || qData.options[qData.correct_index],
         wrong_ans: qData.options[pollAnswer.option_ids[0]],
+        options: qData.options, // <--- SHU QATOR QO'SHILADI
+        correct_index: qData.correct_index,
       });
     }
     return;
@@ -471,6 +521,8 @@ async function handlePollAnswer(pollAnswer, telegram) {
         question: qData.question,
         correct_ans: qData.correct_text || qData.options[qData.correct_index],
         wrong_ans: qData.options[pollAnswer.option_ids[0]],
+        options: qData.options, // <--- SHU QATOR QO'SHILADI
+        correct_index: qData.correct_index,
       });
     }
 
@@ -506,6 +558,8 @@ async function questionTimeout(chatId, expectedIdx, pollId, telegram) {
         question: qData.question,
         correct_ans: qData.correct_text || qData.options[qData.correct_index],
         wrong_ans: "⏳ Vaqt tugadi",
+        options: qData.options, // <--- SHU QATOR QO'SHILADI
+        correct_index: qData.correct_index,
       });
 
       if (
