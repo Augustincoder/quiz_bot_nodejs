@@ -16,14 +16,14 @@ async function cmdStart(ctx) {
   if (ctx.chat.type !== 'private') {
     const botInfo = await ctx.telegram.getMe();
     const args = (ctx.message.text || '').split(' ');
-    
+
     // Agar deeplink orqali guruhga qo'shilsa (startgroup=t_123)
-// Agar deeplink orqali guruhga qo'shilsa (startgroup=t_123)
+    // Agar deeplink orqali guruhga qo'shilsa (startgroup=t_123)
     if (args.length > 1) {
       // Ba'zan argument t_123@bot_nomi bo'lib kelishi mumkin, tozalab olamiz:
-      const param = args[1].split('@')[0]; 
+      const param = args[1].split('@')[0];
       const { createLobby } = require('./groupQuizLogic');
-      return createLobby(ctx, param); 
+      return createLobby(ctx, param);
     }
 
     // Oddiy /start bosilsa
@@ -139,7 +139,11 @@ async function cmdStop(ctx) {
     if (cbStopTest) {
       return cbStopTest(ctx);
     } else {
-      await ctx.reply('🛑 <b>Test to\'xtatildi.</b> Natijalar hisoblanmoqda...', { parse_mode: 'HTML' });
+      // 🛑 UX Flow: Marafonni majburiy to'xtatish bayrog'ini yoqamiz
+      session.forceStopped = true;
+      await sessionServiceLocal.setActiveTest(chatId, session);
+
+      await ctx.reply('🛑 <b>Test majburiy to\'xtatildi!</b> Yakuniy reyting hisoblanmoqda...', { parse_mode: 'HTML' });
       return finishTest(chatId, ctx.telegram);
     }
   }

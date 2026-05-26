@@ -16,40 +16,26 @@ const {
 const redisConnection = require("../services/redisService");
 const { pendingShelfSaves } = require("../core/pendingStore");
 
-// ─── TTL-Wrapped In-Memory Caches (Prevent memory leaks) ────
-// Each entry stores { data, ts }. A cleanup interval purges stale entries.
-const groupTestCache = new Map();
-const activePollsCache = new Map();
 
-const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const CACHE_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+// ─── REDIS-BACKED ACTIVE POLLS VA GROUP CACHE ─────────────────────────────
+// Endi server o'chib yonsa ham hech bir guruh reytingi yo'qolmaydi!
+const activePollsCache = {
+  set: async (pollId, data) => await redisConnection.set(`poll_cache:${pollId}`, JSON.stringify(data), "EX", 600), // 10 daqiqa yashaydi
+  get: async (pollId) => {
+    const d = await redisConnection.get(`poll_cache:${pollId}`);
+    return d ? JSON.parse(d) : null;
+  },
+  delete: async (pollId) => await redisConnection.del(`poll_cache:${pollId}`)
+};
 
-function setCacheEntry(cache, key, data) {
-  cache.set(key, { data, ts: Date.now() });
-}
-
-function getCacheEntry(cache, key) {
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.ts > CACHE_TTL_MS) {
-    cache.delete(key);
-    return null;
-  }
-  return entry.data;
-}
-
-// Periodic cleanup of stale entries
-const cleanupTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [k, v] of groupTestCache) {
-    if (now - v.ts > CACHE_TTL_MS) groupTestCache.delete(k);
-  }
-  for (const [k, v] of activePollsCache) {
-    if (now - v.ts > CACHE_TTL_MS) activePollsCache.delete(k);
-  }
-}, CACHE_CLEANUP_INTERVAL_MS);
-cleanupTimer.unref(); // Don't prevent Node.js from exiting
-
+const groupTestCache = {
+  set: async (chatId, data) => await redisConnection.set(`group_cache:${chatId}`, JSON.stringify(data), "EX", 3600), // 1 soat yashaydi
+  get: async (chatId) => {
+    const d = await redisConnection.get(`group_cache:${chatId}`);
+    return d ? JSON.parse(d) : null;
+  },
+  delete: async (chatId) => await redisConnection.del(`group_cache:${chatId}`)
+};
 // ─── Redis-backed Mistakes Cache ─────────────────────────────
 const lastMistakesCache = {
   set: async (chatId, mistakes) => {
@@ -107,7 +93,17 @@ function buildFinishButtons(tId, subjectKey, mistakesCount = 0) {
     btns.push([
       Markup.button.callback("🎯 Yana adaptiv", `adaptive_${subjectKey}`),
     ]);
-  } else {
+  } else if (sid.startsWith("retry_")) {
+    const originalId = parseInt(sid.replace("retry_", ""), 10);
+    if (!isNaN(originalId)) {
+      const memDb = require("../core/bot").memoryDb || {};
+      if ((memDb[subjectKey] || {})[originalId + 1]) {
+        btns.push([
+          Markup.button.callback(`➡️ Keyingi (${originalId + 1}-Blok)`, `post_start_${subjectKey}_${originalId + 1}`)
+        ]);
+      }
+    }
+  }  else {
     btns.push([
       Markup.button.callback(
         "🔁 Qayta ishlash",
@@ -162,7 +158,6 @@ async function sendNextQuestion(chatId, telegram) {
       pollQ = qFull;
       pollOpts = q.options;
     }
-
     let msg;
     try {
       msg = await telegram.sendPoll(chatId, pollQ, pollOpts, {
@@ -173,7 +168,28 @@ async function sendNextQuestion(chatId, telegram) {
       });
     } catch (e) {
       console.error(`sendPoll error [${chatId}]:`, e.message);
-      return;
+
+      // 🛑 UX Flow: Foydalanuvchiga xabar beramiz va keyingi savolga majburan o'tkazamiz
+      await telegram.sendMessage(
+        chatId,
+        `⚠️ <b>Texnik xatolik:</b> Bu savolni Telegram qabul qilmadi (variantlar uzun bo'lishi mumkin). Savol o'tkazib yuborildi.`,
+        { parse_mode: "HTML" }
+      ).catch(() => { });
+
+      // O'tkazib yuborilgan savolni xato (wrong) deb belgilaymiz
+      session.wrong++;
+      session.mistakes.push({
+        question: String(q.question || "Noma'lum savol").substring(0, 100),
+        correct_ans: q.options[q.correct_index] || "Noma'lum",
+        wrong_ans: "⚠️ Savol yuklanmadi",
+        options: q.options,
+        correct_index: q.correct_index,
+      });
+      session.qIdx++;
+      await sessionService.setActiveTest(chatId, session);
+
+      // Zanjir (recursion) orqali keyingi savolni yuklash
+      return sendNextQuestion(chatId, telegram);
     }
     session.pollId = msg.poll.id;
     session.msgId = msg.message_id;
@@ -184,10 +200,9 @@ async function sendNextQuestion(chatId, telegram) {
         correct_index: q.correct_index,
         qData: q,
       });
-      if (!getCacheEntry(groupTestCache, chatId)) {
-        setCacheEntry(groupTestCache, chatId, {
-          scores: session.groupScores || {},
-        });
+      await activePollsCache.set(msg.poll.id, { chatId, correct_index: q.correct_index, qData: q });
+      if (!(await groupTestCache.get(chatId))) {
+        await groupTestCache.set(chatId, { scores: session.groupScores || {} });
       }
     }
 
@@ -214,13 +229,13 @@ async function finishTest(chatId, telegram) {
   const session = await sessionService.getActiveTest(chatId);
   if (!session || session.finished) return;
   session.finished = true;
-  activePollsCache.delete(session.pollId);
 
+  await activePollsCache.delete(session.pollId);
   if (session.chatType !== "private") {
-    const groupEntry = getCacheEntry(groupTestCache, chatId);
+    const groupEntry = await groupTestCache.get(chatId);
     if (groupEntry) {
       session.groupScores = groupEntry.scores;
-      groupTestCache.delete(chatId);
+      await groupTestCache.delete(chatId);
     }
   }
   const tId = session.testId;
@@ -237,7 +252,15 @@ async function finishTest(chatId, telegram) {
   try {
     if (session.chatType === "private") {
       // ─── SHAXSIY TEST YAKUNI ───
-      await lastMistakesCache.set(chatId, [...session.mistakes]);
+      // UX FLOW: Xatolar qaysi blokdan ekanligi va oldingi natijani xotiraga yozamiz
+      const redisConnection = require("../services/redisService");
+      await redisConnection.set(`mistakes_meta:${chatId}`, JSON.stringify({
+        subjectKey: session.subjectKey,
+        testId: tId,
+        blockName: tName,
+        correct: session.correct,
+        wrong: session.wrong
+      }), "EX", 3600).catch(() => { });
 
       dbService
         .updateUserStats(
@@ -290,7 +313,6 @@ async function finishTest(chatId, telegram) {
         `⏱ Vaqt: <b>${time}</b>` +
         funFeedback;
 
-      // Eski RAM qatorini (pendingShelfSaves.set...) o'chirib, shuni qo'ying:
       const shelfData = {
         testId: tId,
         testName: tName,
@@ -312,15 +334,6 @@ async function finishTest(chatId, telegram) {
       const mistakesCount = (session.mistakes || []).length;
       buttons = buildFinishButtons(tId, session.subjectKey, mistakesCount);
     } else {
-      // ─── GURUH TESTLARI (MARAFON VA REYTING) ───
-      const { getCacheEntry, groupTestCache } = require("./coreQuiz") || {};
-      const localGetCacheEntry =
-        getCacheEntry ||
-        function (cache, key) {
-          const e = cache.get(key);
-          return e ? e.data : null;
-        };
-
       const groupEntry = localGetCacheEntry(groupTestCache, chatId);
       if (groupEntry) {
         session.groupScores = groupEntry.scores;
@@ -346,7 +359,7 @@ async function finishTest(chatId, telegram) {
       // Qaysi reytingni ko'rsatishni aniqlaymiz (Oraliq yoki Yakuniy)
       const scoresToUse =
         session.isMarathon &&
-        session.currentBlockIdx >= session.marathonBlocks.length - 1
+          session.currentBlockIdx >= session.marathonBlocks.length - 1
           ? session.marathonGlobalScores
           : session.isMarathon
             ? session.groupScores
@@ -357,18 +370,19 @@ async function finishTest(chatId, telegram) {
 
       const body = entries.length
         ? entries
-            .sort((a, b) => b.correct - a.correct)
-            .map(
-              (s, i) =>
-                `${medals[i] ?? "🔸"} <b>${s.name}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`,
-            )
-            .join("\n")
+          .sort((a, b) => b.correct - a.correct)
+          .map(
+            (s, i) =>
+              `${medals[i] ?? "🔸"} <b>${s.name}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`,
+          )
+          .join("\n")
         : "😔 Hech kim javob bermadi.";
 
       // MARAFON: Agar hali bloklar qolgan bo'lsa
       if (
         session.isMarathon &&
-        session.currentBlockIdx < session.marathonBlocks.length - 1
+        session.currentBlockIdx < session.marathonBlocks.length - 1 &&
+        !session.forceStopped
       ) {
         session.currentBlockIdx++;
         const nextBlock = session.marathonBlocks[session.currentBlockIdx];
@@ -412,11 +426,11 @@ async function finishTest(chatId, telegram) {
           ).sort((a, b) => b.correct - a.correct);
           const globalBody = globalEntries.length
             ? globalEntries
-                .map(
-                  (s, i) =>
-                    `${medals[i] ?? "🔸"} <b>${s.name}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`,
-                )
-                .join("\n")
+              .map(
+                (s, i) =>
+                  `${medals[i] ?? "🔸"} <b>${s.name}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`,
+              )
+              .join("\n")
             : "😔 Hech kim javob bermadi.";
 
           text = `🏆 <b>MARAFON YAKUNLANDI!</b>\n\n📚 Fan: <b>${subjName}</b>\nJami: <b>${session.marathonBlocks.length} ta blok</b> o'ynaldi\n⏱ Umumiy vaqt: <b>${time}</b>\n\n👑 <b>YAKUNIY CHEMPIONLAR REYTINGI:</b>\n${globalBody}`;
@@ -443,15 +457,15 @@ async function finishTest(chatId, telegram) {
     console.error(`finishTest send error [${chatId}]:`, e.message);
   } finally {
     if (session.pollId)
-      await sessionService.deletePollChat(session.pollId).catch(() => {});
-    await sessionService.deleteActiveTest(chatId).catch(() => {});
+      await sessionService.deletePollChat(session.pollId).catch(() => { });
+    await sessionService.deleteActiveTest(chatId).catch(() => { });
   }
 }
 
 async function handlePollAnswer(pollAnswer, telegram) {
   const pollId = pollAnswer.poll_id;
 
-  const cachedPoll = getCacheEntry(activePollsCache, pollId);
+  const cachedPoll = await activePollsCache.get(pollId);
   if (cachedPoll) {
     const { chatId, correct_index, qData } = cachedPoll;
     const isCorrect = pollAnswer.option_ids[0] === correct_index;
@@ -463,10 +477,9 @@ async function handlePollAnswer(pollAnswer, telegram) {
         .join(" ") || "Talaba";
     userNameCache.set(uId, uName);
 
-    let groupEntry = getCacheEntry(groupTestCache, chatId);
+    let groupEntry = await groupTestCache.get(chatId);
     if (!groupEntry) {
       groupEntry = { scores: {} };
-      setCacheEntry(groupTestCache, chatId, groupEntry);
     }
 
     if (!groupEntry.scores[uId]) {
@@ -491,6 +504,7 @@ async function handlePollAnswer(pollAnswer, telegram) {
         correct_index: qData.correct_index,
       });
     }
+    await groupTestCache.set(chatId, groupEntry);
     return;
   }
 
@@ -547,7 +561,8 @@ async function questionTimeout(chatId, expectedIdx, pollId, telegram) {
     const session = await sessionService.getActiveTest(chatId);
     if (!session || session.qIdx !== expectedIdx || session.pollId !== pollId)
       return;
-
+    // 🛑 Taymer ishlaganda test pauzada bo'lsa, jarayonni e'tiborsiz qoldiramiz (Ignore)
+    if (session.status === "paused") return;
     try {
       await telegram.stopPoll(chatId, session.msgId);
     } catch {
@@ -577,14 +592,14 @@ async function questionTimeout(chatId, expectedIdx, pollId, telegram) {
         await telegram.sendMessage(
           chatId,
           `⏸ <b>Ouu, qayerdasiz?</b> ☕️\n\n` +
-            `Ketma-ket 2 ta savol o'tib ketdi. Qahva ichgani ketdingizmi?\n\n` +
-            `Xavotir olmang, test avtomatik pauza qilindi. Qachon tayyor bo'lsangiz, davom etamiz!\n\n` +
-            `━━━━━━━━━━━━━━━━\n` +
-            `📊 <b>Joriy natija:</b>\n` +
-            `✅ To'g'ri: <b>${session.correct} ta</b>\n` +
-            `❌ Xato:    <b>${session.wrong} ta</b>\n` +
-            `📌 Qolgan:  <b>${remaining} ta savol</b>\n` +
-            `━━━━━━━━━━━━━━━━`,
+          `Ketma-ket 2 ta savol o'tib ketdi. Qahva ichgani ketdingizmi?\n\n` +
+          `Xavotir olmang, test avtomatik pauza qilindi. Qachon tayyor bo'lsangiz, davom etamiz!\n\n` +
+          `━━━━━━━━━━━━━━━━\n` +
+          `📊 <b>Joriy natija:</b>\n` +
+          `✅ To'g'ri: <b>${session.correct} ta</b>\n` +
+          `❌ Xato:    <b>${session.wrong} ta</b>\n` +
+          `📌 Qolgan:  <b>${remaining} ta savol</b>\n` +
+          `━━━━━━━━━━━━━━━━`,
           {
             parse_mode: "HTML",
             ...Markup.inlineKeyboard([
@@ -611,8 +626,6 @@ module.exports = {
   questionTimeout,
   lastMistakesCache,
   resolveTestName,
-  getCacheEntry,
-  setCacheEntry,
   groupTestCache,
   activePollsCache,
   buildFinishButtons,
