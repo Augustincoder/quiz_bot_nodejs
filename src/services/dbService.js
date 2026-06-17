@@ -52,7 +52,7 @@ async function getUserStats(userId) {
     }
     return { user_id: uid, tests_completed: 0, total_correct: 0, total_wrong: 0, history: [] };
   } catch {
-    return { tests_completed: 0, total_correct: 0, total_wrong: 0, history: [] };
+    return { user_id: uid, tests_completed: 0, total_correct: 0, total_wrong: 0, history: [] };
   }
 }
 
@@ -227,7 +227,8 @@ async function saveTestToShelf(userId, folderName, testInfo) {
         });
 
         // Supabase ga yangilash
-        const { error } = await supabase.from('user_stats').update({ shelf }).eq('user_id', String(userId));
+        stats.shelf = shelf;
+        const { error } = await supabase.from('user_stats').upsert(stats);
         if (error) throw error;
         
         return 'saved';

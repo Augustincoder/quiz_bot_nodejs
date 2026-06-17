@@ -195,12 +195,11 @@ async function sendNextQuestion(chatId, telegram) {
     session.msgId = msg.message_id;
 
     if (session.chatType !== "private") {
-      setCacheEntry(activePollsCache, msg.poll.id, {
+      await activePollsCache.set(msg.poll.id, {
         chatId: chatId,
         correct_index: q.correct_index,
         qData: q,
       });
-      await activePollsCache.set(msg.poll.id, { chatId, correct_index: q.correct_index, qData: q });
       if (!(await groupTestCache.get(chatId))) {
         await groupTestCache.set(chatId, { scores: session.groupScores || {} });
       }
@@ -334,10 +333,10 @@ async function finishTest(chatId, telegram) {
       const mistakesCount = (session.mistakes || []).length;
       buttons = buildFinishButtons(tId, session.subjectKey, mistakesCount);
     } else {
-      const groupEntry = localGetCacheEntry(groupTestCache, chatId);
+      const groupEntry = await groupTestCache.get(chatId);
       if (groupEntry) {
         session.groupScores = groupEntry.scores;
-        groupTestCache.delete(chatId);
+        await groupTestCache.delete(chatId);
       }
 
       // Marafon bo'lsa, oraliq natijalarni global reytingga qo'shamiz

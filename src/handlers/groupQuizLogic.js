@@ -154,7 +154,8 @@ async function cbRoomStart(ctx) {
     let blockName = '';
 
     const { prepareShuffledQuestions } = require('../core/questionUtils');
-    const dbService = require('../services/dbService'); // Bazadan izlash uchun
+    const dbService = require('../services/dbService');
+    const { memoryDb: memDb } = require('../core/bot');
 
   if (room.mode === 'marathon') {
       const subjectKey = room.testData.subject;
