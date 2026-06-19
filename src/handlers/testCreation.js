@@ -482,6 +482,24 @@ async function cbFmt(ctx) {
     );
   }
 }
+// Yangi format menyusini yuborish
+async function sendFormatSelection(ctx) {
+  const text = `📝 *Yangi savol formatini tanlang:*\n\n⬇️ Qaysi usulda savol qo'shmoqchisiz?`;
+  const kb = Markup.inlineKeyboard([
+    [Markup.button.callback("🤖 AI Smart Quiz (Avtomatik)", "fmt_ai")],
+    [Markup.button.callback("📊 Telegram Quiz", "fmt_quiz")],
+    [Markup.button.callback("📝 Matn ko'rinishida", "fmt_text")],
+    [Markup.button.callback("📄 Word fayl (.docx)", "fmt_docx")],
+    [Markup.button.callback("🔙 Tahrirlash paneliga", "back_to_edit_dash")],
+  ]);
+  
+  if (ctx.callbackQuery) {
+    await safeEdit(ctx, text, kb);
+  } else {
+    await ctx.reply(text, { parse_mode: "Markdown", ...kb });
+  }
+}
+
 // Ortga qaytish tugmasi ushlagichi (handler)
 async function cbBackToFormats(ctx) {
   await ctx.answerCbQuery().catch(() => {});

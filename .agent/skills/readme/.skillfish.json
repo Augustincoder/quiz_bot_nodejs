@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "readme",
+  "owner": "sickn33",
+  "repo": "antigravity-awesome-skills",
+  "path": "plugins/antigravity-awesome-skills-claude/skills/readme",
+  "branch": "main",
+  "sha": "82c1d6bbcde2abec00453ad561e0383ccde96915",
+  "source": "manual"
+}

@@ -107,6 +107,10 @@ async function createLobby(ctx, param) {
 // 2. Qatnashish tugmasi bosilganda
 async function cbRoomReady(ctx) {
   const chatId = ctx.chat.id;
+  const { mutex } = require('../core/bot'); // Try to get mutex if exported, otherwise require
+  const localMutex = require('../core/mutex');
+  
+  const unlock = await localMutex.lock(`room_ready:${chatId}`);
   try {
     const room = await sessionService.getWaitingRoom(chatId);
     if (!room) return ctx.answerCbQuery('Kutish zali yopilgan!', { show_alert: true }).catch(() => {});
@@ -124,6 +128,8 @@ async function cbRoomReady(ctx) {
     await ctx.answerCbQuery("Ro'yxatga qo'shildingiz!").catch(() => {});
   } catch (e) {
     console.error('cbRoomReady error:', e.message);
+  } finally {
+    unlock();
   }
 }
 

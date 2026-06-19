@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { URLSearchParams } = require("url");
 const { BOT_TOKEN } = require("../config/config");
 
 function validateTelegramInitData(initData) {

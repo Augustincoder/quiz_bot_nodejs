@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "performance-optimizer",
+  "owner": "sickn33",
+  "repo": "antigravity-awesome-skills",
+  "path": "plugins/antigravity-awesome-skills-claude/skills/performance-optimizer",
+  "branch": "main",
+  "sha": "482d6796face4b06bb84c990cb32987c1a792d57",
+  "source": "manual"
+}

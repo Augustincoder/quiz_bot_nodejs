@@ -1,40 +1,26 @@
+'use strict';
+
 /**
  * RoomManager - Manages live game states.
- * Fully async signatures for seamless Redis scaling in the future.
+ * Simplified for Kahoot-only mode.
  */
 class RoomManager {
   constructor() {
     this.rooms = new Map();
   }
 
-  async createRoom(roomCode, hostId, mode) {
+  async createRoom(roomCode, hostId) {
     const room = {
       roomCode,
-      mode,
+      mode: 'kahoot',
       hostId,
-      status: 'lobby', // lobby, reading, action, input, result, leaderboard, ended
-      
-      // Phase 2: Questions loaded from Supabase via room:start
+      status: 'lobby',
       questions: [],
       currentIndex: 0,
-      
-      // Player registry: Map<userId, { userId, displayName, socketId, score, mmr }>
       players: new Map(),
-
-      // Active timers
       readTimer: null,
       actionTimer: null,
       cooldownTimer: null,
-      
-      // Brain-Ring / Erudit
-      buzzerLockedBy: null,
-      strikesThisQuestion: 0,
-      usedBuzzerThisQuestion: new Set(),
-      
-      // Zakovat Rush Module
-      rushSubmissions: new Map(), // Map<userId, { answer, receivedTs }>
-      
-      // Kahoot
       kahootAnswers: new Map(),
       leaderboardAcks: new Set(),
     };
@@ -51,17 +37,14 @@ class RoomManager {
     const room = await this.getRoom(roomCode);
     if (!room) throw new Error("Room not found");
     
-    // Check if player already exists to avoid resetting score
     if (!room.players.has(userId)) {
       room.players.set(userId, { 
         userId, 
         displayName, 
         socketId, 
-        score: 0, 
-        mmr: 1000 
+        score: 0
       });
     } else {
-      // Update socketId/displayName in case of reconnection
       const player = room.players.get(userId);
       player.socketId = socketId;
       player.displayName = displayName;
@@ -93,5 +76,4 @@ class RoomManager {
   }
 }
 
-// Singleton export
 module.exports = new RoomManager();

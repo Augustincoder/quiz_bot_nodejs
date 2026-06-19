@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "design-spells",
+  "owner": "sickn33",
+  "repo": "antigravity-awesome-skills",
+  "path": "plugins/antigravity-awesome-skills-claude/skills/design-spells",
+  "branch": "main",
+  "sha": "e2caa942cc4f37273eadcb82f25c3731a70487c6",
+  "source": "manual"
+}

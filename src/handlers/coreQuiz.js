@@ -225,9 +225,16 @@ async function sendNextQuestion(chatId, telegram) {
 
 // ─── TESTNI YAKUNLASH VA NATIJALARNI HISOBLASH ─────────────────
 async function finishTest(chatId, telegram) {
-  const session = await sessionService.getActiveTest(chatId);
-  if (!session || session.finished) return;
-  session.finished = true;
+  const unlock = await mutex.lock(`finish:${chatId}`);
+  let session;
+  try {
+    session = await sessionService.getActiveTest(chatId);
+    if (!session || session.finished) return;
+    session.finished = true;
+    await sessionService.setActiveTest(chatId, session);
+  } finally {
+    unlock();
+  }
 
   await activePollsCache.delete(session.pollId);
   if (session.chatType !== "private") {
@@ -467,43 +474,49 @@ async function handlePollAnswer(pollAnswer, telegram) {
   const cachedPoll = await activePollsCache.get(pollId);
   if (cachedPoll) {
     const { chatId, correct_index, qData } = cachedPoll;
-    const isCorrect = pollAnswer.option_ids[0] === correct_index;
+    
+    const unlockGroup = await mutex.lock(`group_poll:${chatId}`);
+    try {
+      const isCorrect = pollAnswer.option_ids[0] === correct_index;
 
-    const uId = pollAnswer.user.id;
-    const uName =
-      [pollAnswer.user.first_name, pollAnswer.user.last_name]
-        .filter(Boolean)
-        .join(" ") || "Talaba";
-    userNameCache.set(uId, uName);
+      const uId = pollAnswer.user.id;
+      const uName =
+        [pollAnswer.user.first_name, pollAnswer.user.last_name]
+          .filter(Boolean)
+          .join(" ") || "Talaba";
+      userNameCache.set(uId, uName);
 
-    let groupEntry = await groupTestCache.get(chatId);
-    if (!groupEntry) {
-      groupEntry = { scores: {} };
+      let groupEntry = await groupTestCache.get(chatId);
+      if (!groupEntry) {
+        groupEntry = { scores: {} };
+      }
+
+      if (!groupEntry.scores[uId]) {
+        groupEntry.scores[uId] = {
+          name: uName,
+          correct: 0,
+          wrong: 0,
+          mistakes: [],
+        };
+      }
+
+      const sc = groupEntry.scores[uId];
+      if (isCorrect) {
+        sc.correct++;
+      } else {
+        sc.wrong++;
+        sc.mistakes.push({
+          question: qData.question,
+          correct_ans: qData.correct_text || qData.options[qData.correct_index],
+          wrong_ans: qData.options[pollAnswer.option_ids[0]],
+          options: qData.options,
+          correct_index: qData.correct_index,
+        });
+      }
+      await groupTestCache.set(chatId, groupEntry);
+    } finally {
+      unlockGroup();
     }
-
-    if (!groupEntry.scores[uId]) {
-      groupEntry.scores[uId] = {
-        name: uName,
-        correct: 0,
-        wrong: 0,
-        mistakes: [],
-      };
-    }
-
-    const sc = groupEntry.scores[uId];
-    if (isCorrect) {
-      sc.correct++;
-    } else {
-      sc.wrong++;
-      sc.mistakes.push({
-        question: qData.question,
-        correct_ans: qData.correct_text || qData.options[qData.correct_index],
-        wrong_ans: qData.options[pollAnswer.option_ids[0]],
-        options: qData.options, // <--- SHU QATOR QO'SHILADI
-        correct_index: qData.correct_index,
-      });
-    }
-    await groupTestCache.set(chatId, groupEntry);
     return;
   }
 
@@ -587,6 +600,7 @@ async function questionTimeout(chatId, expectedIdx, pollId, telegram) {
         session.qIdx < session.sessionQuestions.length
       ) {
         const remaining = session.sessionQuestions.length - session.qIdx;
+        session.status = "paused";
         await sessionService.setActiveTest(chatId, session);
         await telegram.sendMessage(
           chatId,

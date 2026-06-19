@@ -578,10 +578,18 @@ async function cbStopTest(ctx) {
 async function cbPauseResume(ctx) {
   await ctx.answerCbQuery("▶️ Test davom etmoqda...").catch(() => { });
   await safeDelete(ctx); // Pauza menyusini o'chiramiz
-  await ctx.reply(
-    "▶️ <b>Test davom etmoqda!</b>\n\n<i>Iltimos, yuqoridagi oxirgi faol savolga (so'rovnomaga) javob bering.</i>",
-    { parse_mode: "HTML" },
-  );
+  
+  const chatId = ctx.chat.id;
+  const sessionService = require("../services/sessionService");
+  const session = await sessionService.getActiveTest(chatId);
+  if (session) {
+    session.status = 'running';
+    session.consecutiveTimeouts = 0;
+    await sessionService.setActiveTest(chatId, session);
+  }
+  
+  const { sendNextQuestion } = require("./coreQuiz");
+  await sendNextQuestion(chatId, ctx.telegram);
 }
 
 // ─── 3. SHU YERDA YAKUNLASH VA NATIJANI KO'RISH (Finish) ─────────────
@@ -1068,6 +1076,7 @@ async function cbAiExplainMistakes(ctx) {
       10,
     );
   }
+  const chatId = ctx.from?.id || ctx.chat?.id;
   const mistakes = (await lastMistakesCache.get(chatId)) || [];
   if (!mistakes || mistakes.length === 0) {
     return ctx.answerCbQuery("⚠️ Xatoliklar topilmadi yoki vaqti tugagan!", { show_alert: true }).catch(() => { });
@@ -1229,6 +1238,27 @@ async function cbForceFinish(ctx) {
     }
   );
 }
+
+// ─── RESUME TEST ─────────────────────────────────────────────
+async function cbResumeTest(ctx) {
+  await ctx.answerCbQuery("Davom etamiz...").catch(() => {});
+  const chatId = ctx.from?.id || ctx.chat?.id;
+  try {
+    await ctx.deleteMessage().catch(() => {});
+  } catch (e) {}
+  
+  const sessionService = require("../services/sessionService");
+  const session = await sessionService.getActiveTest(chatId);
+  if (session) {
+    session.status = 'running';
+    session.consecutiveTimeouts = 0;
+    await sessionService.setActiveTest(chatId, session);
+  }
+  
+  const { sendNextQuestion } = require("./coreQuiz");
+  await sendNextQuestion(chatId, ctx.telegram);
+}
+
 // ─── REGISTER ────────────────────────────────────────────────
 function register(bot) {
   bot.action("official_tests", cbOfficialTests);

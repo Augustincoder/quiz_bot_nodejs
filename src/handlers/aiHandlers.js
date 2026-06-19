@@ -52,12 +52,12 @@ function checkGlobalLimit() {
 
     // Yangi kun boshlansa, reset qilamiz
     if (dailyUsage.date !== today) {
-        dailyUsage = { count: 0, date: today, maxDaily: maxDaily };
+        dailyUsage = { count: 0, date: today, maxDaily: dailyUsage.maxDaily };
     }
 
     // Yangi oy boshlansa, reset
     if (monthlyUsage.month !== currentMonth || monthlyUsage.year !== currentYear) {
-        monthlyUsage = { count: 0, month: currentMonth, year: currentYear, maxMonthly: maxMonthly };
+        monthlyUsage = { count: 0, month: currentMonth, year: currentYear, maxMonthly: monthlyUsage.maxMonthly };
     }
 
     // Limitni tekshirish

@@ -48,6 +48,7 @@ async function cmdStart(ctx) {
   logger.info('user:start', { userId: ctx.from.id, name: fullName });
 
   let cleared = false;
+  let savedToShelf = false;
   const room = await sessionService.getWaitingRoom(chatId);
   if (room) {
     await sessionService.deleteWaitingRoom(chatId);
@@ -56,10 +57,29 @@ async function cmdStart(ctx) {
   const session = await sessionService.getActiveTest(chatId);
   if (session) {
     if (session.pollId) await sessionService.deletePollChat(session.pollId);
+    
+    // Testni o'chirish o'rniga javonga saqlaymiz
+    if (session.sessionQuestions && session.sessionQuestions.length > 0 && session.qIdx < session.sessionQuestions.length) {
+      const folderName = session.subjectKey || "Boshqalar";
+      await dbService.saveTestToShelf(ctx.from.id, folderName, {
+        testId: session.testId || Date.now(),
+        testName: session.testData?.block_name || "Tugallanmagan test",
+        subject: session.subjectKey || "Noma'lum",
+        questions: session.sessionQuestions,
+        progress: session.qIdx
+      });
+      savedToShelf = true;
+    }
+    
     await sessionService.deleteActiveTest(chatId);
     cleared = true;
   }
-  if (cleared) await ctx.reply('🔄 Oldingi tugallanmagan sessiya tozalandi. Yangi testga tayyorsiz!');
+  
+  if (savedToShelf) {
+    await ctx.reply('📥 Sizda avvalgi tugallanmagan test bor edi. U xavfsizlik uchun "Javon"ingizga saqlab qo\'yildi! Istalgan vaqt davom ettirishingiz mumkin.');
+  } else if (cleared) {
+    await ctx.reply('🔄 Oldingi tugallanmagan sessiya tozalandi. Yangi testga tayyorsiz!');
+  }
 
   // LINK ORQALI KIRGANDA (Deep Linking - Shaxsiy chat uchun)
   const args = (ctx.message.text || '').split(' ');
@@ -163,7 +183,7 @@ async function cmdBackToMainReply(ctx) {
 
 function register(bot) {
   bot.start(cmdStart);
-  bot.command('stop', cmdStop);
+  bot.command(['stop', 'cancel'], cmdStop);
   bot.command('menu', cmdMenu);
   bot.hears('🔙 Asosiy menyu', cmdBackToMainReply);
   bot.action('back_to_main', cbBackToMain);

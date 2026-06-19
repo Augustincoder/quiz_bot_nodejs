@@ -60,7 +60,7 @@ function checkAIServiceLimit(functionName) {
         aiServiceUsage.daily = {
             count: 0,
             date: today,
-            maxDaily: 1000
+            maxDaily: aiServiceUsage.daily.maxDaily // 500 o'rniga o'zgarib qolmasligi uchun
         };
         // Har bir funksiya counterini ham reset qilamiz
         Object.keys(aiServiceUsage.byFunction).forEach(key => {
@@ -74,7 +74,7 @@ function checkAIServiceLimit(functionName) {
             count: 0,
             month: currentMonth,
             year: currentYear,
-            maxMonthly: 20000
+            maxMonthly: aiServiceUsage.monthly.maxMonthly
         };
     }
 
@@ -183,6 +183,27 @@ function getCountInstruction(count) {
         : `Aynan ${count} ta`;
 }
 
+// AI matnini Telegram HTML parse_mode ga moslab tozalash
+function sanitizeTelegramHtml(text) {
+    if (!text) return text;
+    // Barcha xavfli belgilarni escape qilamiz
+    let sanitized = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    
+    // Ruxsat etilgan teglarni tiklaymiz
+    const tags = ['b', 'i', 'strong', 'em', 'code', 's', 'strike', 'del', 'u', 'pre'];
+    tags.forEach(tag => {
+        const regexOpen = new RegExp(`&lt;${tag}&gt;`, 'gi');
+        const regexClose = new RegExp(`&lt;\\/${tag}&gt;`, 'gi');
+        sanitized = sanitized.replace(regexOpen, `<${tag}>`).replace(regexClose, `</${tag}>`);
+    });
+    
+    // Markdown yulduzchalarni HTML ga o'giramiz
+    sanitized = sanitized.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+    sanitized = sanitized.replace(/\*/g, ''); // Eski kod mantiqini saqlash uchun
+    
+    return sanitized;
+}
+
 // ============================================
 // 🤖 AI SERVICE FUNCTIONS (with rate limiting)
 // ============================================
@@ -219,7 +240,7 @@ async function explainMistakesBatch(mistakes) {
         // ✅ Muvaffaqiyatli - usageni oshiramiz
         incrementAIUsage('explainMistakes', true);
         
-        return result.response.text().replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\*/g, '');
+        return sanitizeTelegramHtml(result.response.text());
     } catch (error) {
         logger.error('ai:explainMistakes_error', { error: error.message });
         incrementAIUsage('explainMistakes', false);
@@ -298,7 +319,7 @@ async function analyzeEssay(text) {
         
         incrementAIUsage('analyzeEssay', true);
         
-        return result.response.text().replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\*/g, '');
+        return sanitizeTelegramHtml(result.response.text());
     } catch (error) {
         logger.error('ai:analyzeEssay_error', { error: error.message });
         incrementAIUsage('analyzeEssay', false);
@@ -327,12 +348,18 @@ async function generateQuizFromImage(localFilePath, mimeType, count) {
         Javobing QAT'IY ravishda faqat quyidagi JSON formatida bo'lishi shart. Boshqa izoh yozma!
         Struktura: [{"question": "Savol matni?", "options": ["A", "B", "C", "D"], "correct_index": 0}]`;
         
-        const result = await model.generateContent([
-            { fileData: { mimeType: uploadResponse.file.mimeType, fileUri: uploadResponse.file.uri } },
-            { text: prompt }
-        ]);
-        
-        const questions = extractJSON(result.response.text());
+        let questions = null;
+        try {
+            const result = await model.generateContent([
+                { fileData: { mimeType: uploadResponse.file.mimeType, fileUri: uploadResponse.file.uri } },
+                { text: prompt }
+            ]);
+            
+            questions = extractJSON(result.response.text());
+        } finally {
+            // Memory/Storage leak ni oldini olish uchun faylni Google API'dan o'chiramiz
+            await fileManager.deleteFile(uploadResponse.file.name).catch(e => logger.error('ai:file_delete_error', { error: e.message }));
+        }
         
         incrementAIUsage('generateFromImage', questions !== null);
         logger.info('ai:generate', { type: 'image', count: questions?.length || 0 });
