@@ -801,9 +801,12 @@ async function onBroadcastMessage(ctx) {
     ctx.message?.photo ||
     ctx.message?.video ||
     ctx.message?.voice ||
-    ctx.message?.document
+    ctx.message?.document ||
+    ctx.message?.audio ||
+    ctx.message?.animation ||
+    ctx.message?.sticker
   );
-  const text = ctx.message?.text;
+  const text = ctx.message?.text || ctx.message?.caption;
 
   if (!text && !hasMedia) {
     return ctx.reply('⚠️ Iltimos, matn yoki media yuboring.');
@@ -847,6 +850,16 @@ async function cbBroadcastConfirm(ctx) {
     return ctx.answerCbQuery('⏳ Yuborish allaqachon boshlangan!', { show_alert: true });
   }
   await ctx.answerCbQuery('📤 Yuborilmoqda...').catch(() => {});
+
+  const data    = await getData(ctx);
+  const msgText = data.broadcast_text;
+  const hasMedia = data.broadcast_has_media;
+  const messageId = data.broadcast_message_id;
+
+  if (!msgText && !hasMedia) {
+    return ctx.reply('❌ Yuborish uchun xabar topilmadi. Qayta urinib ko\'ring.');
+  }
+
   clearState(ctx);
 
   const progress = await ctx.reply(
@@ -855,11 +868,6 @@ async function cbBroadcastConfirm(ctx) {
   );
 
   try {
-    const data    = await getData(ctx);
-    const msgText = data.broadcast_text;
-    const hasMedia = data.broadcast_has_media;
-    const messageId = data.broadcast_message_id;
-
     const users = await dbService.getAllUsers();
     if (!users?.length) {
       return ctx.telegram.editMessageText(
@@ -1522,7 +1530,7 @@ function register(bot) {
       if (state === States.ADMIN_SEARCH_USER && ctx.message?.text) {
         return onAdminSearchInput(ctx);
       }
-      if (state === States.ADMIN_BROADCAST && (ctx.message?.text || ctx.message?.photo || ctx.message?.video)) {
+      if (state === States.ADMIN_BROADCAST) {
         return onBroadcastMessage(ctx);
       }
       if (state === States.ADMIN_REPLY) {
