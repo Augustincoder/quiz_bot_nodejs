@@ -2,6 +2,7 @@
 require("dotenv").config();
 const { Telegraf } = require("telegraf");
 const express = require("express");
+const path = require("path");
 const http = require("http");
 const cors = require("cors");
 const Sentry = require("@sentry/node");
@@ -58,6 +59,11 @@ const handlers = {
   shelf: require("./src/handlers/shelfHandlers"),
   aiTests: require("./src/handlers/aiTestsHandlers"),
   contact: require("./src/handlers/contactAdmin"),
+  payment: require("./src/handlers/paymentHandler"),
+  session: require("./src/handlers/sessionHandler"),
+  flashcard: require("./src/handlers/flashcardHandler"),
+  pdf: require("./src/handlers/pdfHandler"),
+  webapp: require("./src/handlers/webappHandler"),
 };
 
 // ═══ MIDDLEWARE STACK ═════════════════════════════════════════
@@ -118,6 +124,8 @@ Object.values(handlers).forEach(h => h.register && h.register(bot));
 bot.command("start", (ctx) => handlers.start.cbStart(ctx));
 bot.command("profile", (ctx) => handlers.profile.cbProfile(ctx));
 bot.command("schedule", (ctx) => handlers.schedule.cbSchedule(ctx));
+bot.command("sessiya", (ctx) => handlers.session.cbSessiyaMenu(ctx));
+bot.command("flashcard", (ctx) => handlers.flashcard.cbFlashcardMenu(ctx));
 
 // ═══ GLOBAL TEXT STATE ROUTER ════════════════════════════════
 bot.on("message", async (ctx, next) => {
@@ -138,6 +146,8 @@ bot.on("message", async (ctx, next) => {
     [States.ADMIN_BROADCAST]: () => handlers.admin.onBroadcastMessage(ctx),
     [States.ADMIN_REPLY]: () => handlers.admin.onReplyMessage(ctx),
     [States.USER_CONTACT]: () => handlers.admin.onContactMessage(ctx),
+    [States.WAITING_PAYMENT_RECEIPT]: () => handlers.payment.handlePaymentReceipt(ctx),
+    [States.SESSION_EXAM_DATE]: () => handlers.session.onExamDateInput(ctx),
   };
 
   if (stateMap[state]) return stateMap[state]();
@@ -190,11 +200,29 @@ async function main() {
   const app = express();
   const server = http.createServer(app);
   const adminRouter = require("./src/api/admin");
+  const webappRouter = require("./src/api/webapp").router;
 
   app.use(cors());
   app.use(express.json({ limit: "50mb" }));
   app.use("/api/admin", adminRouter);
+  app.use("/api/webapp", webappRouter);
+  app.use("/app", express.static(path.join(__dirname, "webapp", "dist")));
+  app.use("/app", express.static(path.join(__dirname, "webapp")));
   app.get("/", (_, res) => res.send("Bot 100% aktiv va ishlab turibdi! 🚀"));
+  app.get("/health", async (_, res) => {
+    let redisStatus = "ok";
+    try {
+      await redisConnection.ping();
+    } catch {
+      redisStatus = "error";
+    }
+    res.json({
+      status: "ok",
+      version: "5.0.0",
+      timestamp: new Date().toISOString(),
+      services: { redis: redisStatus, bot: "running" },
+    });
+  });
 
   initSocket(server);
 

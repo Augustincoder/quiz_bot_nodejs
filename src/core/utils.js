@@ -62,6 +62,7 @@ const States = {
   AI_ESSAY_ANALYSIS:       'ai:essay_analysis',
   CREATE_AI_IMAGE:         'create:ai_image',
   CREATE_SHELF_FOLDER:     'create:shelf_folder',
+  SESSION_EXAM_DATE:       'session:exam_date',
   ADMIN_AI_TESTS_SUBJECT:   'admin:ai_tests_subject',
   ADMIN_AI_TESTS_TYPE:      'admin:ai_tests_type',
   ADMIN_AI_TESTS_TEXT:      'admin:ai_tests_text',
@@ -70,6 +71,7 @@ const States = {
   ADMIN_AI_TESTS_ADAPTIVE_USER: 'admin:ai_tests_adaptive_user',
   ADMIN_AI_TESTS_ADAPTIVE_COUNT: 'admin:ai_tests_adaptive_count',
   ADMIN_AI_TESTS_GENERATE:  'admin:ai_tests_generate',
+  WAITING_PAYMENT_RECEIPT:  'waiting_payment_receipt',
 };
 
 const STATE_LABELS = {
@@ -84,6 +86,7 @@ const STATE_LABELS = {
   [States.USER_CONTACT]:       'Adminga murojaat',
   [States.ADMIN_BROADCAST]:    'Admin: Broadcast',
   [States.ADMIN_REPLY]:        'Admin: Javob yozish',
+  [States.WAITING_PAYMENT_RECEIPT]: 'To\'lov chekini yuborish',
 };
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -207,6 +210,19 @@ const buildUserContext = (session) => {
   return parts.join('\n');
 };
 
+const safeWebAppButton = (text, url) => {
+  let cleanUrl = String(url || '').trim();
+  // Telegram Bot API rejects URLs with 'localhost' because it lacks a domain dot (.).
+  // Convert 'localhost' to '127.0.0.1' so Telegram Bot API accepts the local URL.
+  if (cleanUrl.includes('://localhost')) {
+    cleanUrl = cleanUrl.replace('://localhost', '://127.0.0.1');
+  }
+  if (cleanUrl.toLowerCase().startsWith('https://')) {
+    return Markup.button.webApp(text, cleanUrl);
+  }
+  return Markup.button.url(text, cleanUrl);
+};
+
 module.exports = {
   activeTests, waitingRooms, pollChatMap, userNameCache,
   leaderboardCache, LEADERBOARD_TTL, States, STATE_LABELS, TTLMap,
@@ -215,6 +231,6 @@ module.exports = {
   safeAnswerCb, safeEdit, safeDelete,
   getUserName, parseDocxQuestions, parseTextQuestions,
   escapeHtml, sanitizeForTelegram,
-  downloadFile, isAdmin, adminGuard, buildUserContext,
+  downloadFile, isAdmin, adminGuard, buildUserContext, safeWebAppButton,
 };
 

@@ -59,9 +59,9 @@ async function getUserStats(userId) {
 async function updateUserStats(userId, correct, wrong, subjectKey, testId, mistakes) {
   const uid = String(userId);
   const stats = await getUserStats(uid);
-  stats.tests_completed++;
-  stats.total_correct += correct;
-  stats.total_wrong += wrong;
+  stats.tests_completed = (stats.tests_completed || 0) + 1;
+  stats.total_correct = (stats.total_correct || 0) + correct;
+  stats.total_wrong = (stats.total_wrong || 0) + wrong;
 
   const entry = {
     date: new Date().toISOString().slice(0, 16).replace('T', ' '),
@@ -75,17 +75,38 @@ async function updateUserStats(userId, correct, wrong, subjectKey, testId, mista
   stats.history.unshift(entry);
   stats.history = stats.history.slice(0, 15);
 
-  try { await supabase.from('user_stats').upsert(stats); } 
-  catch (e) { console.error('Stats saqlashda xato:', e.message); }
+  try {
+    const { error } = await supabase
+      .from('user_stats')
+      .upsert(stats, { onConflict: 'user_id' });
+    if (error) throw error;
+  } catch (e) {
+    console.error('Stats saqlashda xato:', e.message);
+  }
 }
 
 async function getUserRank(userId) {
+  const uid = String(userId);
   try {
-    const { data } = await supabase.from('user_stats').select('user_id, total_correct').order('total_correct', { ascending: false });
-    if (!data) return 'N/A';
-    const idx = data.findIndex(r => r.user_id === String(userId));
-    return idx === -1 ? 'N/A' : idx + 1;
-  } catch { return 'N/A'; }
+    const { data: userRow, error: fetchErr } = await supabase
+      .from('user_stats')
+      .select('total_correct')
+      .eq('user_id', uid)
+      .single();
+
+    if (fetchErr || !userRow) return 'N/A';
+
+    const userScore = userRow.total_correct || 0;
+    const { count, error: countErr } = await supabase
+      .from('user_stats')
+      .select('user_id', { count: 'exact', head: true })
+      .gt('total_correct', userScore);
+
+    if (countErr) return 'N/A';
+    return (count || 0) + 1;
+  } catch {
+    return 'N/A';
+  }
 }
 
 async function registerUser(userId, fullName, username) {
@@ -261,9 +282,179 @@ async function isUserBanned(userId) {
   }
 }
 
+// ==========================================
+// USER MISTAKES (Faza 1 — Adaptive Quiz)
+// ==========================================
+async function saveUserMistake(userId, subject, question, correctAns, wrongAns, testId = null) {
+  try {
+    const { error } = await supabase.from('user_mistakes').insert({
+      user_id: String(userId),
+      subject: subject || 'Nomaʼlum',
+      question: String(question),
+      correct_ans: String(correctAns),
+      wrong_ans: String(wrongAns),
+      test_id: testId ? String(testId) : null,
+      created_at: new Date().toISOString()
+    });
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    console.error('user_mistakes saqlashda xato:', e.message);
+    return false;
+  }
+}
+
+async function saveUserMistakesBatch(userId, subject, testId, mistakesArray) {
+  if (!Array.isArray(mistakesArray) || mistakesArray.length === 0) return true;
+  try {
+    const rows = mistakesArray.map(m => ({
+      user_id: String(userId),
+      subject: subject || 'Nomaʼlum',
+      question: String(m.question || ''),
+      correct_ans: String(m.correct_ans || m.correct || ''),
+      wrong_ans: String(m.wrong_ans || m.wrong || ''),
+      test_id: testId ? String(testId) : null,
+      created_at: new Date().toISOString()
+    }));
+    const { error } = await supabase.from('user_mistakes').insert(rows);
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    console.error('saveUserMistakesBatch xatosi:', e.message);
+    return false;
+  }
+}
+
+async function getUserMistakes(userId, subject = null, limit = 50) {
+  try {
+    let query = supabase.from('user_mistakes').select('*').eq('user_id', String(userId)).order('created_at', { ascending: false }).limit(limit);
+    if (subject) {
+      query = query.eq('subject', subject);
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  } catch (e) {
+    console.error('getUserMistakes xatosi:', e.message);
+    return [];
+  }
+}
+
+async function clearUserMistakes(userId, subject = null) {
+  try {
+    let query = supabase.from('user_mistakes').delete().eq('user_id', String(userId));
+    if (subject) {
+      query = query.eq('subject', subject);
+    }
+    const { error } = await query;
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    console.error('clearUserMistakes xatosi:', e.message);
+    return false;
+  }
+}
+
+// ==========================================
+// PREMIUM FOYDALANUVCHILAR BILAN ISHLASH
+// ==========================================
+async function isUserPremium(userId) {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('is_premium, premium_until')
+      .eq('telegram_id', String(userId))
+      .single();
+    if (error || !data) return false;
+
+    if (data.is_premium === true) {
+      if (data.premium_until && new Date(data.premium_until) < new Date()) {
+        await supabase
+          .from('users')
+          .update({ is_premium: false })
+          .eq('telegram_id', String(userId));
+        return false;
+      }
+      return true;
+    }
+    return false;
+  } catch (e) {
+    console.error('isUserPremium xatosi:', e.message);
+    return false;
+  }
+}
+
+async function activatePremium(userId, durationDays = 30) {
+  try {
+    const now = new Date();
+    const premiumUntil = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000).toISOString();
+    const { error } = await supabase
+      .from('users')
+      .update({ is_premium: true, premium_until: premiumUntil })
+      .eq('telegram_id', String(userId));
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    console.error('activatePremium xatosi:', e.message);
+    return false;
+  }
+}
+
+// ==========================================
+// GAMIFIKATSIYA & KUNLIK STREAK (FAZA 5)
+// ==========================================
+async function getUserStreak(userId) {
+  const uid = String(userId);
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('streak_days, last_study_date')
+      .eq('telegram_id', uid)
+      .single();
+    if (error || !data) return { streak_days: 0, last_study_date: null };
+    return {
+      streak_days: data.streak_days || 0,
+      last_study_date: data.last_study_date || null,
+    };
+  } catch {
+    return { streak_days: 0, last_study_date: null };
+  }
+}
+
+async function updateStreak(userId) {
+  const uid = String(userId);
+  try {
+    const todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const { streak_days = 0, last_study_date } = await getUserStreak(uid);
+
+    if (last_study_date === todayStr) {
+      return { streak_days, updated: false }; // Bugun allaqachon hisoblangan
+    }
+
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+
+    const newStreak = last_study_date === yesterdayStr ? streak_days + 1 : 1;
+
+    await supabase
+      .from('users')
+      .update({ streak_days: newStreak, last_study_date: todayStr })
+      .eq('telegram_id', uid);
+
+    return { streak_days: newStreak, updated: true };
+  } catch (err) {
+    console.error('updateStreak xatosi:', err.message);
+    return { streak_days: 0, updated: false };
+  }
+}
+
 module.exports = {
   loadAllOfficialTests, saveOfficialTest, getUserStats, updateUserStats, getUserRank,
   registerUser, getAllUsers, getTopUsers, saveUserTest, getUserTest, getUserCreatedTests,
   deleteUserTest, updateUserClass, getUserClass, updateUserTestQuestions, getUserShelf, saveTestToShelf, updateUserShelf,
   banUser, isUserBanned,
+  saveUserMistake, saveUserMistakesBatch, getUserMistakes, clearUserMistakes,
+  isUserPremium, activatePremium,
+  getUserStreak, updateStreak,
 };

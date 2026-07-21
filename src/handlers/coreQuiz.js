@@ -56,6 +56,7 @@ const lastMistakesCache = {
 function resolveTestName(tId, blockName) {
   if (String(tId) === "mock") return "🎲 Aralash Test";
   if (String(tId) === "adaptive") return "🎯 AI Adaptiv Test";
+  if (String(tId) === "blind") return "👁 Yopiq Imtihon (Blind Exam)";
   if (String(tId).startsWith("ugc_")) return `📝 ${blockName || "Maxsus Test"}`;
   return `${tId}-Blok`;
 }
@@ -160,12 +161,18 @@ async function sendNextQuestion(chatId, telegram) {
     }
     let msg;
     try {
-      msg = await telegram.sendPoll(chatId, pollQ, pollOpts, {
-        type: "quiz",
-        correct_option_id: q.correct_index,
+      const isBlind = !!session.isBlindExam;
+      const pollType = isBlind ? "regular" : "quiz";
+      const openPeriod = isBlind ? 60 : 30;
+      const pollOptions = {
+        type: pollType,
         is_anonymous: false,
-        open_period: 30,
-      });
+        open_period: openPeriod,
+      };
+      if (!isBlind) {
+        pollOptions.correct_option_id = q.correct_index;
+      }
+      msg = await telegram.sendPoll(chatId, pollQ, pollOpts, pollOptions);
     } catch (e) {
       console.error(`sendPoll error [${chatId}]:`, e.message);
 
@@ -208,12 +215,13 @@ async function sendNextQuestion(chatId, telegram) {
     await sessionService.setActiveTest(chatId, session);
     await sessionService.setPollChat(msg.poll.id, String(chatId));
 
+    const timerDelay = session.isBlindExam ? 61_000 : 31_000;
     const { quizTimerQueue } = require("../jobs/queues");
     await quizTimerQueue.add(
       "timeout",
       { chatId, expectedIdx: session.qIdx, pollId: msg.poll.id },
       {
-        delay: 31_000,
+        delay: timerDelay,
         jobId: `timeout:${chatId}:${session.qIdx}`,
         removeOnComplete: true,
       },
@@ -245,7 +253,9 @@ async function finishTest(chatId, telegram) {
     }
   }
   const tId = session.testId;
-  const tName = resolveTestName(tId, session.blockName);
+  const tName = session.isBlindExam
+    ? "👁 Yopiq Imtihon (Blind Exam)"
+    : resolveTestName(tId, session.blockName);
   const subjName = SUBJECTS[session.subjectKey] || session.subjectKey;
   const elapsed = Math.floor((Date.now() - session.startTime) / 1000);
   const time = `${Math.floor(elapsed / 60)
@@ -268,16 +278,41 @@ async function finishTest(chatId, telegram) {
         wrong: session.wrong
       }), "EX", 3600).catch(() => { });
 
-      dbService
-        .updateUserStats(
+      // Resilient Stats & Mistakes Persistence (T4 Optimization)
+      try {
+        await dbService.updateUserStats(
           chatId,
           session.correct,
           session.wrong,
           session.subjectKey,
           tId,
           session.mistakes,
-        )
-        .catch((e) => console.error("Stats update error:", e.message));
+        );
+        await dbService.updateStreak(chatId);
+      } catch (err) {
+        logger.error("dbService.updateUserStats failed in finishTest", {
+          chatId,
+          testId: tId,
+          error: err.message,
+        });
+      }
+
+      if (Array.isArray(session.mistakes) && session.mistakes.length > 0) {
+        try {
+          await dbService.saveUserMistakesBatch(
+            chatId,
+            session.subjectKey,
+            tId,
+            session.mistakes,
+          );
+        } catch (err) {
+          logger.error("dbService.saveUserMistakesBatch failed in finishTest", {
+            chatId,
+            testId: tId,
+            error: err.message,
+          });
+        }
+      }
 
       const total = session.correct + session.wrong;
       const skipped = session.sessionQuestions.length - total;

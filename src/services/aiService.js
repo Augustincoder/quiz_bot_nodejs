@@ -6,7 +6,7 @@ const { GoogleAIFileManager } = require("@google/generative-ai/server");
 const logger                 = require('../core/logger');
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 const fileManager = new GoogleAIFileManager(GEMINI_API_KEY);
 
 // ============================================
@@ -282,6 +282,7 @@ async function generateQuizFromText(text, count) {
 async function generateOptionsForQuestions(questionsText) {
     const limitCheck = checkAIServiceLimit('generateQuiz'); // Bir xil kategoriya
     if (!limitCheck.allowed) {
+        logger.warn('ai:request_blocked', { function: 'generateOptionsForQuestions', reason: limitCheck.reason });
         return null;
     }
 
@@ -378,6 +379,7 @@ async function generateQuizFromImage(localFilePath, mimeType, count) {
 async function generateAdaptiveQuiz(subject, mistakes, count) {
     const limitCheck = checkAIServiceLimit('adaptiveQuiz');
     if (!limitCheck.allowed) {
+        logger.warn('ai:request_blocked', { function: 'adaptiveQuiz', reason: limitCheck.reason });
         return null;
     }
 

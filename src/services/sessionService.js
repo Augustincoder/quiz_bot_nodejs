@@ -5,11 +5,35 @@ const logger = require('../core/logger');
 // 1 kun (86400 soniya) saqlanadi
 const TTL = 86400; 
 
+// ─── Compact / Expand Session Helper (T1 Memory Optimization) ───
+function compactSessionData(data) {
+  if (!data || !Array.isArray(data.sessionQuestions)) return data;
+  const compact = { ...data };
+  compact.sessionQuestions = data.sessionQuestions.map(item => ({
+    q: item.question,
+    o: item.options,
+    ci: item.correct_index,
+    ct: item.correct_text,
+  }));
+  return compact;
+}
+
+function expandSessionData(data) {
+  if (!data || !Array.isArray(data.sessionQuestions)) return data;
+  data.sessionQuestions = data.sessionQuestions.map(item => ({
+    question: item.question || item.q,
+    options: item.options || item.o,
+    correct_index: item.correct_index ?? item.ci,
+    correct_text: item.correct_text || item.ct,
+  }));
+  return data;
+}
+
 // ─── Active Tests ────────────────────────────────────────────
 async function getActiveTest(chatId) {
   try {
-    const data = await redis.get(`activeTest:${chatId}`);
-    return data ? JSON.parse(data) : null;
+    const raw = await redis.get(`activeTest:${chatId}`);
+    return raw ? expandSessionData(JSON.parse(raw)) : null;
   } catch (err) {
     logger.error('sessionService.getActiveTest failed', { chatId, error: err.message });
     return null;
@@ -18,7 +42,8 @@ async function getActiveTest(chatId) {
 
 async function setActiveTest(chatId, data) {
   try {
-    await redis.set(`activeTest:${chatId}`, JSON.stringify(data), 'EX', TTL);
+    const compacted = compactSessionData(data);
+    await redis.set(`activeTest:${chatId}`, JSON.stringify(compacted), 'EX', TTL);
   } catch (err) {
     logger.error('sessionService.setActiveTest failed', { chatId, error: err.message });
   }
@@ -98,8 +123,37 @@ async function deleteWaitingRoom(chatId) {
   }
 }
 
+// ─── High-Load Atomic Pipeline Operations ───────────────────
+async function setActiveTestAndPoll(chatId, sessionData, pollId) {
+  try {
+    const compacted = compactSessionData(sessionData);
+    const pipeline = redis.pipeline();
+    pipeline.set(`activeTest:${chatId}`, JSON.stringify(compacted), 'EX', TTL);
+    if (pollId) {
+      pipeline.set(`pollMap:${pollId}`, String(chatId), 'EX', TTL);
+    }
+    await pipeline.exec();
+  } catch (err) {
+    logger.error('sessionService.setActiveTestAndPoll failed', { chatId, pollId, error: err.message });
+  }
+}
+
+async function deleteActiveTestAndPoll(chatId, pollId) {
+  try {
+    const pipeline = redis.pipeline();
+    pipeline.del(`activeTest:${chatId}`);
+    if (pollId) {
+      pipeline.del(`pollMap:${pollId}`);
+    }
+    await pipeline.exec();
+  } catch (err) {
+    logger.error('sessionService.deleteActiveTestAndPoll failed', { chatId, pollId, error: err.message });
+  }
+}
+
 module.exports = {
   getActiveTest, setActiveTest, deleteActiveTest,
   getPollChat, setPollChat, deletePollChat,
   getWaitingRoom, setWaitingRoom, deleteWaitingRoom,
+  setActiveTestAndPoll, deleteActiveTestAndPoll,
 };

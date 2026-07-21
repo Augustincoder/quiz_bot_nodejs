@@ -1,7 +1,8 @@
 "use strict";
 
 const { Markup } = require("telegraf");
-const { TTLMap } = require("../core/utils");
+const { TTLMap, safeWebAppButton } = require("../core/utils");
+const { WEBAPP_URL } = require("../config/config");
 
 const ITEMS_PER_PAGE = 5;
 
@@ -16,22 +17,26 @@ const blocksKbCache = new TTLMap(30 * 60 * 1000);
 
 function getMainKeyboard() {
   return Markup.inlineKeyboard([
-    // 1-qator: Asosiy test yechish va yaratish
+    // Hero 1-qator: WebApp Vizual UI (Telegram Mini App)
+    [
+      safeWebAppButton("🚀 Quiz Bot Pro WebApp (Vizual UI)", WEBAPP_URL),
+    ],
+    // 2-qator: Asosiy test yechish va yaratish
     [
       Markup.button.callback("📚 Rasmiy Testlar", "official_tests"),
       Markup.button.callback("➕ Test Yaratish", "create_test"),
     ],
-    // 2-qator: Ikkita mustaqil arxiv bo'limi
+    // 3-qator: Ikkita mustaqil arxiv bo'limi
     [
       Markup.button.callback("📂 Mening Testlarim", "my_tests"),
       Markup.button.callback("📥 Javon (Pauza)", "my_shelf"),
     ],
-    // 3-qator: AI va Statistika
+    // 4-qator: AI va Statistika
     [
       Markup.button.callback("🤖 AI Tutor", "ai_menu"),
       Markup.button.callback("📊 Statistika", "stats_menu"),
     ],
-    // 4-qator: Yordam
+    // 5-qator: Yordam
     [Markup.button.callback("📞 Adminga Murojaat / Yordam", "contact_admin")],
   ]);
 }

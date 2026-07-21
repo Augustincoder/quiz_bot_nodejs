@@ -67,14 +67,34 @@ async function loadAllTests() {
               if (typeof rawData.block_name === "string") blockName = rawData.block_name;
             }
 
-            if (Array.isArray(questions)) {
-              botModule.memoryDb[subj][testId] = {
-                test_id: testId,
-                range,
-                block_name: blockName,
-                questions,
-              };
-            }
+            const testObj = {
+              test_id: testId,
+              range,
+              block_name: blockName,
+              _filePath: filePath,
+              _cachedQuestions: questions, // initial load cached
+            };
+
+            Object.defineProperty(testObj, 'questions', {
+              get() {
+                if (this._cachedQuestions) return this._cachedQuestions;
+                try {
+                  const raw = JSON.parse(fs.readFileSync(this._filePath, 'utf8'));
+                  const qs = Array.isArray(raw) ? raw : (raw.questions || []);
+                  this._cachedQuestions = qs;
+                  return qs;
+                } catch {
+                  return [];
+                }
+              },
+              set(val) {
+                this._cachedQuestions = val;
+              },
+              enumerable: true,
+              configurable: true,
+            });
+
+            botModule.memoryDb[subj][testId] = testObj;
         } catch (err) {
             logger.error(`Error parsing local test file: ${filePath}`, err);
         }

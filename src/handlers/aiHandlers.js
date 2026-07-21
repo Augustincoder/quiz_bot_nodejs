@@ -2,9 +2,8 @@
 const { Markup } = require('telegraf');
 const aiService = require('../services/aiService');
 const { States, setState, safeEdit, clearState, backToMainKb } = require('../core/utils');
-const { config } = require('dotenv');
 const { ADMIN_ID } = require('../config/config');
-const { request } = require('express');
+const redisConnection = require('../services/redisService');
 
 // ============================================
 // 📊 RATE LIMITING VA USAGE TRACKING
@@ -43,6 +42,24 @@ const AI_WARNING_TEXT = `\n\n⚠️ <i>Eslatma: Bu javoblar tezkor AI modellarid
 // ============================================
 
 /**
+ * In-memory Map xotira tozaligi (memory leak oldini olish)
+ */
+function cleanupExpiredUserRateLimits() {
+    const now = Date.now();
+    for (const [userId, limit] of userRateLimit.entries()) {
+        if (now > limit.dailyResetTime && now > limit.hourlyResetTime) {
+            userRateLimit.delete(userId);
+        }
+    }
+    if (userRateLimit.size > 10000) {
+        const firstKey = userRateLimit.keys().next().value;
+        if (firstKey !== undefined) {
+            userRateLimit.delete(firstKey);
+        }
+    }
+}
+
+/**
  * Global daily/monthly limitni tekshirish
  */
 function checkGlobalLimit() {
@@ -75,10 +92,12 @@ function checkGlobalLimit() {
 /**
  * User-level rate limit tekshirish
  */
-function checkUserLimit(userId, isPremium = false, isAdmin = false) {
+function checkUserLimit(userId, isPremium = false, isAdmin = false, autoIncrement = true) {
     if (isAdmin && USER_LIMITS.ADMIN_UNLIMITED) {
         return { allowed: true };
     }
+
+    cleanupExpiredUserRateLimits();
 
     const now = Date.now();
     const userLimit = userRateLimit.get(userId);
@@ -88,13 +107,14 @@ function checkUserLimit(userId, isPremium = false, isAdmin = false) {
 
     if (!userLimit) {
         // Birinchi marta foydalanayotgan user
-        userRateLimit.set(userId, {
-            dailyCount: 1,
-            hourlyCount: 1,
+        const newLimit = {
+            dailyCount: autoIncrement ? 1 : 0,
+            hourlyCount: autoIncrement ? 1 : 0,
             dailyResetTime: now + 24 * 60 * 60 * 1000, // 24 soat
             hourlyResetTime: now + 60 * 60 * 1000      // 1 soat
-        });
-        return { allowed: true };
+        };
+        userRateLimit.set(userId, newLimit);
+        return { allowed: true, remaining: dailyMax - newLimit.dailyCount };
     }
 
     // Hourly reset
@@ -120,11 +140,71 @@ function checkUserLimit(userId, isPremium = false, isAdmin = false) {
         return { allowed: false, reason: 'daily_user_limit', hoursLeft };
     }
 
-    // Increment counters
-    userLimit.dailyCount++;
-    userLimit.hourlyCount++;
+    if (autoIncrement) {
+        // Increment counters
+        userLimit.dailyCount++;
+        userLimit.hourlyCount++;
+    }
 
-    return { allowed: true, remaining: dailyMax - userLimit.dailyCount };
+    return { allowed: true, remaining: Math.max(0, dailyMax - userLimit.dailyCount) };
+}
+
+function isRedisAvailable() {
+    if (!redisConnection) return false;
+    if (typeof redisConnection.status === 'string') {
+        return ['ready', 'connect'].includes(redisConnection.status);
+    }
+    return true;
+}
+
+/**
+ * User-level va global rate limitni Redis orqali tekshirish (fallback: in-memory)
+ */
+async function checkUserLimitRedis(userId, isPremium = false, isAdmin = false) {
+    if (isAdmin && USER_LIMITS.ADMIN_UNLIMITED) {
+        return { allowed: true };
+    }
+
+    const dailyMax = isPremium ? USER_LIMITS.PREMIUM_USER_DAILY : USER_LIMITS.FREE_USER_DAILY;
+    const hourlyMax = USER_LIMITS.FREE_USER_HOURLY;
+
+    if (isRedisAvailable()) {
+        try {
+            const dailyKey = `ai:limit:user:${userId}:daily`;
+            const hourlyKey = `ai:limit:user:${userId}:hourly`;
+
+            const pipeline = redisConnection.pipeline();
+            pipeline.get(dailyKey);
+            pipeline.ttl(dailyKey);
+            pipeline.get(hourlyKey);
+            pipeline.ttl(hourlyKey);
+            const results = await pipeline.exec();
+
+            if (results) {
+                const dailyCount = parseInt(results[0]?.[1] || '0', 10);
+                const dailyTtl = parseInt(results[1]?.[1] || '-1', 10);
+                const hourlyCount = parseInt(results[2]?.[1] || '0', 10);
+                const hourlyTtl = parseInt(results[3]?.[1] || '-1', 10);
+
+                if (hourlyCount >= hourlyMax) {
+                    const minutesLeft = hourlyTtl > 0 ? Math.ceil(hourlyTtl / 60) : 60;
+                    return { allowed: false, reason: 'hourly_limit', minutesLeft };
+                }
+
+                if (dailyCount >= dailyMax) {
+                    const hoursLeft = dailyTtl > 0 ? Math.ceil(dailyTtl / 3600) : 24;
+                    return { allowed: false, reason: 'daily_user_limit', hoursLeft };
+                }
+
+                return { allowed: true, remaining: Math.max(0, dailyMax - dailyCount) };
+            }
+        } catch (err) {
+            console.error('❌ Redis checkUserLimit error, falling back to in-memory:', err.message);
+        }
+    }
+
+    // Graceful in-memory fallback (autoIncrement=false, chunki tekshiruv va usage alohida)
+    return checkUserLimit(userId, isPremium, isAdmin, false);
 }
 
 /**
@@ -133,6 +213,62 @@ function checkUserLimit(userId, isPremium = false, isAdmin = false) {
 function incrementGlobalUsage() {
     dailyUsage.count++;
     monthlyUsage.count++;
+}
+
+/**
+ * User va global usage ni Redis orqali oshirish (fallback: in-memory)
+ */
+async function incrementUsageRedis(userId) {
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const dailyKey = `ai:limit:user:${userId}:daily`;
+    const hourlyKey = `ai:limit:user:${userId}:hourly`;
+    const globalDailyKey = `ai:usage:daily:${dateStr}`;
+
+    if (isRedisAvailable()) {
+        try {
+            const pipeline = redisConnection.pipeline();
+            pipeline.incr(dailyKey);
+            pipeline.incr(hourlyKey);
+            pipeline.incr(globalDailyKey);
+            const results = await pipeline.exec();
+
+            const expirePipeline = redisConnection.pipeline();
+            if (results && results[0] && results[0][1] === 1) {
+                expirePipeline.expire(dailyKey, 86400);
+            }
+            if (results && results[1] && results[1][1] === 1) {
+                expirePipeline.expire(hourlyKey, 3600);
+            }
+            if (results && results[2] && results[2][1] === 1) {
+                expirePipeline.expire(globalDailyKey, 86400);
+            }
+            if (expirePipeline.length > 0) {
+                await expirePipeline.exec();
+            }
+            return;
+        } catch (err) {
+            console.error('❌ Redis incrementUsage error, falling back to in-memory:', err.message);
+        }
+    }
+
+    // Graceful in-memory fallback
+    incrementGlobalUsage();
+    if (userId) {
+        cleanupExpiredUserRateLimits();
+        const now = Date.now();
+        let userLimit = userRateLimit.get(userId);
+        if (!userLimit) {
+            userLimit = {
+                dailyCount: 0,
+                hourlyCount: 0,
+                dailyResetTime: now + 24 * 60 * 60 * 1000,
+                hourlyResetTime: now + 60 * 60 * 1000
+            };
+            userRateLimit.set(userId, userLimit);
+        }
+        userLimit.dailyCount++;
+        userLimit.hourlyCount++;
+    }
 }
 
 // ============================================
@@ -172,10 +308,10 @@ async function cbAiEssayInit(ctx) {
         setState(ctx, States.AI_ESSAY_ANALYSIS);
 
         const userId = ctx.from.id;
-        const userLimit = userRateLimit.get(userId);
         const isPremium = false; // Bu yerda premium statusni tekshiring
+        const limitCheck = await checkUserLimitRedis(userId, isPremium, false);
         const dailyMax = isPremium ? USER_LIMITS.PREMIUM_USER_DAILY : USER_LIMITS.FREE_USER_DAILY;
-        const remaining = userLimit ? dailyMax - userLimit.dailyCount : dailyMax;
+        const remaining = limitCheck.remaining !== undefined ? limitCheck.remaining : dailyMax;
 
         const text = `📝 *Insho / Tarjima Tahlili*
 
@@ -209,9 +345,9 @@ async function cbAiEssayMenu(ctx) {
     setState(ctx, States.AI_ESSAY_ANALYSIS);
     
     const userId = ctx.from.id;
-    const userLimit = userRateLimit.get(userId);
+    const limitCheck = await checkUserLimitRedis(userId, false, false);
     const dailyMax = USER_LIMITS.FREE_USER_DAILY;
-    const remaining = userLimit ? dailyMax - userLimit.dailyCount : dailyMax;
+    const remaining = limitCheck.remaining !== undefined ? limitCheck.remaining : dailyMax;
 
     await safeEdit(
         ctx,
@@ -225,7 +361,7 @@ async function onEssayInput(ctx) {
     const userId = ctx.from.id;
     
     // Admin ro'yxati (o'zingizning admin ID larni qo'shing)
-    const ADMIN_IDS = config.ADMIN_ID ? [parseInt(config.ADMIN_ID, 10)] : [];
+    const ADMIN_IDS = (ADMIN_ID !== undefined && ADMIN_ID !== null) ? [parseInt(ADMIN_ID, 10)] : [];
    // Sizning admin ID
     const isAdmin = ADMIN_IDS.includes(userId);
     const isPremium = false; // Premium statusni DB dan olish kerak
@@ -254,7 +390,7 @@ async function onEssayInput(ctx) {
     }
 
     // 🔒 User-level limitni tekshirish
-    const userCheck = checkUserLimit(userId, isPremium, isAdmin);
+    const userCheck = await checkUserLimitRedis(userId, isPremium, isAdmin);
     if (!userCheck.allowed) {
         if (userCheck.reason === 'hourly_limit') {
             return ctx.reply(
@@ -278,10 +414,10 @@ async function onEssayInput(ctx) {
     try {
         const analysis = await aiService.analyzeEssay(text);
 
-        // ✅ Muvaffaqiyatli so'rov — global usageni oshiramiz
-        incrementGlobalUsage();
+        // ✅ Muvaffaqiyatli so'rov — usage ni oshiramiz
+        await incrementUsageRedis(userId);
 
-        const remaining = userCheck.remaining !== undefined ? userCheck.remaining : '∞';
+        const remaining = userCheck.remaining !== undefined ? Math.max(0, userCheck.remaining - 1) : '∞';
         const footer = `\n\n📊 Qolgan limitingiz: ${remaining}\n${AI_WARNING_TEXT}`;
 
         await ctx.telegram.editMessageText(
@@ -310,6 +446,7 @@ async function onEssayInput(ctx) {
 // ============================================
 
 function getUsageStats() {
+    cleanupExpiredUserRateLimits();
     return {
         daily: dailyUsage,
         monthly: monthlyUsage,
@@ -333,5 +470,10 @@ module.exports = {
     onEssayInput, 
     cbAiTutorMenu, 
     cbAiEssayInit,
-    getUsageStats  // Admin uchun statistika
+    getUsageStats,  // Admin uchun statistika
+    checkGlobalLimit,
+    checkUserLimit,
+    checkUserLimitRedis,
+    incrementGlobalUsage,
+    incrementUsageRedis
 };

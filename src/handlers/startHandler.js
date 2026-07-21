@@ -108,9 +108,10 @@ async function cmdStart(ctx) {
 🎓 <b>Talabalar Imtihon Simulyatori</b>ga xush kelibsiz — imtihonga tayyorgarlikda sizning shaxsiy AI yordamchingiz.
 
 ━━━━━━━━━━━━━━━━
-✨ <b>Sizning 4 ta superkuchingiz:</b>
+✨ <b>Sizning 5 ta superkuchingiz:</b>
 
-📚 <b>Rasmiy Testlar</b> — Tasdiqlanagan test bazasidan yechib, bilimingizni sinab ko'ring
+🚀 <b>Mini App (Vizual UI)</b> — Zamonaviy interaktiv test ekrani va Kunlik Streak 🔥
+📚 <b>Rasmiy Testlar</b> — Tasdiqlangan test bazasidan yechib, bilimingizni sinab ko'ring
 🤖 <b>AI Smart Quiz</b> — Darslik rasmi yoki matnini yuboring, AI bir zumda test tuzib beradi
 📥 <b>Javon</b> — Testni to'xtatib, istalgan paytda qolgan joyidan davom eting
 🧠 <b>AI Tutor</b> — Xatolaringizni batafsil tahlil qilib, har bir xatoni tushuntirib beradi

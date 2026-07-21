@@ -1,7 +1,7 @@
 "use strict";
 const redisConnection = require("../services/redisService");
 const { Markup } = require("telegraf");
-const { SUBJECTS } = require("../config/config");
+const { SUBJECTS, WEBAPP_URL } = require("../config/config");
 const dbService = require("../services/dbService");
 const aiService = require("../services/aiService");
 const sessionService = require("../services/sessionService");
@@ -20,6 +20,7 @@ const {
   parseSuffix,
   escapeHtml,
   safeAnswerCb,
+  safeWebAppButton,
 } = require("../core/utils");
 
 const {
@@ -155,13 +156,21 @@ async function cbSubject(ctx) {
   // Asosiy tugmalar (Bloklar) ni olamiz
   const blocksKb = getBlocksKeyboard(subjectKey, 0);
 
-  // Eng tepasiga "Guruhda Marafon o'ynash" tugmasini qo'shamiz
-  blocksKb.reply_markup.inline_keyboard.unshift([
-    Markup.button.url(
-      "🏃 Butun fanni Guruhda o'ynash (Marafon)",
-      `https://t.me/${botInfo.username}?startgroup=offs_${subjectKey}`,
-    ),
-  ]);
+  // Eng tepasiga WebApp da yechish va Guruhda Marafon o'ynash tugmasini qo'shamiz
+  blocksKb.reply_markup.inline_keyboard.unshift(
+    [
+      safeWebAppButton(
+        `🚀 WebApp da Yechish (${SUBJECTS[subjectKey] || subjectKey})`,
+        `${WEBAPP_URL}?subject=${encodeURIComponent(subjectKey)}`
+      ),
+    ],
+    [
+      Markup.button.url(
+        "🏃 Butun fanni Guruhda o'ynash (Marafon)",
+        `https://t.me/${botInfo.username}?startgroup=offs_${subjectKey}`,
+      ),
+    ]
+  );
 
   await safeEdit(
     ctx,

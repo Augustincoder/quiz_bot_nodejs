@@ -39,6 +39,7 @@ const SUPABASE_URL = env('SUPABASE_URL', '');
 const SUPABASE_KEY = env('SUPABASE_KEY', '');
 const ADMIN_ID = envInt('ADMIN_ID', 2014973670);
 const GEMINI_API_KEY = env('GEMINI_API_KEY', '');
+const WEBAPP_URL = env('WEBAPP_URL', 'https://mud-page-cross-motel.trycloudflare.com');
 if (!BOT_TOKEN) {
   throw new Error(
     'BOT_TOKEN is missing. Create a .env file (see .env.example) and set BOT_TOKEN=...'
@@ -61,4 +62,5 @@ module.exports = {
   SUPABASE_KEY,
   ADMIN_ID,
   GEMINI_API_KEY,
+  WEBAPP_URL,
 };
