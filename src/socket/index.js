@@ -25,27 +25,29 @@ function initSocket(httpServer) {
     console.log(`🔌 Socket connected: ${socket.id} (User: ${userId})`);
 
     // --- Room Management ---
-    socket.on("room:create", async ({ hostId, roomCode }) => {
+    socket.on("room:create", async ({ roomCode }) => {
       try {
         let room = await roomManager.getRoom(roomCode);
         if (!room) {
-          room = await roomManager.createRoom(roomCode, hostId, 'kahoot');
-          console.log(`[room:create] Kahoot Room ${roomCode} created by ${hostId}.`);
+          room = await roomManager.createRoom(roomCode, userId, 'kahoot');
+          console.log(`[room:create] Kahoot Room ${roomCode} created by ${userId}.`);
         }
       } catch (error) {
         socket.emit("room:error", { code: 500, message: error.message });
       }
     });
 
-    socket.on("room:join", async ({ roomCode, userId: reqUserId, displayName: reqDisplayName }) => {
-      const idToJoin = String(reqUserId || userId);
-      const nameToJoin = reqDisplayName || displayName;
+    socket.on("room:join", async ({ roomCode, displayName: reqDisplayName }) => {
+      const idToJoin = userId;
+      const cleanName = (reqDisplayName && typeof reqDisplayName === 'string')
+        ? reqDisplayName.trim().substring(0, 30)
+        : displayName;
       
       try {
         const room = await roomManager.getRoom(roomCode);
         if (!room) return socket.emit("room:error", { code: 404, message: "Room not found" });
 
-        await roomManager.addPlayer(roomCode, idToJoin, nameToJoin, socket.id);
+        await roomManager.addPlayer(roomCode, idToJoin, cleanName, socket.id);
         socket.join(roomCode);
 
         socket.emit("room:state", {
@@ -67,6 +69,10 @@ function initSocket(httpServer) {
       try {
         const room = await roomManager.getRoom(roomCode);
         if (!room) return socket.emit("room:error", { code: 404, message: "Room not found" });
+
+        if (room.hostId && String(room.hostId) !== userId) {
+          return socket.emit("room:error", { code: 403, message: "Faqat xona egasi o'yinni boshlay oladi" });
+        }
 
         const { data: questions, error } = await supabase.from('kahoot_questions').select('*');
         if (error) throw error;

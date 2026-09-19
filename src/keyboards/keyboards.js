@@ -31,7 +31,9 @@ function getMainKeyboard() {
       Markup.button.callback("🤖 AI Tutor", "ai_menu"),
       Markup.button.callback("📊 Statistika", "stats_menu"),
     ],
-    // 4-qator: Yordam
+    // 4-qator: Dars Jadvali
+    [Markup.button.callback("📅 Dars Jadvali", "schedule_menu")],
+    // 5-qator: Yordam
     [Markup.button.callback("📞 Adminga Murojaat / Yordam", "contact_admin")],
   ]);
 }
@@ -130,6 +132,20 @@ function getTimetableKeyboard() {
   };
 }
 
+function getTimetableInlineKeyboard() {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback("📅 Bugungi jadval", "schedule_today"),
+      Markup.button.callback("🖼 Haftalik jadval", "schedule_week"),
+    ],
+    [
+      Markup.button.callback("🏢 Bo'sh xonalar", "schedule_rooms"),
+      Markup.button.callback("⚙️ Guruhni sozlash", "schedule_settings"),
+    ],
+    [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
+  ]);
+}
+
 module.exports = {
   ITEMS_PER_PAGE,
   getMainKeyboard,
@@ -137,5 +153,7 @@ module.exports = {
   invalidateBlocksCache,
   setMemoryDb,
   getTimetableKeyboard,
+  getTimetableInlineKeyboard,
   paginationRow,
 };
+

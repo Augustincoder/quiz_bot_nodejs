@@ -3,27 +3,29 @@
 const fs = require('fs');
 const path = require('path');
 const dbService = require('../services/dbService');
+const edupageService = require('../services/edupageService');
+const { escapeHtml } = require('../core/utils');
 
 let VALID_GROUPS = [];
 try {
   const rawGroups = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/groups.json'), 'utf8'));
-  
+
   VALID_GROUPS = rawGroups.filter(g => {
     if (!g) return false;
-    
-    // Matnni bo'sh joylardan tozalab, hammasini katta harfga o'tkazib olamiz
     const cleanG = g.trim().toUpperCase();
-    
-    return cleanG !== '-' && 
-           cleanG !== '--' && 
-           cleanG !== '(RUS)' && // Agar buni ham chiqarib tashlash kerak bo'lsa
-           !cleanG.includes('FAKULTET') && 
+    return cleanG !== '-' &&
+           cleanG !== '--' &&
+           cleanG !== '(RUS)' &&
+           !cleanG.includes('FAKULTET') &&
            !cleanG.includes('KURS');
   });
 } catch {
   console.error('⚠️ groups.json topilmadi. Qidiruv ishlamasligi mumkin.');
 }
-function normalize(str) { return str.toUpperCase().replace(/[^A-Z0-9*]/g, ''); }
+
+function normalize(str) {
+  return str.toUpperCase().replace(/[^A-Z0-9*]/g, '');
+}
 
 function getLevenshteinDistance(a, b) {
   const matrix = [];
@@ -37,43 +39,76 @@ function getLevenshteinDistance(a, b) {
   return matrix[b.length][a.length];
 }
 
-function findBestMatch(input) {
+async function getAvailableGroups() {
+  try {
+    const liveGroups = await edupageService.getAllClassNames();
+    if (liveGroups && liveGroups.length > 0) return liveGroups;
+  } catch {
+    // fallback
+  }
+  return VALID_GROUPS;
+}
+
+function findBestMatch(input, groups = VALID_GROUPS) {
   const ni = normalize(input);
   if (!ni) return null;
   let best = null;
   let minDist = Infinity;
-  for (const group of VALID_GROUPS) {
+  for (const group of groups) {
     const ng = normalize(group);
     if (ni === ng) return group;
     const d = getLevenshteinDistance(ni, ng);
-    if (d < minDist) { minDist = d; best = group; }
+    if (d < minDist) {
+      minDist = d;
+      best = group;
+    }
   }
   return minDist <= 2 ? best : null;
 }
 
 async function cmdSetClass(ctx) {
-  const text = (ctx.message.text || '').trim();
+  const userId = ctx.from?.id;
+  if (!userId) return;
+
+  const text = (ctx.message?.text || '').trim();
   const userInput = text.substring(text.indexOf(' ') + 1).trim();
 
   if (!userInput || userInput === text) {
     return ctx.reply('⚠️ Guruh nomi kiritilmadi.\n\n👉 Namuna: <code>/setclass MNP-80</code>\n\n💡 <i>O\'z guruhingiz nomini aniq ko\'rsating.</i>', { parse_mode: 'HTML' });
   }
 
-  let matchedGroup = userInput.startsWith('*') ? userInput : findBestMatch(userInput);
+  // Length limit guard to prevent ReDoS / CPU starvation
+  if (userInput.length > 50) {
+    return ctx.reply('⚠️ Guruh nomi juda uzun (maksimal 50 ta belgi).', { parse_mode: 'HTML' });
+  }
 
-  if (!matchedGroup) return ctx.reply(`❌ \"<b>${userInput}</b>\" nomli guruh topilmadi.\n\n💡 Guruh nomini to'g'ri yozganingizga ishonch hosil qiling. Masalan: <code>/setclass MI-21</code>`, { parse_mode: 'HTML' });
+  const groups = await getAvailableGroups();
+  const matchedGroup = userInput.startsWith('*') ? userInput : findBestMatch(userInput, groups);
+
+  if (!matchedGroup) {
+    return ctx.reply(`❌ "<b>${escapeHtml(userInput)}</b>" nomli guruh topilmadi.\n\n💡 Guruh nomini to'g'ri yozganingizga ishonch hosil qiling. Masalan: <code>/setclass MI-21</code>`, { parse_mode: 'HTML' });
+  }
 
   const isCorrected = !userInput.startsWith('*') && (normalize(userInput) !== normalize(matchedGroup));
-  const success = await dbService.updateUserClass(ctx.from.id, matchedGroup);
+  const success = await dbService.updateUserClass(userId, matchedGroup);
 
   if (success) {
-    const msg = isCorrected ? `✅ Yozuvdagi xatolik to'g'rilandi va saqlandi: <b>${matchedGroup}</b>` : `✅ Guruhingiz saqlandi: <b>${matchedGroup}</b>`;
-    await ctx.reply(msg + '\nEndi jadvallarni ko\'rishingiz mumkin. /hafta ni bosing.', { parse_mode: 'HTML' });
+    const cleanGroup = escapeHtml(matchedGroup);
+    const msg = isCorrected ? `✅ Yozuvdagi xatolik to'g'rilandi va saqlandi: <b>${cleanGroup}</b>` : `✅ Guruhingiz saqlandi: <b>${cleanGroup}</b>`;
+    await ctx.reply(msg + '\nEndi dars jadvalingizni ko\'rishingiz mumkin. /jadval yoki /hafta ni bosing.', { parse_mode: 'HTML' });
   } else {
-    await ctx.reply("⚠️ Saqlashda xatolik yuz berdi. Iltimos, bir ozdan so'ng qaytadan urinib ko'ring.");
+    await ctx.reply('⚠️ Saqlashda xatolik yuz berdi. Iltimos, bir ozdan so\'ng qaytadan urinib ko\'ring.');
   }
 }
 
-function register(bot) { bot.command('setclass', cmdSetClass); }
+async function cbProfile(ctx) {
+  const statsHandlers = require('./statsHandlers');
+  return statsHandlers.cbStatsMenu(ctx);
+}
 
-module.exports = { register };
+function register(bot) {
+  bot.command('setclass', cmdSetClass);
+  bot.command('profile', cbProfile);
+}
+
+module.exports = { register, cbProfile, cmdProfile: cbProfile, cmdSetClass };

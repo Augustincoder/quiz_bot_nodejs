@@ -3,7 +3,6 @@
 const dbService = require('../services/dbService');
 const { getMainKeyboard } = require('../keyboards/keyboards');
 const sessionService = require('../services/sessionService');
-const logger = require('../core/logger');
 const {
   userNameCache, clearState, safeEdit, safeAnswerCb, backToMainKb,
 } = require('../core/utils');
@@ -190,4 +189,4 @@ function register(bot) {
   bot.action('ignore', ctx => safeAnswerCb(ctx));
 }
 
-module.exports = { register };
+module.exports = { register, cmdStart, cbStart: cmdStart };

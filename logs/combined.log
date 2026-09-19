@@ -232,3 +232,13 @@
 {"level":"info","message":"🤖 Bot ishga tushdi","timestamp":"2026-05-24T08:45:07.426Z"}
 {"level":"info","message":"user:start","name":"𝙼𝚞𝚑𝚊𝚖𝚖𝚊𝚍𝚊𝚖𝚒𝚗 𝙰𝚟𝚊𝚣𝚘𝚟","timestamp":"2026-05-24T08:49:14.493Z","userId":2014973670}
 {"level":"info","message":"⚡ SIGINT received — graceful shutdown started","timestamp":"2026-05-24T08:50:04.209Z"}
+{"error":"supabaseUrl is required.","level":"error","message":"Supabase ulanish xatosi:","timestamp":"2026-09-19T16:13:27.978Z"}
+{"classesCount":1336,"defaultNum":"94","emptySlotsIndexed":48,"indexingTimeMs":113,"level":"info","message":"EduPage database successfully indexed","timestamp":"2026-09-19T16:27:55.352Z"}
+{"level":"info","message":"Pre-warming EduPage schedule cache in background...","timestamp":"2026-09-19T16:34:15.062Z"}
+{"classesCount":1336,"defaultNum":"94","emptySlotsIndexed":48,"indexingTimeMs":100,"level":"info","message":"EduPage database successfully indexed","timestamp":"2026-09-19T16:34:19.183Z"}
+{"level":"info","message":"EduPage schedule cache successfully pre-warmed","timestamp":"2026-09-19T16:34:19.183Z"}
+{"classesCount":1336,"defaultNum":"94","emptySlotsIndexed":48,"indexingTimeMs":96,"level":"info","message":"EduPage database successfully indexed","timestamp":"2026-09-19T16:39:44.860Z"}
+{"classesCount":1336,"defaultNum":"94","emptySlotsIndexed":48,"indexingTimeMs":148,"level":"info","message":"EduPage database successfully indexed","timestamp":"2026-09-19T16:39:56.754Z"}
+{"error":"supabaseUrl is required.","level":"error","message":"Supabase ulanish xatosi:","timestamp":"2026-09-19T17:07:18.618Z"}
+{"classesCount":1336,"defaultNum":"94","emptySlotsIndexed":48,"indexingTimeMs":162,"level":"info","message":"EduPage database successfully indexed","timestamp":"2026-09-19T17:09:18.890Z"}
+{"classesCount":1336,"defaultNum":"94","emptySlotsIndexed":48,"indexingTimeMs":170,"level":"info","message":"EduPage database successfully indexed","timestamp":"2026-09-19T17:09:54.059Z"}

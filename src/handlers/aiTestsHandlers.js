@@ -3,8 +3,9 @@
 const { Markup } = require('telegraf');
 const aiService = require('../services/aiService');
 const dbService = require('../services/dbService');
-const { ADMIN_ID, SUBJECTS } = require('../config/config');
-const { States, setState, clearState, updateData, getData, getState, safeEdit, backToMainKb, escapeHtml, sanitizeForTelegram, isAdmin, adminGuard, parseSuffix, safeAnswerCb } = require('../core/utils');
+const { SUBJECTS } = require('../config/config');
+const { States, setState, clearState, updateData, getData, safeEdit, escapeHtml, adminGuard, parseSuffix, safeAnswerCb, downloadFile } = require('../core/utils');
+const logger = require('../core/logger');
 
 // ============================================
 // 📊 AI ADMIN RATE LIMITING
@@ -294,49 +295,40 @@ async function onAiTestsImage(ctx) {
     // Rasmni temporary faylga yuklab olish
     const fileLink = await ctx.telegram.getFileLink(photo[photo.length - 1].file_id);
     const filePath = require('path').join(require('os').tmpdir(), `ai_test_${ctx.from.id}_${Date.now()}.jpg`);
-    
     const fs = require('fs');
-    const https = require('https');
-    
-    await new Promise((resolve, reject) => {
-      const file = fs.createWriteStream(filePath);
-      https.get(fileLink.href, (response) => {
-        response.pipe(file);
-        file.on('finish', () => {
-          file.close();
-          resolve();
-        });
-      }).on('error', reject);
-    });
-    
-    const questions = await aiService.generateQuizFromImage(filePath, 'image/jpeg', count);
-    
-    // Temporary faylni o'chirish
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+
+    try {
+      await downloadFile(fileLink.href, filePath);
+      const questions = await aiService.generateQuizFromImage(filePath, 'image/jpeg', count);
+      
+      if (!questions || !questions.length) {
+        await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, undefined, "❌ AI test yaratishda xatolik yuz berdi.");
+        clearState(ctx);
+        return;
+      }
+      
+      await updateData(ctx, { ai_generated_questions: questions });
+      await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, undefined,
+        `✅ <b>AI test yaratildi!</b>\n\n📊 Savollar soni: <b>${questions.length} ta</b>\n\nNima qilamiz?`,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('👁 Ko\'rib chiqish', 'ai_tests_preview')],
+            [Markup.button.callback('💾 Saqlash', 'ai_tests_save')],
+            [Markup.button.callback('🔄 Qayta yaratish', 'ai_tests_regenerate')],
+            [Markup.button.callback('❌ Bekor qilish', 'admin_cancel')],
+          ]),
+        },
+      );
+    } finally {
+      try {
+        if (filePath && fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      } catch {}
     }
-    
-    if (!questions || !questions.length) {
-      await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, undefined, "❌ AI test yaratishda xatolik yuz berdi.");
-      clearState(ctx);
-      return;
-    }
-    
-    await updateData(ctx, { ai_generated_questions: questions });
-    await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, undefined,
-      `✅ <b>AI test yaratildi!</b>\n\n📊 Savollar soni: <b>${questions.length} ta</b>\n\nNima qilamiz?`,
-      {
-        parse_mode: 'HTML',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('👁 Ko\'rib chiqish', 'ai_tests_preview')],
-          [Markup.button.callback('💾 Saqlash', 'ai_tests_save')],
-          [Markup.button.callback('🔄 Qayta yaratish', 'ai_tests_regenerate')],
-          [Markup.button.callback('❌ Bekor qilish', 'admin_cancel')],
-        ]),
-      },
-    );
   } catch (e) {
-    console.error('onAiTestsImage error:', e.message);
+    logger.error('onAiTestsImage error:', { error: e.message });
     await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, undefined, "❌ Xatolik yuz berdi.");
     clearState(ctx);
   }
@@ -595,27 +587,6 @@ function register(bot) {
   bot.action('ai_tests_save', adminGuard(cbAiTestsSave));
   bot.action('ai_tests_regenerate', adminGuard(cbAiTestsRegenerate));
   bot.action('admin_ai_stats', adminGuard(cbAdminAiStats));
-  
-  // Wire text handlers inside register to avoid modifying index.js
-  bot.on('message', async (ctx, next) => {
-    const state = getState(ctx);
-    if (state === States.ADMIN_AI_TESTS_TEXT && ctx.message?.text && isAdmin(ctx.from?.id)) {
-      return onAiTestsText(ctx);
-    }
-    if (state === States.ADMIN_AI_TESTS_IMAGE && ctx.message?.photo && isAdmin(ctx.from?.id)) {
-      return onAiTestsImage(ctx);
-    }
-    if (state === States.ADMIN_AI_TESTS_IMAGE_WAIT && ctx.message?.photo && isAdmin(ctx.from?.id)) {
-      return onAiTestsImage(ctx);
-    }
-    if (state === States.ADMIN_AI_TESTS_ADAPTIVE_USER && ctx.message?.text && isAdmin(ctx.from?.id)) {
-      return onAiTestsAdaptiveUser(ctx);
-    }
-    if (state === States.ADMIN_AI_TESTS_ADAPTIVE_COUNT && ctx.message?.text && isAdmin(ctx.from?.id)) {
-      return onAiTestsAdaptiveCount(ctx);
-    }
-    return next();
-  });
 }
 
 module.exports = {

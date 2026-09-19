@@ -5,16 +5,15 @@ const mutex = require("../core/mutex");
 const { SUBJECTS } = require("../config/config");
 const dbService = require("../services/dbService");
 const sessionService = require("../services/sessionService");
-// const redisConnection = require("../services/redisService");
 const logger = require("../core/logger");
 const {
   userNameCache,
   safePercent,
   grade,
   progressBar,
+  escapeHtml,
 } = require("../core/utils");
 const redisConnection = require("../services/redisService");
-const { pendingShelfSaves } = require("../core/pendingStore");
 
 
 // ─── REDIS-BACKED ACTIVE POLLS VA GROUP CACHE ─────────────────────────────
@@ -134,35 +133,55 @@ async function sendNextQuestion(chatId, telegram) {
   try {
     const session = await sessionService.getActiveTest(chatId);
     if (!session) return;
+    if (session.status === "paused" || session.finished) return;
     if (session.qIdx >= session.sessionQuestions.length)
       return finishTest(chatId, telegram);
 
     const q = session.sessionQuestions[session.qIdx];
     const progress = `[${session.qIdx + 1}/${session.sessionQuestions.length}]`;
-    const qFull = `${progress} ${q.question}`;
+    const labels = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
+
+    // Variantlar sonini 2 dan 10 gacha xavfsiz chegaralaymiz
+    let options = Array.isArray(q.options) ? [...q.options] : [];
+    if (options.length < 2) {
+      options = ["A varianti", "B varianti"];
+    } else if (options.length > 10) {
+      options = options.slice(0, 10);
+    }
+
+    let correctIndex = typeof q.correct_index === "number" ? q.correct_index : 0;
+    if (correctIndex < 0 || correctIndex >= options.length) {
+      correctIndex = 0;
+    }
+
+    const qFull = `${progress} ${q.question || ""}`;
     const needsSplit =
-      qFull.length > 255 || q.options.some((o) => o.length > 100);
+      qFull.length > 255 || options.some((o) => String(o).length > 100);
 
     let pollQ, pollOpts;
     if (needsSplit) {
-      const labels = ["A", "B", "C", "D", "E", "F"];
       let text =
-        `📑 <b>Savol ${progress}</b>\n\n${q.question}\n\n` +
-        q.options.map((opt, i) => `<b>${labels[i]})</b> ${opt}`).join("\n");
+        `📑 <b>Savol ${progress}</b>\n\n${escapeHtml(q.question || "")}\n\n` +
+        options
+          .map(
+            (opt, i) =>
+              `<b>${labels[i] || i + 1})</b> ${escapeHtml(String(opt))}`,
+          )
+          .join("\n");
       if (text.length > 4000)
         text = text.slice(0, 3900) + "\n<i>...(matn kesildi)</i>";
-      await telegram.sendMessage(chatId, text, { parse_mode: "HTML" });
-      pollQ = `${progress} To'g'ri variantni belgilang:`;
-      pollOpts = q.options.map((_, i) => `${labels[i]} varianti`);
+      await telegram.sendMessage(chatId, text, { parse_mode: "HTML" }).catch(() => {});
+      pollQ = `${progress} To'g'ri variantni belgilang:`.slice(0, 300);
+      pollOpts = options.map((_, i) => `${labels[i] || i + 1} varianti`);
     } else {
-      pollQ = qFull;
-      pollOpts = q.options;
+      pollQ = qFull.slice(0, 300);
+      pollOpts = options.map((o) => String(o).slice(0, 100));
     }
     let msg;
     try {
       msg = await telegram.sendPoll(chatId, pollQ, pollOpts, {
         type: "quiz",
-        correct_option_id: q.correct_index,
+        correct_option_id: correctIndex,
         is_anonymous: false,
         open_period: 30,
       });
@@ -180,10 +199,10 @@ async function sendNextQuestion(chatId, telegram) {
       session.wrong++;
       session.mistakes.push({
         question: String(q.question || "Noma'lum savol").substring(0, 100),
-        correct_ans: q.options[q.correct_index] || "Noma'lum",
+        correct_ans: options[correctIndex] || "Noma'lum",
         wrong_ans: "⚠️ Savol yuklanmadi",
-        options: q.options,
-        correct_index: q.correct_index,
+        options: options,
+        correct_index: correctIndex,
       });
       session.qIdx++;
       await sessionService.setActiveTest(chatId, session);
@@ -234,6 +253,13 @@ async function finishTest(chatId, telegram) {
     await sessionService.setActiveTest(chatId, session);
   } finally {
     unlock();
+  }
+
+  try {
+    const { quizTimerQueue } = require("../jobs/queues");
+    quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
+  } catch {
+    /* silent */
   }
 
   await activePollsCache.delete(session.pollId);
@@ -308,7 +334,7 @@ async function finishTest(chatId, telegram) {
 
       text =
         `🏁 <b>Test Yakunlandi!</b>\n\n` +
-        `📚 ${subjName} — ${tName}\n` +
+        `📚 ${escapeHtml(subjName)} — ${escapeHtml(tName)}\n` +
         `${progressBar(Math.round(pct), 100)}\n\n` +
         `━━━━━━━━━━━━━━━━\n` +
         `✅ To'g'ri:    <b>${session.correct} ta</b>\n` +
@@ -374,15 +400,19 @@ async function finishTest(chatId, telegram) {
       const entries = Object.values(scoresToUse);
       const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"];
 
-      const body = entries.length
-        ? entries
-          .sort((a, b) => b.correct - a.correct)
+      const sortedEntries = entries.sort((a, b) => b.correct - a.correct);
+      const topEntries = sortedEntries.slice(0, 25);
+      let body = topEntries.length
+        ? topEntries
           .map(
             (s, i) =>
-              `${medals[i] ?? "🔸"} <b>${s.name}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`,
+              `${medals[i] ?? "🔸"} <b>${escapeHtml(s.name)}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`,
           )
           .join("\n")
         : "😔 Hech kim javob bermadi.";
+      if (sortedEntries.length > 25) {
+        body += `\n<i>...va yana ${sortedEntries.length - 25} nafar ishtirokchi</i>`;
+      }
 
       // MARAFON: Agar hali bloklar qolgan bo'lsa
       if (
@@ -404,7 +434,7 @@ async function finishTest(chatId, telegram) {
 
         await sessionService.setActiveTest(chatId, session);
 
-        text = `🏁 <b>${session.currentBlockIdx}-Blok Yakunlandi!</b>\n\n🏆 <b>Bu blok bo'yicha oraliq natijalar:</b>\n${body}\n\n⏳ <i>Keyingi navbat: <b>${nextBlock.block_name}</b></i>`;
+        text = `🏁 <b>${session.currentBlockIdx}-Blok Yakunlandi!</b>\n\n🏆 <b>Bu blok bo'yicha oraliq natijalar:</b>\n${body}\n\n⏳ <i>Keyingi navbat: <b>${escapeHtml(nextBlock.block_name)}</b></i>`;
 
         await telegram.sendMessage(chatId, text, {
           parse_mode: "HTML",
@@ -430,18 +460,22 @@ async function finishTest(chatId, telegram) {
           const globalEntries = Object.values(
             session.marathonGlobalScores,
           ).sort((a, b) => b.correct - a.correct);
-          const globalBody = globalEntries.length
-            ? globalEntries
+          const topGlobal = globalEntries.slice(0, 25);
+          let globalBody = topGlobal.length
+            ? topGlobal
               .map(
                 (s, i) =>
-                  `${medals[i] ?? "🔸"} <b>${s.name}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`,
+                  `${medals[i] ?? "🔸"} <b>${escapeHtml(s.name)}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`,
               )
               .join("\n")
             : "😔 Hech kim javob bermadi.";
+          if (globalEntries.length > 25) {
+            globalBody += `\n<i>...va yana ${globalEntries.length - 25} nafar ishtirokchi</i>`;
+          }
 
-          text = `🏆 <b>MARAFON YAKUNLANDI!</b>\n\n📚 Fan: <b>${subjName}</b>\nJami: <b>${session.marathonBlocks.length} ta blok</b> o'ynaldi\n⏱ Umumiy vaqt: <b>${time}</b>\n\n👑 <b>YAKUNIY CHEMPIONLAR REYTINGI:</b>\n${globalBody}`;
+          text = `🏆 <b>MARAFON YAKUNLANDI!</b>\n\n📚 Fan: <b>${escapeHtml(subjName)}</b>\nJami: <b>${session.marathonBlocks.length} ta blok</b> o'ynaldi\n⏱ Umumiy vaqt: <b>${time}</b>\n\n👑 <b>YAKUNIY CHEMPIONLAR REYTINGI:</b>\n${globalBody}`;
         } else {
-          text = `🏁 <b>Musobaqa Yakunlandi!</b>\n\n📚 Fan: <b>${subjName}</b>\n🔖 Blok: <b>${tName}</b>\n⏱ Vaqt: <b>${time}</b>\n\n🏆 <b>Yakuniy Reyting:</b>\n${body}`;
+          text = `🏁 <b>Musobaqa Yakunlandi!</b>\n\n📚 Fan: <b>${escapeHtml(subjName)}</b>\n🔖 Blok: <b>${escapeHtml(tName)}</b>\n⏱ Vaqt: <b>${time}</b>\n\n🏆 <b>Yakuniy Reyting:</b>\n${body}`;
         }
 
         buttons = [
@@ -453,6 +487,10 @@ async function finishTest(chatId, telegram) {
           ],
         ];
       }
+    }
+
+    if (text.length > 4000) {
+      text = text.slice(0, 3950) + "\n\n<i>...(matn qisqartirildi)</i>";
     }
 
     await telegram.sendMessage(chatId, text, {
@@ -471,15 +509,26 @@ async function finishTest(chatId, telegram) {
 async function handlePollAnswer(pollAnswer, telegram) {
   const pollId = pollAnswer.poll_id;
 
+  // Agar foydalanuvchi ovozini bekor qilgan (retract) bo'lsa, option_ids bo'sh bo'ladi
+  if (!pollAnswer.option_ids || pollAnswer.option_ids.length === 0) {
+    return;
+  }
+
   const cachedPoll = await activePollsCache.get(pollId);
   if (cachedPoll) {
     const { chatId, correct_index, qData } = cachedPoll;
     
     const unlockGroup = await mutex.lock(`group_poll:${chatId}`);
     try {
-      const isCorrect = pollAnswer.option_ids[0] === correct_index;
-
       const uId = pollAnswer.user.id;
+      // Guruh testida bitta foydalanuvchi bir savolga faqat 1 marta ovoz berishi mumkin (dublyajni oldini olish)
+      const added = await redisConnection.sadd(`poll_voters:${pollId}`, String(uId)).catch(() => 1);
+      if (added === 0) {
+        return;
+      }
+      redisConnection.expire(`poll_voters:${pollId}`, 600).catch(() => {});
+
+      const isCorrect = pollAnswer.option_ids[0] === correct_index;
       const uName =
         [pollAnswer.user.first_name, pollAnswer.user.last_name]
           .filter(Boolean)
@@ -541,6 +590,14 @@ async function handlePollAnswer(pollAnswer, telegram) {
     session.consecutiveTimeouts = 0;
     try {
       await telegram.stopPoll(chatId, session.msgId);
+    } catch {
+      /* silent */
+    }
+
+    // Pending savol taymerini BullMQ navbatidan bekor qilamiz
+    try {
+      const { quizTimerQueue } = require("../jobs/queues");
+      quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
     } catch {
       /* silent */
     }

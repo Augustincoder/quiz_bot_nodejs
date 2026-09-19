@@ -11,14 +11,14 @@ const {
   clearState,
   updateData,
   getData,
-  getState,
   safeEdit,
-  safeDelete,
-  backToMainKb,
+  safeAnswerCb,
+  escapeHtml,
   progressBar,
   parseSuffix,
   parseDocxQuestions,
   parseTextQuestions,
+  downloadFile,
 } = require("../core/utils");
 const {
   SubjectSchema,
@@ -27,57 +27,7 @@ const {
 } = require("../validators/testValidators");
 const AI_WARNING_TEXT = `\n\n⚠️ *Eslatma:* _Bu javoblar tezkor AI modellarida tayyorlanmoqda va xatolar ehtimolligi bor. Rasmiy imtihonga tayyorlanayotganlar yoki Pro modellar uchun adminga murojaat qiling:_ @AvazovM`;
 
-// Input uzunligi chegaralari
-const MAX_SUBJECT_LEN = 50;
-const MAX_BLOCK_LEN = 50;
-
 // ─── TUGMALAR GENERATORI ─────────────────────────────────────
-function questionsSummaryKb() {
-  return Markup.inlineKeyboard([
-    [
-      Markup.button.callback("🤖 AI test", "fmt_ai"),
-      Markup.button.callback("📊 Quiz qo'shish", "fmt_quiz"),
-    ],
-    [
-      Markup.button.callback("📝 Matn orqali", "fmt_text"),
-      Markup.button.callback("📄 Docx fayl", "fmt_docx"),
-    ],
-    [Markup.button.callback("👁 Savollarni ko'rib chiqish", "preview_q_0")],
-    [Markup.button.callback("✅ Yakunlash va Saqlash", "finish_test_creation")],
-    [Markup.button.callback("❌ Bekor qilish", "cancel_creation")],
-    [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
-  ]);
-}
-function autoDocxKb() {
-  return Markup.inlineKeyboard([
-    [
-      Markup.button.callback(
-        "📄 Word fayl orqali avtomatik yuklash",
-        "auto_docx",
-      ),
-    ],
-    [Markup.button.callback("❌ Bekor qilish", "cancel_creation")],
-  ]);
-}
-function getDynamicKb(data) {
-  if (data.is_editing) {
-    return Markup.inlineKeyboard([
-      [
-        Markup.button.callback(
-          "🔙 Tahrirlash paneliga qaytish",
-          "back_to_edit_dash",
-        ),
-      ],
-    ]);
-  }
-  return questionsSummaryKb();
-}
-
-function cancelKb(cb = "cancel_creation") {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback("❌ Bekor qilish", cb)],
-  ]);
-}
 
 // const FORMAT_INSTRUCTIONS = {
 //   quiz: "📊 *Quiz Formati*\n\nTelegram'ning o'z quiz funksiyasidan foydalaning:\n\n1️⃣ 📎 (Biriktirish) belgisini bosing\n2️⃣ *Poll* → *Quiz* rejimini tanlang\n3️⃣ Savol va javob variantlarini kiriting\n4️⃣ To'g'ri javobni belgilab yuboring\n\n💡 _Har bir quiz ayrima xabar sifatida yuboriladi._",
@@ -834,21 +784,7 @@ async function onDocxFile(ctx) {
 
   try {
     const link = await ctx.telegram.getFileLink(doc.file_id);
-    const https = require("https");
-    const http = require("http");
-    await new Promise((resolve, reject) => {
-      const file = require("fs").createWriteStream(filePath);
-      const req = link.href.startsWith("https") ? https : http;
-      req
-        .get(link.href, (res) => {
-          res.pipe(file);
-          file.on("finish", () => {
-            file.close();
-            resolve();
-          });
-        })
-        .on("error", reject);
-    });
+    await downloadFile(link.href, filePath);
 
     // ─── YANGI PARSER (xato va to'g'ri savollarni ajratadi)
     // ─── YANGI PARSER (xato va to'g'ri savollarni ajratadi)
@@ -899,7 +835,15 @@ async function onDocxFile(ctx) {
         chunks.push(finalValidQs.slice(i, i + 25));
       }
 
-      await updateData(ctx, { chunks, invalidQs, questions: finalValidQs });
+      const autoBlockName =
+        data.block_name ||
+        (doc.file_name ? doc.file_name.replace(/\.[^/.]+$/, "") : "Avto-test");
+      await updateData(ctx, {
+        chunks,
+        invalidQs,
+        questions: finalValidQs,
+        block_name: autoBlockName,
+      });
       await ctx.telegram
         .deleteMessage(ctx.chat.id, statusMsg.message_id)
         .catch(() => {});
@@ -931,7 +875,7 @@ async function onDocxFile(ctx) {
       // Asosiy Panelga (Draft Dashboard) qaytaramiz
       return showDraftDashboard(ctx);
     }
-  } catch (e) {
+  } catch {
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       statusMsg.message_id,
@@ -1028,6 +972,71 @@ async function showAutoDocxStatusMenu(
       ...Markup.inlineKeyboard(buttons),
     });
   }
+}
+
+async function cbPreviewChunk(ctx) {
+  await safeAnswerCb(ctx);
+  const match = ctx.callbackQuery?.data?.match(/^preview_chunk_(\d+)_(\d+)$/);
+  if (!match) return;
+  const chunkIdx = parseInt(match[1], 10);
+  const page = parseInt(match[2], 10) || 0;
+
+  const data = await getData(ctx);
+  const chunks = data.chunks || [];
+  const chunk = chunks[chunkIdx];
+
+  if (!chunk || !chunk.length) {
+    return ctx
+      .answerCbQuery("⚠️ Ushbu qismda savollar topilmadi!", {
+        show_alert: true,
+      })
+      .catch(() => {});
+  }
+
+  const ITEMS_PER_PAGE = 5;
+  const totalPages = Math.ceil(chunk.length / ITEMS_PER_PAGE);
+  const validPage = Math.max(0, Math.min(page, totalPages - 1));
+
+  const startIdx = validPage * ITEMS_PER_PAGE;
+  const endIdx = Math.min(startIdx + ITEMS_PER_PAGE, chunk.length);
+  const currentQs = chunk.slice(startIdx, endIdx);
+
+  let text = `📁 <b>${chunkIdx + 1}-qism savollari</b> (Jami: ${chunk.length} ta)\n<i>Sahifa: ${validPage + 1} / ${totalPages}</i>\n\n`;
+
+  currentQs.forEach((q, i) => {
+    const actualNum = startIdx + i + 1;
+    const correctAns = q.options?.[q.correct_index] || "Noma'lum";
+    text += `<b>${actualNum}.</b> ${escapeHtml(q.question)}\n✅ <i>Javob:</i> ${escapeHtml(correctAns)}\n\n`;
+  });
+
+  const buttons = [];
+  const navRow = [];
+  if (validPage > 0) {
+    navRow.push(
+      Markup.button.callback(
+        "⬅️ Oldingi",
+        `preview_chunk_${chunkIdx}_${validPage - 1}`,
+      ),
+    );
+  }
+  if (validPage < totalPages - 1) {
+    navRow.push(
+      Markup.button.callback(
+        "Keyingi ➡️",
+        `preview_chunk_${chunkIdx}_${validPage + 1}`,
+      ),
+    );
+  }
+  if (navRow.length > 0) buttons.push(navRow);
+
+  buttons.push([
+    Markup.button.callback("🔙 Qismlar ro'yxatiga", "show_status_menu"),
+  ]);
+
+  return safeEdit(ctx, text, {
+    parse_mode: "HTML",
+    ...Markup.inlineKeyboard(buttons),
+  });
 }
 
 async function onQuestionMessage(ctx) {
@@ -1197,16 +1206,16 @@ async function cbPreviewGrid(ctx) {
   const endIdx = Math.min(startIdx + ITEMS_PER_PAGE, questions.length);
   const currentQs = questions.slice(startIdx, endIdx);
 
-  let text = `👁 *Barcha savollar* (Jami: ${questions.length} ta)\n_Sahifa: ${validPage + 1} / ${totalPages}_\n\n`;
+  let text = `👁 <b>Barcha savollar</b> (Jami: ${questions.length} ta)\n<i>Sahifa: ${validPage + 1} / ${totalPages}</i>\n\n`;
 
   // Har bir savolni to'liq o'qiymiz, faqat to'g'ri javobini chiqaramiz
   currentQs.forEach((q, i) => {
     const actualNum = startIdx + i + 1;
     const correctAns = q.options[q.correct_index] || "Noma'lum";
-    text += `*${actualNum}.* ${escapeMarkdown(q.question)}\n✅ _Javob:_ ${escapeMarkdown(correctAns)}\n\n`;
+    text += `<b>${actualNum}.</b> ${escapeHtml(q.question)}\n✅ <i>Javob:</i> ${escapeHtml(correctAns)}\n\n`;
   });
 
-  text += `_Batafsil ko'rish yoki tahrirlash uchun pastdagi mos raqamni tanlang:_`;
+  text += `<i>Batafsil ko'rish yoki tahrirlash uchun pastdagi mos raqamni tanlang:</i>`;
 
   const buttons = [];
 
@@ -1252,7 +1261,7 @@ async function cbPreviewGrid(ctx) {
   ]);
 
   await safeEdit(ctx, text, {
-    parse_mode: "Markdown",
+    parse_mode: "HTML",
     ...Markup.inlineKeyboard(buttons),
   });
 }
@@ -1267,17 +1276,17 @@ async function cbPreviewQuestion(ctx) {
   if (idx < 0 || idx >= questions.length) return cbPreviewGrid(ctx); // Xavfsizlik
 
   const q = questions[idx];
-  let text = `👁 *Savol batafsil* (${idx + 1} / ${questions.length})\n\n*${escapeMarkdown(q.question)}*\n\n`;
+  let text = `👁 <b>Savol batafsil</b> (${idx + 1} / ${questions.length})\n\n<b>${escapeHtml(q.question)}</b>\n\n`;
   const labels = ["A", "B", "C", "D", "E", "F"];
 
   q.options.forEach((opt, i) => {
-    text += `${i === q.correct_index ? "✅" : "❌"} *${labels[i]})* ${escapeMarkdown(opt)}\n`;
+    text += `${i === q.correct_index ? "✅" : "❌"} <b>${labels[i]})</b> ${escapeHtml(opt)}\n`;
   });
 
   const page = Math.floor(idx / 10); // Qaysi sahifaga tegishliligini hisoblaymiz
 
   await safeEdit(ctx, text, {
-    parse_mode: "Markdown",
+    parse_mode: "HTML",
     ...Markup.inlineKeyboard([
       [
         Markup.button.callback("✏️ Tahrirlash", `edit_q_${idx}`),
@@ -1748,15 +1757,25 @@ function register(bot) {
   bot.action("back_to_dashboard", cbBackToDashboard);
 
   bot.action(/^parse_(hash|first)_(text|docx)/, cbParseModeSelect);
-  bot.action("ignore", (ctx) => ctx.answerCbQuery().catch(() => {}));
+  bot.action("ignore", (ctx) => safeAnswerCb(ctx));
 
   bot.action("auto_docx_init", cbAutoDocxInit); // YANGI
   bot.action("back_to_formats", cbBackToFormats); // YANGI
   bot.action("show_status_menu", async (ctx) => {
-    // YANGI
-    await ctx.answerCbQuery().catch(() => {});
+    await safeAnswerCb(ctx);
+    const data = await getData(ctx);
+    if (data.is_auto_docx && data.chunks) {
+      return showAutoDocxStatusMenu(
+        ctx,
+        data.chunks,
+        (data.invalidQs || []).length,
+      );
+    }
     await showCreationStatusMenu(ctx);
   });
+
+  bot.action("finish_auto_docx", cbFinishCreation);
+  bot.action(/^preview_chunk_/, cbPreviewChunk);
 
   bot.action(/^fix_errors_/, cbFixErrors);
   bot.action(/^del_err_/, cbDeleteError);

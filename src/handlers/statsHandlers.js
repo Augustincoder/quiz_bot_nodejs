@@ -2,6 +2,7 @@
 
 const { Markup } = require("telegraf");
 const dbService = require("../services/dbService");
+const redis = require("../services/redisService");
 const {
   safeEdit,
   backToMainKb,
@@ -15,15 +16,13 @@ const ITEMS_PER_PAGE = 5;
 // ─── 1. STATS DASHBOARD ──────────────────────────────────────
 
 async function cbStatsMenu(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
+  await safeAnswerCb(ctx);
   try {
-    const [stats, rank] = await Promise.all([
-      dbService.getUserStats(ctx.from.id),
-      dbService.getUserRank(ctx.from.id),
-    ]);
-
+    const stats = await dbService.getUserStats(ctx.from.id);
     const correct = stats.total_correct || 0;
     const wrong = stats.total_wrong || 0;
+    const rank = await dbService.getUserRank(ctx.from.id, correct);
+
     const totalAnswers = correct + wrong;
     const accuracy =
       totalAnswers > 0 ? Math.round((correct / totalAnswers) * 100) : 0;
@@ -62,11 +61,22 @@ async function cbStatsMenu(ctx) {
 async function cbLeaderboard(ctx) {
   await safeAnswerCb(ctx, "🏆 Top-10 yuklanmoqda...");
   try {
-    const [topUsers, allUsers] = await Promise.all([
-      dbService.getTopUsers(10),
-      dbService.getAllUsers(),
-    ]);
+    const cacheKey = "cache:leaderboard:top10";
+    const cachedText = await redis.get(cacheKey);
 
+    if (cachedText) {
+      return safeEdit(ctx, cachedText, {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback("🔙 Orqaga", "stats_menu"),
+            Markup.button.callback("🏠 Asosiy Menyu", "back_to_main"),
+          ],
+        ]),
+      });
+    }
+
+    const topUsers = await dbService.getTopUsers(10);
     if (!topUsers?.length) {
       return safeEdit(
         ctx,
@@ -75,32 +85,35 @@ async function cbLeaderboard(ctx) {
       );
     }
 
+    const userIds = topUsers.map((u) => u.user_id);
+    const users = await dbService.getUsersByIds(userIds);
     const userMap = {};
-    (allUsers || []).forEach(
-      (u) => (userMap[u.telegram_id] = u.full_name || "Talaba"),
-    );
+    (users || []).forEach((u) => {
+      userMap[String(u.telegram_id)] = u.full_name || "Talaba";
+    });
 
     const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
     const lines = topUsers.map((user, i) => {
-      const name = escapeHtml(userMap[user.user_id] || "Maxfiy Talaba");
+      const name = escapeHtml(userMap[String(user.user_id)] || "Maxfiy Talaba");
       return `${medals[i] ?? "🔸"} <b>${name}</b> — ${user.correct} ball`;
     });
 
-    await safeEdit(
-      ctx,
+    const leaderboardText =
       `🏆 <b>Kuchlilar O'nligi (Top-10)</b>\n\n━━━━━━━━━━━━━━━━\n` +
-        lines.join("\n") +
-        `\n━━━━━━━━━━━━━━━━\n<i>💡 Ballar to'g'ri javoblar soniga qarab hisoblanadi.</i>`,
-      {
-        parse_mode: "HTML",
-        ...Markup.inlineKeyboard([
-          [
-            Markup.button.callback("🔙 Orqaga", "stats_menu"),
-            Markup.button.callback("🏠 Asosiy Menyu", "back_to_main"),
-          ],
-        ]),
-      },
-    );
+      lines.join("\n") +
+      `\n━━━━━━━━━━━━━━━━\n<i>💡 Ballar to'g'ri javoblar soniga qarab hisoblanadi.</i>`;
+
+    await redis.set(cacheKey, leaderboardText, "EX", 60).catch(() => {});
+
+    await safeEdit(ctx, leaderboardText, {
+      parse_mode: "HTML",
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback("🔙 Orqaga", "stats_menu"),
+          Markup.button.callback("🏠 Asosiy Menyu", "back_to_main"),
+        ],
+      ]),
+    });
   } catch (e) {
     console.error("cbLeaderboard error:", e.message);
   }
@@ -194,7 +207,7 @@ function register(bot) {
   bot.action("stats_menu", cbStatsMenu);
   bot.action("stats_leaderboard", cbLeaderboard);
   bot.action(/^stats_history/, cbHistoryPage);
-  bot.action("ignore", (ctx) => ctx.answerCbQuery()).catch(() => {});
+  bot.action("ignore", (ctx) => safeAnswerCb(ctx));
 }
 
 module.exports = { register, cbStatsMenu, cbLeaderboard, cbHistoryPage };

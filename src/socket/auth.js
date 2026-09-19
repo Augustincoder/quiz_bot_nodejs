@@ -1,22 +1,33 @@
 const crypto = require("crypto");
 const { URLSearchParams } = require("url");
 const { BOT_TOKEN } = require("../config/config");
+const logger = require("../core/logger");
 
 function validateTelegramInitData(initData) {
   if (!initData) return false;
 
-  const urlParams = new URLSearchParams(initData);
-  const hash = urlParams.get("hash");
-  if (!hash) return false;
-  urlParams.delete("hash");
-  
-  const keys = Array.from(urlParams.keys()).sort();
-  const dataCheckString = keys.map(key => `${key}=${urlParams.get(key)}`).join("\n");
+  try {
+    const urlParams = new URLSearchParams(initData);
+    const hash = urlParams.get("hash");
+    if (!hash) return false;
+    urlParams.delete("hash");
 
-  const secretKey = crypto.createHmac("sha256", "WebAppData").update(BOT_TOKEN || "").digest();
-  const hex = crypto.createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
+    // Check expiration (24 hours) to prevent replay attacks
+    const authDate = parseInt(urlParams.get("auth_date"), 10);
+    if (authDate && (Math.floor(Date.now() / 1000) - authDate > 86400)) {
+      return false;
+    }
 
-  return hex === hash;
+    const keys = Array.from(urlParams.keys()).sort();
+    const dataCheckString = keys.map(key => `${key}=${urlParams.get(key)}`).join("\n");
+
+    const secretKey = crypto.createHmac("sha256", "WebAppData").update(BOT_TOKEN || "").digest();
+    const hex = crypto.createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
+
+    return hex === hash;
+  } catch {
+    return false;
+  }
 }
 
 const socketAuthMiddleware = (socket, next) => {
@@ -26,14 +37,16 @@ const socketAuthMiddleware = (socket, next) => {
 
     // 1. Local Bypass
     if (isMockAuthEnabled) {
-      let userObj = { id: "mock_user_" + Math.floor(Math.random()*10000), first_name: "MockUser" };
+      let userObj = { id: "mock_user_" + Math.floor(Math.random() * 10000), first_name: "MockUser" };
       if (initData) {
         const params = new URLSearchParams(initData);
         const userStr = params.get("user");
         if (userStr) {
           try {
             userObj = JSON.parse(decodeURIComponent(userStr));
-          } catch(e) {}
+          } catch {
+            // ignore JSON parse error in mock mode
+          }
         }
       }
       socket.user = userObj;
@@ -59,9 +72,9 @@ const socketAuthMiddleware = (socket, next) => {
 
     next();
   } catch (error) {
-    console.error("Socket auth error:", error);
+    logger.error("Socket auth error:", { error: error.message });
     next(new Error("Authentication error: Internal validation failure"));
   }
 };
 
-module.exports = { socketAuthMiddleware };
+module.exports = { validateTelegramInitData, socketAuthMiddleware };

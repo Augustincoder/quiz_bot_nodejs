@@ -6,9 +6,9 @@ const sessionService = require('../services/sessionService');
 const dbService = require('../services/dbService');
 const logger = require('../core/logger');
 const {
-  States, setState, clearState, safeAnswerCb,
+  States, setState, clearState, updateData, getData, safeAnswerCb,
   safeEdit, escapeHtml, buildUserContext,
-  backToMainKb, sanitizeForTelegram
+  backToMainKb, sanitizeForTelegram, isAdmin, adminGuard
 } = require('../core/utils');
 
 // ============================================
@@ -97,12 +97,13 @@ async function cbInitContact(ctx) {
 async function handleContactMessages(ctx, next) {
   if (!ctx.message) return next();
 
-  const userId = ctx.from.id;
+  const userId = ctx.from?.id;
+  if (!userId) return next();
   const state = ctx.session?.state;
 
   // ─── ADMIN REPLY HANDLER ──────────────────────────────
   // Admin o'z chatida biror xabarga reply qilsa → foydalanuvchiga yuboradi
-  if (userId === ADMIN_ID && ctx.message.reply_to_message) {
+  if (isAdmin(userId) && ctx.message?.reply_to_message) {
     return handleAdminReply(ctx, next);
   }
 
@@ -153,8 +154,7 @@ async function handleContactMessages(ctx, next) {
     const activityContext = await getUserActivityContext(userId);
 
     // ─── GET USER CLASS INFO ──────────────────────────
-    const users = await dbService.getAllUsers();
-    const userRecord = users?.find(u => u.telegram_id === userId);
+    const userRecord = await dbService.getUserByTelegramId(userId);
     const className = userRecord?.class_name || '—';
 
     // ─── BUILD MESSAGE TYPE LABEL ──────────────────────
@@ -315,12 +315,11 @@ async function cbAdminReplyToUser(ctx) {
   // ─── Get user info ────────────────────────────────
   let userInfo = `<code>${targetUserId}</code>`;
   try {
-    const users = await dbService.getAllUsers();
-    const user = users?.find(u => u.telegram_id === targetUserId);
+    const user = await dbService.getUserByTelegramId(targetUserId);
     if (user?.full_name) {
       userInfo = `${escapeHtml(sanitizeForTelegram(user.full_name))} (<code>${targetUserId}</code>)`;
     }
-  } catch (_) {}
+  } catch {}
 
   // ─── Save reply state ─────────────────────────────
   // Admin sessiyasiga target user id ni yozamiz
@@ -405,7 +404,7 @@ async function handleAdminReplyState(ctx) {
  */
 async function handleAdminReply(ctx, next) {
   // Faqat admin uchun
-  if (ctx.from.id !== ADMIN_ID) return next();
+  if (!isAdmin(ctx.from?.id)) return next();
 
   const replyToMsg = ctx.message.reply_to_message;
   if (!replyToMsg) return next();
@@ -720,7 +719,7 @@ async function cbWarnUser(ctx) {
   );
 
   setState(ctx, States.ADMIN_WARNING);
-  await ctx.session.save({ warning_target_id: userId });
+  await updateData(ctx, { warning_target_id: userId });
 }
 
 /**
@@ -772,6 +771,59 @@ async function cbWarnTemplate(ctx) {
 }
 
 /**
+ * Admin custom warning message input
+ */
+async function onAdminWarningInput(ctx) {
+  if (!isAdmin(ctx.from?.id)) return;
+
+  const data = await getData(ctx);
+  const targetUserId = data?.warning_target_id;
+  const text = ctx.message?.text?.trim();
+
+  if (!targetUserId || !text) {
+    clearState(ctx);
+    return ctx.reply("❌ Ogohlantirish matni yoki foydalanuvchi topilmadi.", backToMainKb());
+  }
+
+  try {
+    const warningText =
+      `⚠️ <b>OGOHLANTIRISH</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `Hurmatli foydalanuvchi,\n\n` +
+      `${escapeHtml(text)}\n\n` +
+      `⚠️ Keyingi buzilish ban bilan yakunlanadi.\n\n` +
+      `<i>Savol bo'lsa: /admin</i>`;
+
+    await ctx.telegram.sendMessage(parseInt(targetUserId, 10), warningText, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('✅ Tushundim', 'back_to_main')],
+        [Markup.button.callback('📞 Tushuntirish so\'rash', 'contact_admin')]
+      ])
+    });
+
+    await ctx.reply(
+      `✅ <b>Ogohlantirish yuborildi!</b>\n\n` +
+      `Foydalanuvchi ID: <code>${targetUserId}</code>\n` +
+      `Matn: <i>${escapeHtml(text)}</i>`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Admin panel', 'admin_panel_main')]
+        ])
+      }
+    );
+
+    logger.info('admin:warn_custom', { targetUserId });
+  } catch (e) {
+    logger.error('onAdminWarningInput error:', { error: e.message });
+    await ctx.reply(`❌ Foydalanuvchiga xabar yetkazib bo'lmadi: ${escapeHtml(e.message)}`, backToMainKb());
+  } finally {
+    clearState(ctx);
+  }
+}
+
+/**
  * Ban user (enhanced confirmation)
  */
 async function cbBanUser(ctx) {
@@ -779,8 +831,7 @@ async function cbBanUser(ctx) {
   const userId = parseSuffix(ctx.callbackQuery.data, 'ban_user_');
 
   try {
-    const users = await dbService.getAllUsers();
-    const user = users?.find(u => u.telegram_id === parseInt(userId, 10));
+    const user = await dbService.getUserByTelegramId(userId);
     
     const userName = user?.full_name 
       ? escapeHtml(sanitizeForTelegram(user.full_name))
@@ -825,8 +876,7 @@ async function cbConfirmBan(ctx) {
   try {
     await dbService.banUser(chatId);
 
-    const users = await dbService.getAllUsers();
-    const user = users?.find(u => u.telegram_id === chatId);
+    const user = await dbService.getUserByTelegramId(chatId);
     
     await ctx.telegram.editMessageText(
       ctx.chat.id,
@@ -895,15 +945,15 @@ function register(bot) {
   bot.action('contact_admin', cbInitContact);
   
   // ─── Admin reply actions ─────────────────────────
-  bot.action(/^reply_\d+_\d+$/, cbAdminReplyToUser);
-  bot.action('admin_cancel_reply', cbAdminCancelReply);
+  bot.action(/^reply_\d+_\d+$/, adminGuard(cbAdminReplyToUser));
+  bot.action('admin_cancel_reply', adminGuard(cbAdminCancelReply));
 
   // ─── Admin quick actions ─────────────────────────
-  bot.action(/^cancel_user_test_/, cbCancelUserTest);
-  bot.action(/^warn_user_/, cbWarnUser);
-  bot.action(/^warn_template_/, cbWarnTemplate);
-  bot.action(/^ban_user_/, cbBanUser);
-  bot.action(/^confirm_ban_/, cbConfirmBan);
+  bot.action(/^cancel_user_test_/, adminGuard(cbCancelUserTest));
+  bot.action(/^warn_user_/, adminGuard(cbWarnUser));
+  bot.action(/^warn_template_/, adminGuard(cbWarnTemplate));
+  bot.action(/^ban_user_/, adminGuard(cbBanUser));
+  bot.action(/^confirm_ban_/, adminGuard(cbConfirmBan));
   
   // ─── Message handler ─────────────────────────────
   // ⚠️ MUHIM: Bu handler eng oxirida bo'lishi kerak
@@ -913,5 +963,6 @@ function register(bot) {
 module.exports = { 
   register,
   cbInitContact,
-  handleContactMessages
+  handleContactMessages,
+  onAdminWarningInput
 };

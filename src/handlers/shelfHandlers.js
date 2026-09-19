@@ -7,7 +7,6 @@ const {
   clearState,
   safeEdit,
   backToMainKb,
-  safeAnswerCb,
 } = require("../core/utils");
 const { Markup } = require("telegraf");
 const { pendingShelfSaves } = require("../core/pendingStore");

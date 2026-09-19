@@ -1,12 +1,13 @@
 'use strict';
 
 const { Markup }        = require('telegraf');
+const mutex             = require('../core/mutex');
 const { SUBJECTS }      = require('../config/config');
 const dbService         = require('../services/dbService');
 const aiService         = require('../services/aiService');
 const sessionService    = require('../services/sessionService');
 const { safeEdit, parseSuffix } = require('../core/utils');
-const { initAndStartTest }      = require('./groupQuizLogic');
+const { initAndStartTest }      = require('./quizGame');
 
 async function cbAdaptiveTest(ctx) {
  await ctx.answerCbQuery().catch(() => {});
@@ -65,6 +66,7 @@ async function cbAdaptiveRun(ctx) {
   const subjName   = SUBJECTS[subjectKey] || subjectKey;
   const chatId     = ctx.chat.id;
 
+  const unlock = await mutex.lock(`start_test:${chatId}`);
   try {
     const existing = await sessionService.getActiveTest(chatId);
     if (existing) return ctx.answerCbQuery("⚠️ Avvalgi testni to'xtating: /stop", { show_alert: true }).catch(() => {});
@@ -93,6 +95,8 @@ async function cbAdaptiveRun(ctx) {
     await initAndStartTest(chatId, ctx.telegram, subjectKey, 'adaptive', { questions, block_name: '🎯 Shaxsiy Adaptiv Test' }, ctx.from.id, 'private');
   } catch (e) {
     console.error('cbAdaptiveRun error:', e.message);
+  } finally {
+    unlock();
   }
 }
 

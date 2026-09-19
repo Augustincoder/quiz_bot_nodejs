@@ -28,7 +28,8 @@ function getQuestionsByMode(mode) {
  * Returns the question payload WITHOUT the correctAnswer for secure client broadcast
  */
 function getSecureQuestionPayload(question) {
-  const { correctAnswer, ...secureQuestion } = question;
+  const secureQuestion = { ...question };
+  delete secureQuestion.correctAnswer;
   return secureQuestion;
 }
 

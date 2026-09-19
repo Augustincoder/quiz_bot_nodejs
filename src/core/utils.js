@@ -3,7 +3,7 @@ const { Markup } = require('telegraf');
 const fs = require('fs');
 const https = require('https');
 const http = require('http');
-const { ADMIN_ID, SUBJECTS } = require('../config/config');
+const { ADMIN_ID, ADMIN_IDS, SUBJECTS } = require('../config/config');
 
 // ─── TTLMap (Auto-expiring in-memory cache) ──────────────────
 class TTLMap {
@@ -70,6 +70,7 @@ const States = {
   ADMIN_AI_TESTS_ADAPTIVE_USER: 'admin:ai_tests_adaptive_user',
   ADMIN_AI_TESTS_ADAPTIVE_COUNT: 'admin:ai_tests_adaptive_count',
   ADMIN_AI_TESTS_GENERATE:  'admin:ai_tests_generate',
+  ADMIN_WARNING:            'admin:warning',
 };
 
 const STATE_LABELS = {
@@ -104,12 +105,56 @@ const backToMainKb = (extraButtons = []) => Markup.inlineKeyboard([...extraButto
 
 const safeAnswerCb = async (ctx, text, opts) => { try { await ctx.answerCbQuery(text, opts); } catch {} };
 
+const truncateText = (text, max = 4000) => {
+  if (!text || typeof text !== 'string') return text || '';
+  if (text.length <= max) return text;
+  return text.slice(0, max - 40) + '\n\n<i>...(matn qisqartirildi)</i>';
+};
+
+function splitMessage(text, maxLength = 4000) {
+  if (!text || typeof text !== 'string') return [text || ''];
+  if (text.length <= maxLength) return [text];
+
+  const chunks = [];
+  let current = '';
+  const lines = text.split('\n');
+
+  for (const line of lines) {
+    if ((current ? current + '\n' + line : line).length > maxLength) {
+      if (current) {
+        chunks.push(current);
+        current = '';
+      }
+      if (line.length > maxLength) {
+        for (let i = 0; i < line.length; i += maxLength) {
+          chunks.push(line.slice(i, i + maxLength));
+        }
+      } else {
+        current = line;
+      }
+    } else {
+      current = current ? current + '\n' + line : line;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
 const safeEdit = async (ctx, text, extra = {}) => {
+  const safeText = truncateText(text, 4000);
   try {
-    await ctx.editMessageText(text, { parse_mode: 'HTML', ...extra });
+    await ctx.editMessageText(safeText, { parse_mode: 'HTML', ...extra });
     return true;
-  } catch {
-    try { await ctx.reply(text, { parse_mode: 'HTML', ...extra }); return true; } catch { return false; }
+  } catch (err) {
+    if (err?.description?.includes('message is not modified')) {
+      return true;
+    }
+    try {
+      await ctx.reply(safeText, { parse_mode: 'HTML', ...extra });
+      return true;
+    } catch {
+      return false;
+    }
   }
 };
 
@@ -143,13 +188,46 @@ async function getUserName(bot, userId) {
   } catch { return 'Sirli Talaba'; }
 }
 
-const downloadFile = (url, destPath) => new Promise((resolve, reject) => {
+const downloadFile = (url, destPath, timeoutMs = 30_000) => new Promise((resolve, reject) => {
   const proto = url.startsWith('https') ? https : http;
   const file = fs.createWriteStream(destPath);
-  proto.get(url, (res) => {
+  let timer = null;
+
+  if (timeoutMs > 0) {
+    timer = setTimeout(() => {
+      file.destroy();
+      fs.unlink(destPath, () => {});
+      reject(new Error('Download timeout'));
+    }, timeoutMs);
+  }
+
+  const req = proto.get(url, (res) => {
+    if (res.statusCode !== 200) {
+      if (timer) clearTimeout(timer);
+      file.destroy();
+      fs.unlink(destPath, () => {});
+      reject(new Error(`Download failed with status ${res.statusCode}`));
+      return;
+    }
     res.pipe(file);
-    file.on('finish', () => { file.close(); resolve(); });
-  }).on('error', (err) => { fs.unlink(destPath, () => {}); reject(err); });
+    file.on('finish', () => {
+      if (timer) clearTimeout(timer);
+      file.close(resolve);
+    });
+    file.on('error', (err) => {
+      if (timer) clearTimeout(timer);
+      file.destroy();
+      fs.unlink(destPath, () => {});
+      reject(err);
+    });
+  });
+
+  req.on('error', (err) => {
+    if (timer) clearTimeout(timer);
+    file.destroy();
+    fs.unlink(destPath, () => {});
+    reject(err);
+  });
 });
 
 async function parseDocxQuestions(filePath, mode = 'hash') {
@@ -190,10 +268,21 @@ function parseTextQuestions(text, mode = 'hash') {
   return { valid, invalid };
 }
 
-const isAdmin = (userId) => String(userId) === String(ADMIN_ID);
+const isAdmin = (userId) => {
+  if (!userId) return false;
+  const numId = Number(userId);
+  if (Array.isArray(ADMIN_IDS) && ADMIN_IDS.includes(numId)) return true;
+  return String(userId) === String(ADMIN_ID);
+};
 
 const adminGuard = (fn) => async (ctx, ...args) => {
-  if (!isAdmin(ctx.from.id)) return safeAnswerCb(ctx, '⛔ Ruxsat yo\'q!', { show_alert: true });
+  const userId = ctx?.from?.id;
+  if (!isAdmin(userId)) {
+    if (ctx?.callbackQuery) {
+      return safeAnswerCb(ctx, '⛔ Ruxsat yo\'q!', { show_alert: true });
+    }
+    return ctx?.reply?.('⛔ Bu amal faqat bot adminlari uchun!')?.catch(() => {});
+  }
   return fn(ctx, ...args);
 };
 
@@ -215,6 +304,7 @@ module.exports = {
   safeAnswerCb, safeEdit, safeDelete,
   getUserName, parseDocxQuestions, parseTextQuestions,
   escapeHtml, sanitizeForTelegram,
+  truncateText, splitMessage,
   downloadFile, isAdmin, adminGuard, buildUserContext,
 };
 

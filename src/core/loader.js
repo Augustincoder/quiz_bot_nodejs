@@ -95,7 +95,7 @@ async function loadAllTests() {
  */
 async function syncUserNames() {
   try {
-    const allUsers = await dbService.getAllUsers();
+    const allUsers = await dbService.getAllUserNames();
     if (allUsers) {
       for (const user of allUsers) {
         const userName = user.name || user.full_name || user.first_name || "Talaba";

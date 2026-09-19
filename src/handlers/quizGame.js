@@ -1,6 +1,7 @@
 "use strict";
 const redisConnection = require("../services/redisService");
 const { Markup } = require("telegraf");
+const mutex = require("../core/mutex");
 const { SUBJECTS } = require("../config/config");
 const dbService = require("../services/dbService");
 const aiService = require("../services/aiService");
@@ -28,7 +29,6 @@ const {
   handlePollAnswer,
   questionTimeout,
   lastMistakesCache,
-  resolveTestName,
 } = require("./coreQuiz");
 const {
   cbRoomReady,
@@ -189,6 +189,7 @@ async function cbPage(ctx) {
 async function cbStartTest(ctx) {
   await ctx.answerCbQuery().catch(() => { });
   const chatId = ctx.chat.id;
+  const unlock = await mutex.lock(`start_test:${chatId}`);
   const memDb = require("../core/bot").memoryDb;
 
   try {
@@ -271,12 +272,15 @@ async function cbStartTest(ctx) {
     );
   } catch (e) {
     console.error("cbStartTest error:", e.message);
+  } finally {
+    unlock();
   }
 }
 
 async function cbPostStart(ctx) {
   await ctx.answerCbQuery().catch(() => { });
   const chatId = ctx.chat.id;
+  const unlock = await mutex.lock(`start_test:${chatId}`);
   const suffix = parseSuffix(ctx.callbackQuery.data, "post_start_");
   const parts = suffix.split("_");
   const testId = parseInt(parts[parts.length - 1], 10);
@@ -335,6 +339,8 @@ async function cbPostStart(ctx) {
     );
   } catch (e) {
     console.error("cbPostStart error:", e.message);
+  } finally {
+    unlock();
   }
 }
 
@@ -366,6 +372,7 @@ async function showUgcSubjectBlocks(ctx, creatorId, subject) {
 
 async function startUgcTest(ctx, testDb) {
   const chatId = ctx.chat?.id || ctx.from?.id;
+  const unlock = await mutex.lock(`start_test:${chatId}`);
   try {
     const existing = await sessionService.getActiveTest(chatId);
     if (existing)
@@ -401,6 +408,8 @@ async function startUgcTest(ctx, testDb) {
     );
   } catch (e) {
     console.error("startUgcTest error:", e.message);
+  } finally {
+    unlock();
   }
 }
 
@@ -422,6 +431,7 @@ async function cbUgcStart(ctx) {
 
 async function cbUserReadyStart(ctx) {
   const chatId = ctx.chat.id;
+  const unlock = await mutex.lock(`ready_start:${chatId}`);
   try {
     const session = await sessionService.getActiveTest(chatId);
     if (!session || session.status !== "preparing") {
@@ -485,29 +495,10 @@ async function cbUserReadyStart(ctx) {
     await sendNextQuestion(chatId, ctx.telegram);
   } catch (e) {
     console.error("cbUserReadyStart error:", e.message);
+  } finally {
+    unlock();
   }
 }
-
-async function cbPauseResume(ctx) {
-  await ctx.answerCbQuery("▶️ Test davom etmoqda...").catch(() => { });
-  const chatId = ctx.chat.id;
-
-  const session = await sessionService.getActiveTest(chatId);
-  if (session) {
-    session.status = "running";
-    await sessionService.setActiveTest(chatId, session);
-
-    await safeDelete(ctx); // Pauza menyusini o'chiramiz
-
-    // UX Flow: To'xtatilgan savolni foydalanuvchiga yangitdan (yangi vaqt bilan) jo'natamiz
-    const { sendNextQuestion } = require("./coreQuiz");
-    await sendNextQuestion(chatId, ctx.telegram);
-  } else {
-    await safeEdit(ctx, "⚠️ Test sessiyasi topilmadi yoki eskirgan.", { parse_mode: "HTML" });
-  }
-}
-
-
 
 // ─── TESTNI TO'XTATISH VA JAVONGA YO'NALTIRISH ─────────────
 // ─── 1. PAUZA MENYUSI (/stop Yoki To'xtatish bosilganda) ─────────────
@@ -580,16 +571,23 @@ async function cbPauseResume(ctx) {
   await safeDelete(ctx); // Pauza menyusini o'chiramiz
   
   const chatId = ctx.chat.id;
-  const sessionService = require("../services/sessionService");
-  const session = await sessionService.getActiveTest(chatId);
-  if (session) {
-    session.status = 'running';
-    session.consecutiveTimeouts = 0;
-    await sessionService.setActiveTest(chatId, session);
+  const unlock = await mutex.lock(`resume:${chatId}`);
+  try {
+    const session = await sessionService.getActiveTest(chatId);
+    if (session && session.status === 'paused') {
+      session.status = 'running';
+      session.consecutiveTimeouts = 0;
+      await sessionService.setActiveTest(chatId, session);
+      const { sendNextQuestion } = require("./coreQuiz");
+      await sendNextQuestion(chatId, ctx.telegram);
+    } else if (!session) {
+      await safeEdit(ctx, "⚠️ Test sessiyasi topilmadi yoki eskirgan.", { parse_mode: "HTML" }).catch(() => {});
+    }
+  } catch (e) {
+    console.error("cbPauseResume error:", e.message);
+  } finally {
+    unlock();
   }
-  
-  const { sendNextQuestion } = require("./coreQuiz");
-  await sendNextQuestion(chatId, ctx.telegram);
 }
 
 // ─── 3. SHU YERDA YAKUNLASH VA NATIJANI KO'RISH (Finish) ─────────────
@@ -632,6 +630,12 @@ async function cbPauseShelf(ctx) {
   // 2. Faol testni tozalaymiz
   if (session.pollId)
     await sessionService.deletePollChat(session.pollId).catch(() => { });
+  try {
+    const { quizTimerQueue } = require("../jobs/queues");
+    quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
+  } catch {
+    /* silent */
+  }
   await sessionService.deleteActiveTest(chatId).catch(() => { });
 
   await safeEdit(
@@ -719,20 +723,6 @@ async function cbReviewMistakes(ctx) {
   });
 }
 
-const wmCache = {
-  set: async (chatId, data) =>
-    await redisConnection.set(
-      `wm_state:${chatId}`,
-      JSON.stringify(data),
-      "EX",
-      3600,
-    ),
-  get: async (chatId) => {
-    const d = await redisConnection.get(`wm_state:${chatId}`);
-    return d ? JSON.parse(d) : null;
-  },
-  del: async (chatId) => await redisConnection.del(`wm_state:${chatId}`),
-};
 // ─── ERROR MASTERY (XATOLAR USTIDA ISHLASH) ───────────────────
 
 // 1. Format tanlash menyusi
@@ -1222,6 +1212,12 @@ async function cbForceFinish(ctx) {
     if (session.pollId) {
       await sessionService.deletePollChat(session.pollId).catch(() => { });
     }
+    try {
+      const { quizTimerQueue } = require("../jobs/queues");
+      quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
+    } catch {
+      /* silent */
+    }
     await sessionService.deleteActiveTest(chatId).catch(() => { });
   }
 
@@ -1245,18 +1241,23 @@ async function cbResumeTest(ctx) {
   const chatId = ctx.from?.id || ctx.chat?.id;
   try {
     await ctx.deleteMessage().catch(() => {});
-  } catch (e) {}
+  } catch {}
   
-  const sessionService = require("../services/sessionService");
-  const session = await sessionService.getActiveTest(chatId);
-  if (session) {
-    session.status = 'running';
-    session.consecutiveTimeouts = 0;
-    await sessionService.setActiveTest(chatId, session);
+  const unlock = await mutex.lock(`resume:${chatId}`);
+  try {
+    const session = await sessionService.getActiveTest(chatId);
+    if (session && session.status === 'paused') {
+      session.status = 'running';
+      session.consecutiveTimeouts = 0;
+      await sessionService.setActiveTest(chatId, session);
+      const { sendNextQuestion } = require("./coreQuiz");
+      await sendNextQuestion(chatId, ctx.telegram);
+    }
+  } catch (e) {
+    console.error("cbResumeTest error:", e.message);
+  } finally {
+    unlock();
   }
-  
-  const { sendNextQuestion } = require("./coreQuiz");
-  await sendNextQuestion(chatId, ctx.telegram);
 }
 
 // ─── REGISTER ────────────────────────────────────────────────
@@ -1309,4 +1310,5 @@ module.exports = {
   startUgcTest,
   resumeTestFromShelf,
   sendNextQuestion,
+  initAndStartTest,
 };

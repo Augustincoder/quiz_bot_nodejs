@@ -7,3 +7,6 @@
 {"error":"Cannot set property callbackQuery of #<Context> which has only a getter","level":"error","message":"Session Redis xatosi:","timestamp":"2026-05-21T10:01:36.077Z"}
 {"error":"questions is not defined","level":"error","message":"Session Redis xatosi:","timestamp":"2026-05-22T10:15:49.312Z"}
 {"error":"FORMAT_INSTRUCTIONS is not defined","level":"error","message":"Session Redis xatosi:","timestamp":"2026-05-23T15:30:26.205Z"}
+{"error":"supabaseUrl is required.","level":"error","message":"Supabase ulanish xatosi:","timestamp":"2026-09-19T16:13:27.978Z"}
+{"error":"supabaseUrl is required.","level":"error","message":"Supabase ulanish xatosi:","timestamp":"2026-09-19T17:07:18.618Z"}
+{"error":"supabaseUrl is required.","level":"error","message":"Supabase ulanish xatosi:","timestamp":"2026-09-19T17:09:54.248Z"}

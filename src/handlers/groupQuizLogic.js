@@ -1,14 +1,19 @@
 'use strict';
 
 const { Markup } = require('telegraf');
+const mutex = require('../core/mutex');
 const sessionService = require('../services/sessionService');
 const dbService = require('../services/dbService');
-const { safeDelete } = require('../core/utils');
+const { safeDelete, escapeHtml } = require('../core/utils');
 
 // Kutish zalini chizish (yaratish yoki yangilash) uchun yordamchi funksiya
 async function renderLobby(ctx, chatId, room, messageId = null) {
   const users = Object.values(room.readyUsers);
-  let usersList = users.map((name, i) => `<b>${i + 1}.</b> ${name}`).join('\n');
+  const displayUsers = users.slice(0, 30);
+  let usersList = displayUsers.map((name, i) => `<b>${i + 1}.</b> ${escapeHtml(name)}`).join('\n');
+  if (users.length > 30) {
+    usersList += `\n<i>...va yana ${users.length - 30} nafar qatnashchi</i>`;
+  }
   
   if (!usersList) {
     usersList = "<i>Hali hech kim qo'shilmadi...</i>";
@@ -18,9 +23,9 @@ async function renderLobby(ctx, chatId, room, messageId = null) {
   
   const text = `🎯 <b>MUSOBAQA KUTISH ZALI</b>\n\n` +
                `${modeText}\n` +
-               `📚 <b>Fan:</b> ${room.testData.subject} ${room.mode === 'block' ? '| 🔖 ' + room.testData.block_name : ''}\n\n` +
+               `📚 <b>Fan:</b> ${escapeHtml(room.testData.subject || '')} ${room.mode === 'block' ? '| 🔖 ' + escapeHtml(room.testData.block_name || '') : ''}\n\n` +
                `👥 <b>Qatnashchilar (${users.length}):</b>\n${usersList}\n\n` +
-               `<i>⚠️ Testni faqatgina muallif (${room.initiatorName}) boshlay oladi.</i>`;
+               `<i>⚠️ Testni faqatgina muallif (${escapeHtml(room.initiatorName || 'Muallif')}) boshlay oladi.</i>`;
 
   const buttons = [
     [Markup.button.callback('✋ Qatnashish', 'room_ready')],
@@ -35,13 +40,17 @@ async function renderLobby(ctx, chatId, room, messageId = null) {
     await ctx.telegram.editMessageText(chatId, messageId, undefined, text, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard(buttons)
-    }).catch(() => {});
+    }).catch((err) => {
+      if (!err?.description?.includes('message is not modified')) {
+        console.error('renderLobby edit error:', err.message);
+      }
+    });
   } else {
     // Yangi xabar yuboramiz
     await ctx.telegram.sendMessage(chatId, text, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard(buttons)
-    });
+    }).catch((err) => console.error('renderLobby send error:', err.message));
   }
 }
 
@@ -107,10 +116,7 @@ async function createLobby(ctx, param) {
 // 2. Qatnashish tugmasi bosilganda
 async function cbRoomReady(ctx) {
   const chatId = ctx.chat.id;
-  const { mutex } = require('../core/bot'); // Try to get mutex if exported, otherwise require
-  const localMutex = require('../core/mutex');
-  
-  const unlock = await localMutex.lock(`room_ready:${chatId}`);
+  const unlock = await mutex.lock(`room_ready:${chatId}`);
   try {
     const room = await sessionService.getWaitingRoom(chatId);
     if (!room) return ctx.answerCbQuery('Kutish zali yopilgan!', { show_alert: true }).catch(() => {});
@@ -134,9 +140,9 @@ async function cbRoomReady(ctx) {
 }
 
 // 3. Testni boshlash tugmasi bosilganda (Faqat muallif uchun)
-// 3. Testni boshlash tugmasi bosilganda (Faqat muallif uchun)
 async function cbRoomStart(ctx) {
   const chatId = ctx.chat.id;
+  const unlock = await mutex.lock(`room_start:${chatId}`);
   try {
     const room = await sessionService.getWaitingRoom(chatId);
     if (!room) return ctx.answerCbQuery('Kutish zali yopilgan!', { show_alert: true }).catch(() => {});
@@ -244,6 +250,8 @@ async function cbRoomStart(ctx) {
 
   } catch (e) {
     console.error('cbRoomStart error:', e.message);
+  } finally {
+    unlock();
   }
 }
 
@@ -268,6 +276,7 @@ async function cbRoomCancel(ctx) {
 // 5. Marafonda keyingi blokni boshlash tugmasi (Faqat muallif uchun)
 async function cbRoomNextBlock(ctx) {
   const chatId = ctx.chat.id;
+  const unlock = await mutex.lock(`room_next:${chatId}`);
   try {
      const session = await sessionService.getActiveTest(chatId);
      if (!session || !session.isMarathon) return ctx.answerCbQuery("Test topilmadi", {show_alert: true}).catch(()=>{});
@@ -287,6 +296,8 @@ async function cbRoomNextBlock(ctx) {
      await sendNextQuestion(chatId, ctx.telegram);
   } catch(e) {
      console.error('cbRoomNextBlock err:', e.message);
+  } finally {
+     unlock();
   }
 }
 module.exports = { 

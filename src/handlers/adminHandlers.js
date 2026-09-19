@@ -9,10 +9,10 @@ const { ADMIN_ID, SUBJECTS }  = require('../config/config');
 const dbService                = require('../services/dbService');
 const logger                   = require('../core/logger');
 const {
-  States, setState, clearState, updateData, getData, getState,
+  States, setState, clearState, updateData, getData,
   safeEdit, backToMainKb, progressBar, parseSuffix,
   parseDocxQuestions, parseTextQuestions, escapeHtml, sanitizeForTelegram,
-  isAdmin, adminGuard, safeAnswerCb, downloadFile,
+  isAdmin, adminGuard, downloadFile,
 } = require('../core/utils');
 // ============================================
 // 🔧 ENCODING UTILITIES 
@@ -170,20 +170,10 @@ async function getAdminDashboardStats(forceRefresh = false) {
   };
 
   try {
-    const users = await dbService.getAllUsers();
-    if (!users?.length) return defaults;
+    const totalUsers = await dbService.getUserCount();
+    if (!totalUsers) return defaults;
 
-    // ✅ FIX: Chunk parallel DB calls to avoid overwhelming the DB connection pool
-    const CHUNK = 50;
-    const allStats = [];
-
-    for (let i = 0; i < users.length; i += CHUNK) {
-      const chunk = users.slice(i, i + CHUNK);
-      const results = await Promise.allSettled(
-        chunk.map(u => dbService.getUserStats(u.telegram_id))
-      );
-      allStats.push(...results);
-    }
+    const allStats = await dbService.getAllUserStats();
 
     let activeUsers  = 0;
     let totalTests   = 0;
@@ -191,17 +181,20 @@ async function getAdminDashboardStats(forceRefresh = false) {
     let totalCorrect = 0;
     let totalWrong   = 0;
 
-    for (const res of allStats) {
-      if (res.status !== 'fulfilled' || !res.value) continue;
-      const history = res.value.history;
-      if (!Array.isArray(history) || !history.length) continue;
+    for (const stat of allStats) {
+      const history = stat.history;
+      if (!Array.isArray(history) || !history.length) {
+        totalCorrect += stat.total_correct || 0;
+        totalWrong   += stat.total_wrong   || 0;
+        totalTests   += stat.tests_completed || 0;
+        continue;
+      }
 
-      // Single pass over history instead of multiple .some() / .filter()
       let isActive    = false;
       let todayCount  = 0;
 
       for (const h of history) {
-        const ts = h.timestamp || 0;
+        const ts = h.timestamp ? (typeof h.timestamp === 'string' ? new Date(h.timestamp).getTime() : h.timestamp) : 0;
         if (!isActive && ts > sevenDaysAgo) isActive = true;
         if (ts > todayStart) todayCount++;
         totalCorrect += h.correct || 0;
@@ -215,7 +208,7 @@ async function getAdminDashboardStats(forceRefresh = false) {
 
     const totalAnswers = totalCorrect + totalWrong;
     const result = {
-      totalUsers  : users.length,
+      totalUsers,
       activeUsers,
       totalTests,
       todayTests,
@@ -370,8 +363,8 @@ async function cbAdminUsersList(ctx) {
   );
 
   try {
-    const users = await dbService.getAllUsers();
-    if (!users?.length) {
+    const { users: chunk, total } = await dbService.getUsersPaginated(page, PER_PAGE);
+    if (!chunk.length && page === 0) {
       return safeEdit(
         ctx,
         '👥 <b>Foydalanuvchilar yo\'q</b>\n\nHali hech kim botni ishlatmagan.',
@@ -379,9 +372,8 @@ async function cbAdminUsersList(ctx) {
       );
     }
 
-    const totalPages = Math.max(1, Math.ceil(users.length / PER_PAGE));
+    const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
     const p          = Math.min(page, totalPages - 1);
-    const chunk      = users.slice(p * PER_PAGE, (p + 1) * PER_PAGE);
 
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
@@ -425,7 +417,7 @@ async function cbAdminUsersList(ctx) {
     const header =
       `👥 <b>FOYDALANUVCHILAR RO'YXATI</b>\n` +
       `━━━━━━━━━━━━━━━━━━━━\n\n` +
-      `📊 ${p * PER_PAGE + 1}–${Math.min((p + 1) * PER_PAGE, users.length)} / ${users.length}\n` +
+      `📊 ${p * PER_PAGE + 1}–${Math.min((p + 1) * PER_PAGE, total)} / ${total}\n` +
       `🟢 Faol (7 kun) | ⚫ Nofaol\n\n`;
 
     let body = lines.join('\n\n');
@@ -506,21 +498,7 @@ async function onAdminSearchInput(ctx) {
   const searching = await ctx.reply('🔍 Qidirilmoqda...');
 
   try {
-    const users = await dbService.getAllUsers();
-    if (!users?.length) {
-      return ctx.telegram.editMessageText(
-        ctx.chat.id, searching.message_id, undefined,
-        '❌ Foydalanuvchilar topilmadi.'
-      );
-    }
-
-    // ✅ FIX: Exact ID match takes priority; fall back to substring
-    const matches = users.filter(u => {
-      if (String(u.telegram_id) === query) return true;
-      if (u.username?.toLowerCase().includes(query)) return true;
-      if (u.full_name?.toLowerCase().includes(query)) return true;
-      return false;
-    });
+    const matches = await dbService.searchUsers(query, 20);
 
     await ctx.telegram.deleteMessage(ctx.chat.id, searching.message_id).catch(() => {});
 
@@ -646,8 +624,7 @@ async function cbAdminShowUser(ctx) {
   }
 
   try {
-    const users = await dbService.getAllUsers();
-    const user  = users?.find(u => u.telegram_id === userId);
+    const user = await dbService.getUserByTelegramId(userId);
 
     if (!user) {
       return ctx.answerCbQuery('❌ Foydalanuvchi topilmadi', { show_alert: true });
@@ -673,8 +650,8 @@ async function cbAdminStats(ctx) {
   const loading = await ctx.reply('⏳ Batafsil statistika tayyorlanmoqda...');
 
   try {
-    const users = await dbService.getAllUsers();
-    const count  = users?.length ?? 0;
+    const totalUsers = await dbService.getUserCount();
+    const count  = totalUsers;
 
     // ✅ FIX: Reuse dashboard stats + subject breakdown in single pass
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -688,38 +665,37 @@ async function cbAdminStats(ctx) {
     let activeUsers = 0, totalTests = 0, totalCorrect = 0, totalWrong = 0;
 
     if (count) {
-      const CHUNK = 50;
-      for (let i = 0; i < users.length; i += CHUNK) {
-        const results = await Promise.allSettled(
-          users.slice(i, i + CHUNK).map(u => dbService.getUserStats(u.telegram_id))
-        );
+      const allStats = await dbService.getAllUserStats();
 
-        for (const res of results) {
-          if (res.status !== 'fulfilled' || !res.value) continue;
-          const history = Array.isArray(res.value.history) ? res.value.history : [];
-          if (!history.length) continue;
-
-          let isActive = false;
-          for (const h of history) {
-            const ts = h.timestamp || 0;
-            if (!isActive && ts > sevenDaysAgo) isActive = true;
-
-            const c = h.correct || 0;
-            const w = h.wrong   || 0;
-            totalCorrect += c;
-            totalWrong   += w;
-
-            const bucket = bySubject[h.subject];
-            if (bucket) {
-              bucket.count++;
-              bucket.correct += c;
-              bucket.wrong   += w;
-            }
-          }
-
-          if (isActive) activeUsers++;
-          totalTests += history.length;
+      for (const stat of allStats) {
+        const history = Array.isArray(stat.history) ? stat.history : [];
+        if (!history.length) {
+          totalCorrect += stat.total_correct || 0;
+          totalWrong   += stat.total_wrong   || 0;
+          totalTests   += stat.tests_completed || 0;
+          continue;
         }
+
+        let isActive = false;
+        for (const h of history) {
+          const ts = h.timestamp ? (typeof h.timestamp === 'string' ? new Date(h.timestamp).getTime() : h.timestamp) : 0;
+          if (!isActive && ts > sevenDaysAgo) isActive = true;
+
+          const c = h.correct || 0;
+          const w = h.wrong   || 0;
+          totalCorrect += c;
+          totalWrong   += w;
+
+          const bucket = bySubject[h.subject];
+          if (bucket) {
+            bucket.count++;
+            bucket.correct += c;
+            bucket.wrong   += w;
+          }
+        }
+
+        if (isActive) activeUsers++;
+        totalTests += history.length;
       }
     }
 
@@ -779,12 +755,12 @@ async function cbAdminBroadcast(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   setState(ctx, States.ADMIN_BROADCAST);
 
-  const users = await dbService.getAllUsers().catch(() => []);
+  const usersCount = await dbService.getUserCount();
 
   await safeEdit(ctx,
     `📢 <b>OMMAVIY XABAR</b>\n` +
     `━━━━━━━━━━━━━━━━━━━━\n\n` +
-    `👥 Qabul qiluvchilar: <b>${users?.length || 0} ta</b>\n\n` +
+    `👥 Qabul qiluvchilar: <b>${usersCount} ta</b>\n\n` +
     `✍️ <b>Xabar matnini yuboring:</b>\n\n` +
     `<i>💡 HTML formatlash, rasm, video yuboring</i>`,
     {
@@ -820,13 +796,13 @@ async function onBroadcastMessage(ctx) {
     });
     setState(ctx, States.ADMIN_BROADCAST_CONFIRM);
 
-    const users      = await dbService.getAllUsers().catch(() => []);
+    const usersCount = await dbService.getUserCount();
     const previewText = text ? escapeHtml(text.slice(0, 500)) : '<i>[Media xabar]</i>';
 
     await ctx.reply(
       `📋 <b>XABAR PREVIEW</b>\n` +
       `━━━━━━━━━━━━━━━━━━━━\n\n` +
-      `👥 Qabul qiluvchilar: <b>${users?.length ?? 0} ta</b>\n\n` +
+      `👥 Qabul qiluvchilar: <b>${usersCount} ta</b>\n\n` +
       `📨 <b>Xabar:</b>\n${previewText}\n\n` +
       `⚠️ <b>Tasdiqlaysizmi?</b>`,
       {
@@ -868,8 +844,8 @@ async function cbBroadcastConfirm(ctx) {
   );
 
   try {
-    const users = await dbService.getAllUsers();
-    if (!users?.length) {
+    const recipients = await dbService.getBroadcastRecipients();
+    if (!recipients?.length) {
       return ctx.telegram.editMessageText(
         ctx.chat.id, progress.message_id, undefined,
         '❌ Foydalanuvchilar topilmadi.'
@@ -877,20 +853,37 @@ async function cbBroadcastConfirm(ctx) {
     }
 
     let success = 0, blocked = 0, failed = 0;
-    const total = users.length;
+    const total = recipients.length;
 
     for (let i = 0; i < total; i += BATCH_SIZE) {
-      const batch = users.slice(i, i + BATCH_SIZE);
+      const batch = recipients.slice(i, i + BATCH_SIZE);
 
-      await Promise.allSettled(batch.map(async u => {
+      await Promise.allSettled(batch.map(async telegramId => {
         try {
           if (hasMedia) {
-            await ctx.telegram.copyMessage(u.telegram_id, ctx.chat.id, messageId);
+            await ctx.telegram.copyMessage(telegramId, ctx.chat.id, messageId);
           } else {
-            await ctx.telegram.sendMessage(u.telegram_id, msgText, { parse_mode: 'HTML' });
+            await ctx.telegram.sendMessage(telegramId, msgText, { parse_mode: 'HTML' });
           }
           success++;
         } catch (err) {
+          if (err.parameters?.retry_after) {
+            const retrySec = err.parameters.retry_after;
+            logger.warn('broadcast:rate_limit_hit', { retrySec });
+            await new Promise(r => setTimeout(r, (retrySec + 1) * 1000));
+            try {
+              if (hasMedia) {
+                await ctx.telegram.copyMessage(telegramId, ctx.chat.id, messageId);
+              } else {
+                await ctx.telegram.sendMessage(telegramId, msgText, { parse_mode: 'HTML' });
+              }
+              success++;
+              return;
+            } catch {
+              failed++;
+              return;
+            }
+          }
           // ✅ FIX: Comprehensive block detection
           const msg = err.message || '';
           if (
@@ -902,24 +895,26 @@ async function cbBroadcastConfirm(ctx) {
             blocked++;
           } else {
             failed++;
-            logger.warn('broadcast:send_fail', { uid: u.telegram_id, err: msg });
+            logger.warn('broadcast:send_fail', { uid: telegramId, err: msg });
           }
         }
       }));
 
-      // Update progress every batch
-      const done    = Math.min(i + BATCH_SIZE, total);
-      const percent = Math.round((done / total) * 100);
-
-      await ctx.telegram.editMessageText(
-        ctx.chat.id, progress.message_id, undefined,
-        `⏳ <b>Yuborilmoqda...</b>\n\n` +
-        `📊 ${percent}% (${done}/${total})\n` +
-        `✅ Yuborildi: ${success}\n` +
-        `🔴 Bloklagan: ${blocked}\n` +
-        `⚠️ Xato: ${failed}`,
-        { parse_mode: 'HTML' }
-      ).catch(() => {});
+      // Update progress every 5 batches or at the end to prevent edit flood
+      const done = Math.min(i + BATCH_SIZE, total);
+      const isLastBatch = done >= total;
+      if (i % (BATCH_SIZE * 5) === 0 || isLastBatch) {
+        const percent = Math.round((done / total) * 100);
+        await ctx.telegram.editMessageText(
+          ctx.chat.id, progress.message_id, undefined,
+          `⏳ <b>Yuborilmoqda...</b>\n\n` +
+          `📊 ${percent}% (${done}/${total})\n` +
+          `✅ Yuborildi: ${success}\n` +
+          `🔴 Bloklagan: ${blocked}\n` +
+          `⚠️ Xato: ${failed}`,
+          { parse_mode: 'HTML' }
+        ).catch(() => {});
+      }
 
       // ✅ FIX: Respect Telegram rate limit (30 msg/sec → ~33ms/msg)
       // With BATCH_SIZE=20 we send 20 msgs then wait 1s → safe
@@ -1306,26 +1301,7 @@ async function onAdmDocxContent(ctx) {
 
   try {
     const link  = await ctx.telegram.getFileLink(doc.file_id);
-    const proto = link.href.startsWith('https') ? require('https') : require('http');
-
-    // ✅ FIX: Proper stream error handling with timeout
-    await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Download timeout')), 30_000);
-      const file    = fs.createWriteStream(filePath);
-
-      const req = proto.get(link.href, res => {
-        if (res.statusCode !== 200) {
-          clearTimeout(timeout);
-          reject(new Error(`HTTP ${res.statusCode}`));
-          return;
-        }
-        res.pipe(file);
-        file.on('finish', () => { clearTimeout(timeout); file.close(resolve); });
-        file.on('error', err => { clearTimeout(timeout); reject(err); });
-      });
-
-      req.on('error', err => { clearTimeout(timeout); reject(err); });
-    });
+    await downloadFile(link.href, filePath);
 
     const newQs = await parseDocxQuestions(filePath);
 
@@ -1518,35 +1494,6 @@ function register(bot) {
   // Misc
   bot.action('cancel_contact', cbCancelContact);
   bot.action('ignore', ctx => ctx.answerCbQuery().catch(() => {}));
-
-  // ✅ FIX: Centralized message router (avoid scattered bot.on('message'))
-  bot.on('message', async (ctx, next) => {
-    const state  = getState(ctx);
-    const userId = ctx.from?.id;
-    if (!state) return next();
-
-    // Admin-only states
-    if (isAdmin(userId)) {
-      if (state === States.ADMIN_SEARCH_USER && ctx.message?.text) {
-        return onAdminSearchInput(ctx);
-      }
-      if (state === States.ADMIN_BROADCAST) {
-        return onBroadcastMessage(ctx);
-      }
-      if (state === States.ADMIN_REPLY) {
-        return onReplyMessage(ctx);
-      }
-      if (state === States.ADM_CREATE_TEST_ID && ctx.message?.text) {
-        return onAdmTestId(ctx);
-      }
-      if (state === States.ADM_CREATE_CONTENT) {
-        if (ctx.message?.text) return onAdmTextContent(ctx);
-        if (ctx.message?.document) return onAdmDocxContent(ctx);
-      }
-    }
-
-    return next();
-  });
 }
 
 module.exports = {

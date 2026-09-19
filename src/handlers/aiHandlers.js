@@ -1,10 +1,7 @@
 'use strict';
 const { Markup } = require('telegraf');
 const aiService = require('../services/aiService');
-const { States, setState, safeEdit, clearState, backToMainKb } = require('../core/utils');
-const { config } = require('dotenv');
-const { ADMIN_ID } = require('../config/config');
-const { request } = require('express');
+const { States, setState, safeEdit, clearState, backToMainKb, isAdmin: checkIsAdmin } = require('../core/utils');
 
 // ============================================
 // 📊 RATE LIMITING VA USAGE TRACKING
@@ -221,18 +218,19 @@ async function cbAiEssayMenu(ctx) {
 }
 
 async function onEssayInput(ctx) {
-    const text = ctx.message.text;
-    const userId = ctx.from.id;
+    const text = ctx.message?.text?.trim();
+    const userId = ctx.from?.id;
+    if (!userId) return;
     
-    // Admin ro'yxati (o'zingizning admin ID larni qo'shing)
-    const ADMIN_IDS = config.ADMIN_ID ? [parseInt(config.ADMIN_ID, 10)] : [];
-   // Sizning admin ID
-    const isAdmin = ADMIN_IDS.includes(userId);
+    const isAdminUser = checkIsAdmin(userId);
     const isPremium = false; // Premium statusni DB dan olish kerak
 
     // Matn uzunligini tekshirish
     if (!text || text.length < 15) {
         return ctx.reply("⚠️ Matn juda qisqa.\n\nSifatli tahlil uchun kamida 2–3 gapdan iborat matn yuboring. Uzunroq matn — batafsilroq natija!");
+    }
+    if (text.length > 5000) {
+        return ctx.reply("⚠️ Matn juda uzun.\n\nMaksimal 5000 ta belgi yuborishingiz mumkin.");
     }
 
     // 🔒 Global limitni tekshirish
@@ -254,7 +252,7 @@ async function onEssayInput(ctx) {
     }
 
     // 🔒 User-level limitni tekshirish
-    const userCheck = checkUserLimit(userId, isPremium, isAdmin);
+    const userCheck = checkUserLimit(userId, isPremium, isAdminUser);
     if (!userCheck.allowed) {
         if (userCheck.reason === 'hourly_limit') {
             return ctx.reply(
