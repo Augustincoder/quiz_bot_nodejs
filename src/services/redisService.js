@@ -13,30 +13,44 @@ if (!process.env.REDIS_URL) {
   dummy.getBuffer = async () => null;
   dummy.set = async () => 'OK';
   dummy.del = async () => 1;
+  dummy.incr = async () => 1;
+  dummy.pexpire = async () => 1;
   dummy.quit = async () => 'OK';
   dummy.ping = async () => 'PONG';
   dummy.createWorkerConnection = () => null;
   redisConnection = dummy;
 } else {
   const isSecureRedis = process.env.REDIS_URL.startsWith('rediss://');
-  const redisOptions = {
-    maxRetriesPerRequest: null,
-    family: 0,
+  const baseOptions = {
+    family: 4, // Force IPv4 (avoids IPv6 connection timeouts on Render and cloud hosts)
+    connectTimeout: 10000,
+    keepAlive: 10000,
+    retryStrategy(times) {
+      return Math.min(times * 150, 3000);
+    },
   };
 
   if (isSecureRedis) {
-    redisOptions.tls = { rejectUnauthorized: false };
+    baseOptions.tls = { rejectUnauthorized: false };
   }
 
-  redisConnection = new Redis(process.env.REDIS_URL, redisOptions);
+  // Primary connection for caching, sessions, and rate-limiting
+  redisConnection = new Redis(process.env.REDIS_URL, {
+    ...baseOptions,
+    maxRetriesPerRequest: 3,
+  });
 
   redisConnection.on('error', (err) => console.error('❌ Redis Xatosi:', err.message));
   redisConnection.on('connect', () => {
     console.log(`✅ Redis muvaffaqiyatli ulandi! (SSL: ${isSecureRedis ? 'Yoniq' : "O'chiq"})`);
   });
 
+  // Dedicated worker connection factory for BullMQ (requires maxRetriesPerRequest: null)
   redisConnection.createWorkerConnection = () => {
-    return new Redis(process.env.REDIS_URL, redisOptions);
+    return new Redis(process.env.REDIS_URL, {
+      ...baseOptions,
+      maxRetriesPerRequest: null,
+    });
   };
 }
 
