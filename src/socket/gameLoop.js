@@ -1,11 +1,14 @@
 'use strict';
 
 const roomManager = require("./roomManager");
-const { getIo } = require("./index");
 const { supabase } = require('../lib/supabase');
 
+function getIoInstance() {
+  return require("./index").getIo();
+}
+
 async function advanceQuestion(roomCode) {
-  const io = getIo();
+  const io = getIoInstance();
   const room = await roomManager.getRoom(roomCode);
   if (!room) return;
 
@@ -75,7 +78,7 @@ async function advanceQuestion(roomCode) {
 }
 
 async function handleGameEnd(roomCode, room) {
-    const io = getIo();
+    const io = getIoInstance();
     room.status = 'ended';
     const finalLeaderboard = Array.from(room.players.values()).sort((a,b) => b.score - a.score);
     

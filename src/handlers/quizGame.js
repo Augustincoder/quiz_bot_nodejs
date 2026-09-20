@@ -1228,7 +1228,7 @@ async function cbForceFinish(ctx) {
     {
       parse_mode: "HTML",
       ...Markup.inlineKeyboard([
-        [Markup.button.callback("➕ Yangi test boshlash", "menu_test")],
+        [Markup.button.callback("➕ Yangi test boshlash", "official_tests")],
         [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
       ]),
     }
@@ -1263,6 +1263,7 @@ async function cbResumeTest(ctx) {
 // ─── REGISTER ────────────────────────────────────────────────
 function register(bot) {
   bot.action("official_tests", cbOfficialTests);
+  bot.action("menu_test", cbOfficialTests);
   bot.action(/^subj_/, cbSubject);
   bot.action(/^page_/, cbPage);
   bot.action(/^start_test_/, cbStartTest);
@@ -1293,6 +1294,10 @@ function register(bot) {
   bot.action("pause_resume", cbPauseResume);
   bot.action("pause_finish", cbPauseFinish);
   bot.action("pause_shelf", cbPauseShelf);
+
+  // Mistakes review & AI Tutor actions
+  bot.action(/^review_mistakes/, cbReviewMistakes);
+  bot.action(/^ai_explain_mistakes/, cbAiExplainMistakes);
 }
 
 module.exports = {

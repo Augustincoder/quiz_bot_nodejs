@@ -89,6 +89,7 @@ const States = {
   ADMIN_AI_TESTS_ADAPTIVE_COUNT: 'admin:ai_tests_adaptive_count',
   ADMIN_AI_TESTS_GENERATE:  'admin:ai_tests_generate',
   ADMIN_WARNING:            'admin:warning',
+  SET_CLASS:                'user:set_class',
 };
 
 const STATE_LABELS = {
@@ -103,6 +104,7 @@ const STATE_LABELS = {
   [States.USER_CONTACT]:       'Adminga murojaat',
   [States.ADMIN_BROADCAST]:    'Admin: Broadcast',
   [States.ADMIN_REPLY]:        'Admin: Javob yozish',
+  [States.SET_CLASS]:          'Guruhni sozlash',
 };
 
 // ─── Helpers ─────────────────────────────────────────────────

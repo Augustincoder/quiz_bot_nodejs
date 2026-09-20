@@ -221,6 +221,7 @@ bot.on("message", async (ctx, next) => {
     [States.CREATE_AI_QUESTIONS]: () => handlers.testCreation.onAiQuestionsInput(ctx),
     [States.AI_ESSAY_ANALYSIS]: () => handlers.ai.onEssayInput(ctx),
     [States.CREATE_SHELF_FOLDER]: () => handlers.shelf.onNewFolderInput(ctx),
+    [States.SET_CLASS]: () => handlers.profile.onSetClassInput(ctx),
 
     // Admin test creation & management
     [States.ADM_CREATE_TEST_ID]: () => handlers.admin.onAdmTestId(ctx),

@@ -4,7 +4,7 @@ const dbService = require('../services/dbService');
 const { getMainKeyboard } = require('../keyboards/keyboards');
 const sessionService = require('../services/sessionService');
 const {
-  userNameCache, clearState, safeEdit, safeAnswerCb, backToMainKb,
+  userNameCache, clearState, safeEdit, safeAnswerCb, backToMainKb, escapeHtml,
 } = require('../core/utils');
 
 async function cmdStart(ctx) {
@@ -101,15 +101,21 @@ async function cmdStart(ctx) {
   }
 
   // --- UX/UI Onboarding ---
-  const firstName = ctx.from.first_name || 'Talaba';
+  const rawFirstName = ctx.from.first_name || 'Talaba';
+  const firstName = escapeHtml(rawFirstName);
+  const userClass = await dbService.getUserClass(ctx.from.id);
+  const classNotice = userClass
+    ? `🎓 Guruhingiz: <b>${escapeHtml(userClass)}</b>\n`
+    : `💡 <i>Tavsiya: Dars jadvalingizni avtomatik olish uchun guruhingizni bir marta sozlab oling (/setclass)</i>\n`;
+
   const welcomeText = `👋 Assalomu alaykum, <b>${firstName}</b>!
 
 🎓 <b>Talabalar Imtihon Simulyatori</b>ga xush kelibsiz — imtihonga tayyorgarlikda sizning shaxsiy AI yordamchingiz.
 
-━━━━━━━━━━━━━━━━
+${classNotice}━━━━━━━━━━━━━━━━
 ✨ <b>Sizning 4 ta superkuchingiz:</b>
 
-📚 <b>Rasmiy Testlar</b> — Tasdiqlanagan test bazasidan yechib, bilimingizni sinab ko'ring
+📚 <b>Rasmiy Testlar</b> — Tasdiqlangan test bazasidan yechib, bilimingizni sinab ko'ring
 🤖 <b>AI Smart Quiz</b> — Darslik rasmi yoki matnini yuboring, AI bir zumda test tuzib beradi
 📥 <b>Javon</b> — Testni to'xtatib, istalgan paytda qolgan joyidan davom eting
 🧠 <b>AI Tutor</b> — Xatolaringizni batafsil tahlil qilib, har bir xatoni tushuntirib beradi
@@ -125,7 +131,7 @@ async function cmdStart(ctx) {
 async function cbBackToMain(ctx) {
   clearState(ctx);
   await safeAnswerCb(ctx);
-  const firstName = ctx.from.first_name || 'Talaba';
+  const firstName = escapeHtml(ctx.from.first_name || 'Talaba');
   const welcomeText = `🏛 <b>Asosiy Menyu</b>\n\nNimadan boshlaymiz, ${firstName}?`;
   await safeEdit(ctx, welcomeText, { parse_mode: 'HTML', ...getMainKeyboard() });
 }

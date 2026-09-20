@@ -796,6 +796,59 @@ async function cbAdminShowUser(ctx) {
   }
 }
 
+async function cbAdminUserStats(ctx) {
+  await ctx.answerCbQuery().catch(() => {});
+  const userId = parseInt(parseSuffix(ctx.callbackQuery.data, 'admin_user_stats_'), 10);
+
+  if (!userId || Number.isNaN(userId)) {
+    return ctx.answerCbQuery('❌ Noto\'g\'ri ID', { show_alert: true });
+  }
+
+  try {
+    const user = await dbService.getUserByTelegramId(userId);
+    const stats = await dbService.getUserStats(userId);
+    const history = stats?.history || [];
+    const safeName = escapeHtml(user?.full_name || 'Talaba');
+    const userClass = escapeHtml(user?.class_name || '—');
+    const uname = user?.username ? `@${escapeHtml(user.username)}` : 'yo\'q';
+
+    let text = `📊 <b>${safeName} — BATAFSIL TEST STATISTIKASI</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `🆔 ID: <code>${userId}</code>\n` +
+      `📧 Username: ${uname}\n` +
+      `🎓 Guruh: <b>${userClass}</b>\n\n` +
+      `🔢 Jami topshirilgan testlar: <b>${history.length} ta</b>\n` +
+      `✅ Jami to'g'ri javoblar: <b>${stats.total_correct || 0} ta</b>\n` +
+      `❌ Jami xatolar: <b>${stats.total_wrong || 0} ta</b>\n\n`;
+
+    if (history.length === 0) {
+      text += `<i>Foydalanuvchi hali biron marta test yakunlamagan.</i>`;
+    } else {
+      text += `📜 <b>So'nggi testlar:</b>\n`;
+      const recent = history.slice(-5).reverse();
+      recent.forEach((h, i) => {
+        const date = h.timestamp ? new Date(h.timestamp).toLocaleDateString('uz-UZ') : '—';
+        const subj = escapeHtml(h.subject || h.subjectKey || 'Test');
+        const score = h.percent !== undefined ? `${h.percent}%` : `${h.score}/${h.total}`;
+        text += `${i + 1}. <b>${subj}</b> — ${score} (📅 ${date})\n`;
+      });
+    }
+
+    const kb = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('↩️ Javob berish', `reply_${userId}`),
+        Markup.button.callback('👤 Profil', `admin_show_user_${userId}`),
+      ],
+      [Markup.button.callback('🔙 Dashboard', 'admin_panel_main')],
+    ]);
+
+    await ctx.reply(text, { parse_mode: 'HTML', ...kb });
+  } catch (err) {
+    logger.error('cbAdminUserStats', err);
+    await ctx.answerCbQuery('❌ Xatolik yuz berdi', { show_alert: true }).catch(() => {});
+  }
+}
+
 // ============================================
 // 📊 GLOBAL STATS - OPTIMIZED
 // ============================================
@@ -1633,6 +1686,7 @@ function register(bot) {
   bot.action(/^admin_users_page_\d+$/, adminGuard(cbAdminUsersList));
   bot.action('admin_search_user',      adminGuard(cbAdminSearchUser));
   bot.action(/^admin_show_user_\d+$/,  adminGuard(cbAdminShowUser));
+  bot.action(/^admin_user_stats_\d+$/, adminGuard(cbAdminUserStats));
 
   // Stats
   bot.action('admin_stats',            adminGuard(cbAdminStats));

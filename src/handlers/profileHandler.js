@@ -2,9 +2,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const { Markup } = require('telegraf');
 const dbService = require('../services/dbService');
 const edupageService = require('../services/edupageService');
-const { escapeHtml } = require('../core/utils');
+const { escapeHtml, States, setState, clearState, safeAnswerCb, safeEdit } = require('../core/utils');
 
 let VALID_GROUPS = [];
 try {
@@ -69,7 +70,96 @@ function findBestMatch(input, groups = VALID_GROUPS) {
   return minDist <= 2 ? best : null;
 }
 
+async function promptSetClass(ctx) {
+  await safeAnswerCb(ctx);
+  setState(ctx, States.SET_CLASS);
+
+  const text = `⚙️ <b>Guruhni sozlash</b>\n\nIltimos, guruhingiz nomini yozing:\n\n💡 <i>Masalan: <code>MI-15</code>, <code>BHA-51k</code> yoki <code>MNP-80</code></i>\n\nOddiygina guruh nomini shu chatga yuboring 👇`;
+  const kb = Markup.inlineKeyboard([
+    [Markup.button.callback('❌ Bekor qilish', 'cancel_set_class')],
+  ]);
+
+  if (ctx.callbackQuery) {
+    await safeEdit(ctx, text, { parse_mode: 'HTML', ...kb });
+  } else {
+    await ctx.reply(text, { parse_mode: 'HTML', ...kb });
+  }
+}
+
+async function onSetClassInput(ctx) {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+
+  const rawText = (ctx.message?.text || '').trim();
+  if (rawText.toLowerCase() === 'bekor qilish' || rawText === '/cancel') {
+    clearState(ctx);
+    return ctx.reply('❌ Guruhni sozlash bekor qilindi.', {
+      reply_markup: {
+        inline_keyboard: [[{ text: '🏠 Asosiy Menyu', callback_data: 'back_to_main' }]]
+      }
+    });
+  }
+
+  // Handle if user wrote /setclass MI-15 or just MI-15
+  let cleanInput = rawText;
+  if (cleanInput.toLowerCase().startsWith('/setclass')) {
+    cleanInput = cleanInput.replace(/^\/setclass\s*/i, '').trim();
+  }
+  cleanInput = cleanInput.replace(/^[*#]/, '').trim();
+
+  if (!cleanInput) {
+    return ctx.reply('⚠️ Guruh nomi kiritilmadi.\n\nIltimos, guruhingiz nomini yozing (Masalan: <code>MI-15</code>):', { parse_mode: 'HTML' });
+  }
+
+  if (cleanInput.length > 50) {
+    return ctx.reply('⚠️ Guruh nomi juda uzun (maksimal 50 ta belgi). Qaytadan kiriting:', { parse_mode: 'HTML' });
+  }
+
+  const groups = await getAvailableGroups();
+  const matchedGroup = edupageService.getCanonicalGroupName(cleanInput) || findBestMatch(cleanInput, groups);
+
+  if (!matchedGroup) {
+    const kb = Markup.inlineKeyboard([
+      [Markup.button.callback('❌ Bekor qilish', 'cancel_set_class')],
+    ]);
+    return ctx.reply(
+      `❌ "<b>${escapeHtml(cleanInput)}</b>" nomli guruh topilmadi.\n\n💡 Iltimos, guruh nomini to'g'ri yozganingizga ishonch hosil qilib qayta yuboring (Masalan: <code>MI-15</code> yoki <code>BHA-51k/24</code>):`,
+      { parse_mode: 'HTML', ...kb }
+    );
+  }
+
+  clearState(ctx);
+  const isCorrected = (cleanInput.toUpperCase() !== matchedGroup.toUpperCase());
+  const success = await dbService.updateUserClass(userId, matchedGroup);
+
+  if (success) {
+    const cleanGroup = escapeHtml(matchedGroup);
+    const msg = isCorrected ? `✅ Guruhingiz aniqlandi va saqlandi: <b>${cleanGroup}</b>` : `✅ Guruhingiz saqlandi: <b>${cleanGroup}</b>`;
+    const kb = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('📅 Bugungi jadval', 'schedule_today'),
+        Markup.button.callback('🖼 Haftalik jadval', 'schedule_week'),
+      ],
+      [
+        Markup.button.callback('🏢 Bo\'sh xonalar', 'schedule_rooms'),
+        Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main'),
+      ],
+    ]);
+    await ctx.reply(`${msg}\n\nEndi dars jadvalingizni bir zumda ko'rishingiz mumkin! 👇`, { parse_mode: 'HTML', ...kb });
+  } else {
+    await ctx.reply('⚠️ Saqlashda xatolik yuz berdi. Iltimos, bir ozdan so\'ng qaytadan urinib ko\'ring.');
+  }
+}
+
+async function cbCancelSetClass(ctx) {
+  clearState(ctx);
+  await safeAnswerCb(ctx, 'Bekor qilindi');
+  const scheduleHandler = require('./scheduleHandler');
+  return scheduleHandler.cmdTimetable(ctx);
+}
+
 async function cmdSetClass(ctx) {
+  clearState(ctx);
   const userId = ctx.from?.id;
   if (!userId) return;
 
@@ -77,7 +167,7 @@ async function cmdSetClass(ctx) {
   const userInput = text.substring(text.indexOf(' ') + 1).trim();
 
   if (!userInput || userInput === text) {
-    return ctx.reply('⚠️ Guruh nomi kiritilmadi.\n\n👉 Namuna: <code>/setclass MNP-80</code>\n\n💡 <i>O\'z guruhingiz nomini aniq ko\'rsating.</i>', { parse_mode: 'HTML' });
+    return promptSetClass(ctx);
   }
 
   // Length limit guard to prevent ReDoS / CPU starvation
@@ -99,7 +189,17 @@ async function cmdSetClass(ctx) {
   if (success) {
     const cleanGroup = escapeHtml(matchedGroup);
     const msg = isCorrected ? `✅ Guruhingiz aniqlandi va saqlandi: <b>${cleanGroup}</b>` : `✅ Guruhingiz saqlandi: <b>${cleanGroup}</b>`;
-    await ctx.reply(msg + '\nEndi dars jadvalingizni ko\'rishingiz mumkin. /jadval yoki /hafta ni bosing.', { parse_mode: 'HTML' });
+    const kb = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('📅 Bugungi jadval', 'schedule_today'),
+        Markup.button.callback('🖼 Haftalik jadval', 'schedule_week'),
+      ],
+      [
+        Markup.button.callback('🏢 Bo\'sh xonalar', 'schedule_rooms'),
+        Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main'),
+      ],
+    ]);
+    await ctx.reply(`${msg}\n\nEndi dars jadvalingizni bir zumda ko'rishingiz mumkin! 👇`, { parse_mode: 'HTML', ...kb });
   } else {
     await ctx.reply('⚠️ Saqlashda xatolik yuz berdi. Iltimos, bir ozdan so\'ng qaytadan urinib ko\'ring.');
   }
@@ -113,6 +213,16 @@ async function cbProfile(ctx) {
 function register(bot) {
   bot.command('setclass', cmdSetClass);
   bot.command('profile', cbProfile);
+  bot.action('prompt_set_class', promptSetClass);
+  bot.action('cancel_set_class', cbCancelSetClass);
 }
 
-module.exports = { register, cbProfile, cmdProfile: cbProfile, cmdSetClass };
+module.exports = {
+  register,
+  cbProfile,
+  cmdProfile: cbProfile,
+  cmdSetClass,
+  promptSetClass,
+  onSetClassInput,
+  cbCancelSetClass,
+};

@@ -314,8 +314,11 @@ async function onNameInput(ctx) {
 async function showDraftDashboard(ctx) {
   const data = await getData(ctx);
   const qCount = (data.questions || []).length;
+  const subject = data.subject || "🤖 AI Smart Quiz";
+  const blockName = data.block_name || "1-Blok";
 
-  let text = `📝 *Blok:* ${escapeMarkdown(data.block_name)}\n`;
+  let text = `📚 *Fan:* ${escapeMarkdown(subject)}\n`;
+  text += `📝 *Blok:* ${escapeMarkdown(blockName)}\n`;
   text += `🛒 *Savatdagi savollar:* ${qCount} ta\n\n`;
 
   const buttons = [];
@@ -382,6 +385,12 @@ async function cbFmt(ctx) {
     : "🔙 Ortga (Asosiy Panelga)";
 
   if (fmt === "ai") {
+    if (!data.subject) {
+      await updateData(ctx, {
+        subject: "🤖 AI Smart Quiz",
+        block_name: data.block_name || "1-Blok",
+      });
+    }
     const aiText = `🤖 *AI Smart Quiz — Sun'iy Intellekt bilan test yaratish*...`;
     return safeEdit(ctx, aiText, {
       parse_mode: "Markdown",
@@ -715,7 +724,9 @@ async function processAiResult(ctx, msgId, generatedQuestions) {
   }
   const data = await getData(ctx);
   const questions = [...(data.questions || []), ...generatedQuestions];
-  await updateData(ctx, { questions });
+  const subject = data.subject || "🤖 AI Smart Quiz";
+  const block_name = data.block_name || "1-Blok";
+  await updateData(ctx, { questions, subject, block_name });
   setState(ctx, States.CREATE_QUESTIONS);
 
   // 🤖 AQLLI MARSHRUT
@@ -1362,6 +1373,9 @@ async function cbFinishCreation(ctx) {
   const CHUNK_SIZE = 25; // Har bir blokdagi maksimal savollar soni
   let testIds = [];
 
+  const subject = data.subject || "🤖 AI Smart Quiz";
+  const baseBlockName = data.block_name || "1-Blok";
+
   if (data.editing_test_id) {
     // Agar eski testni tahrirlayotgan bo'lsa, shunchaki yangilaymiz
     await dbService.updateUserTestQuestions(
@@ -1376,8 +1390,8 @@ async function cbFinishCreation(ctx) {
       // Savollar oz bo'lsa, bitta qilib saqlaymiz
       const tId = await dbService.saveUserTest(
         ctx.from.id,
-        data.subject,
-        data.block_name,
+        subject,
+        baseBlockName,
         questions,
       );
       testIds.push(tId);
@@ -1390,10 +1404,10 @@ async function cbFinishCreation(ctx) {
 
       // Har bir qismni alohida blok qilib yozamiz
       for (let i = 0; i < chunks.length; i++) {
-        const chunkName = `${data.block_name} (${i + 1}-qism)`;
+        const chunkName = `${baseBlockName} (${i + 1}-qism)`;
         const tId = await dbService.saveUserTest(
           ctx.from.id,
-          data.subject,
+          subject,
           chunkName,
           chunks[i],
         );
@@ -1412,7 +1426,7 @@ async function cbFinishCreation(ctx) {
 
   await safeEdit(
     ctx,
-    `🎉 *Muvaffaqiyatli saqlandi!*\n\n📚 Fan: *${data.subject}*\n📝 Asosiy Blok: *${data.block_name}*\n🔢 Jami Savollar: *${questions.length} ta*${chunkMsg}\n\n🔗 *Butun fanni o'ynash (Marafon):*\n\`https://t.me/${botInfo.username}?start=s_${firstTestId}\``,
+    `🎉 *Muvaffaqiyatli saqlandi!*\n\n📚 Fan: *${subject}*\n📝 Asosiy Blok: *${baseBlockName}*\n🔢 Jami Savollar: *${questions.length} ta*${chunkMsg}\n\n🔗 *Butun fanni o'ynash (Marafon):*\n\`https://t.me/${botInfo.username}?start=s_${firstTestId}\``,
     Markup.inlineKeyboard([
       [
         Markup.button.callback(
@@ -1790,4 +1804,7 @@ module.exports = {
   onAiTextInput,
   onAiQuestionsInput,
   onAiImageInput,
+  cbFmt,
+  showDraftDashboard,
+  cbFinishCreation,
 };

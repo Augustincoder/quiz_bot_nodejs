@@ -208,7 +208,8 @@ async function cmdJadval(ctx) {
   await safeAnswerCb(ctx);
   const rawClass = await dbService.getUserClass(ctx.from.id);
   if (!rawClass) {
-    return ctx.reply('⚠️ Avval guruhingizni saqlashingiz kerak!\n\n👉 <code>/setclass MI-15</code>', { parse_mode: 'HTML' });
+    const profileHandler = require('./profileHandler');
+    return profileHandler.promptSetClass(ctx);
   }
   const className = edupageService.getCanonicalGroupName(rawClass) || rawClass;
 
@@ -245,7 +246,8 @@ async function cbScheduleDay(ctx) {
   await safeAnswerCb(ctx);
   const rawClass = await dbService.getUserClass(ctx.from.id);
   if (!rawClass) {
-    return ctx.reply('⚠️ Avval guruhingizni saqlashingiz kerak!\n\n👉 <code>/setclass MI-15</code>', { parse_mode: 'HTML' });
+    const profileHandler = require('./profileHandler');
+    return profileHandler.promptSetClass(ctx);
   }
   const className = edupageService.getCanonicalGroupName(rawClass) || rawClass;
 
@@ -291,7 +293,8 @@ async function cmdHafta(ctx) {
 
   const rawClass = await dbService.getUserClass(userId);
   if (!rawClass) {
-    return ctx.reply('⚠️ Avval <code>/setclass</code> komandasidan foydalaning (Masalan: <code>/setclass MI-15</code>).', { parse_mode: 'HTML' });
+    const profileHandler = require('./profileHandler');
+    return profileHandler.promptSetClass(ctx);
   }
 
   // Ensure canonical original group name ("asli ko'rinishi", e.g. "BHA-51k/24")
@@ -436,7 +439,8 @@ async function cmdTimetable(ctx) {
 
 async function cmdTimetableHelp(ctx) {
   await safeAnswerCb(ctx);
-  await ctx.reply('⚙️ <b>Guruhni qanday sozlash mumkin?</b>\n\n👉 <code>/setclass MNP-81</code>\n\n💡 Guruhingiz nomini aniq yozing, shunda bot har kuni jadvalingizni eslatib turadi.', { parse_mode: 'HTML' });
+  const profileHandler = require('./profileHandler');
+  return profileHandler.promptSetClass(ctx);
 }
 
 async function cmdXonalar(ctx) {

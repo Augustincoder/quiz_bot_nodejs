@@ -57,7 +57,7 @@ async function cbShelfSaveInit(ctx) {
       {
         parse_mode: "HTML",
         ...Markup.inlineKeyboard([
-          [Markup.button.callback("📚 Javonga o'tish", "menu_shelf")],
+          [Markup.button.callback("📚 Javonga o'tish", "my_shelf")],
           [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]
         ])
       }
@@ -207,8 +207,8 @@ async function executeSave(ctx, folderName, msgId) {
 
 async function cbShCancel(ctx) {
   clearState(ctx);
-  await ctx.answerCbQuery().catch(() => {});
-  await safeEdit(ctx, "❌ Bekor qilindi.", backToMainKb());
+  await ctx.answerCbQuery("Bekor qilindi").catch(() => {});
+  return cbMyShelf(ctx);
 }
 
 // ==========================================
@@ -433,6 +433,7 @@ async function cbRunTest(ctx) {
 // ==========================================
 function register(bot) {
   bot.action("my_shelf", cbMyShelf);
+  bot.action("menu_shelf", cbMyShelf);
   bot.action("shelf_save_init", cbShelfSaveInit);
   bot.action("sh_new_folder", cbShelfNewFolder);
   bot.action("sh_cancel", cbShCancel);

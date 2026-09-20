@@ -7,7 +7,6 @@ const dbService         = require('../services/dbService');
 const aiService         = require('../services/aiService');
 const sessionService    = require('../services/sessionService');
 const { safeEdit, parseSuffix } = require('../core/utils');
-const { initAndStartTest }      = require('./quizGame');
 
 async function cbAdaptiveTest(ctx) {
  await ctx.answerCbQuery().catch(() => {});
@@ -92,6 +91,7 @@ async function cbAdaptiveRun(ctx) {
     }
 
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
+    const { initAndStartTest } = require('./quizGame');
     await initAndStartTest(chatId, ctx.telegram, subjectKey, 'adaptive', { questions, block_name: '🎯 Shaxsiy Adaptiv Test' }, ctx.from.id, 'private');
   } catch (e) {
     console.error('cbAdaptiveRun error:', e.message);
