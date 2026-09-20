@@ -7,7 +7,11 @@ const { getTimetableKeyboard, getTimetableInlineKeyboard } = require('../keyboar
 const { TTLMap, escapeHtml } = require('../core/utils');
 const logger = require('../core/logger');
 
-const roomsPaginationCache = new TTLMap(5 * 60 * 1000); // 5-minute TTL
+const roomsPaginationCache = new TTLMap(5 * 60 * 1000, 200); // 5-minute TTL, max 200 slots
+
+// User-level concurrency control & debounce guards
+const activeThemeSwitches = new Set();
+const activeHaftaRequests = new Set();
 
 const DAY_SHORT_NAMES = ['Dush', 'Sesh', 'Chor', 'Pay', 'Juma', 'Shan'];
 
@@ -176,12 +180,21 @@ function buildThemeSwitcherKeyboard(currentTheme = 'dark') {
 
 async function cmdHafta(ctx) {
   await ctx.answerCbQuery().catch(() => {});
-  const className = await dbService.getUserClass(ctx.from.id);
+  const userId = ctx.from?.id;
+  if (!userId) return;
+
+  const className = await dbService.getUserClass(userId);
   if (!className) {
     return ctx.reply('⚠️ Avval <code>/setclass</code> komandasidan foydalaning (Masalan: <code>/setclass MI-15</code>).', { parse_mode: 'HTML' });
   }
 
-  const userTheme = await dbService.getUserScheduleTheme(ctx.from.id);
+  // Prevent duplicate concurrent /hafta requests from the same user
+  if (activeHaftaRequests.has(userId)) {
+    return ctx.reply('⏳ Haftalik jadvalingiz tayyorlanmoqda, iltimos biroz kuting...').catch(() => {});
+  }
+  activeHaftaRequests.add(userId);
+
+  const userTheme = await dbService.getUserScheduleTheme(userId);
   const msg = await ctx.reply('⏳ Haftalik dars jadvali rasmga olinmoqda. Iltimos kuting...');
   try {
     const imageBuffer = await scheduleService.fetchWeeklyScheduleImage(className, userTheme);
@@ -212,40 +225,66 @@ async function cmdHafta(ctx) {
     } else {
       await ctx.reply('⚠️ Jadval yuklanmadi. Iltimos birozdan so\'ng qayta urinib ko\'ring.').catch(() => {});
     }
+  } finally {
+    activeHaftaRequests.delete(userId);
   }
 }
 
 async function cbSwitchScheduleTheme(ctx) {
-  await ctx.answerCbQuery('Mavzu yangilanmoqda...').catch(() => {});
+  const userId = ctx.from?.id;
+  if (!userId) return;
+
   const data = ctx.callbackQuery?.data;
   const theme = data ? data.replace('sched_theme_', '') : 'dark';
-  if (!['dark', 'light', 'vibrant'].includes(theme)) return;
+  if (!['dark', 'light', 'vibrant'].includes(theme)) {
+    return ctx.answerCbQuery().catch(() => {});
+  }
 
-  const className = await dbService.getUserClass(ctx.from.id);
-  if (!className) return;
+  // Prevent multiple rapid clicks from the same user
+  if (activeThemeSwitches.has(userId)) {
+    return ctx.answerCbQuery('Mavzu almashtirilmoqda, iltimos kuting...').catch(() => {});
+  }
 
-  await dbService.setUserScheduleTheme(ctx.from.id, theme);
-  const imageBuffer = await scheduleService.fetchWeeklyScheduleImage(className, theme);
-  if (!imageBuffer) return;
+  const currentTheme = await dbService.getUserScheduleTheme(userId);
+  if (currentTheme === theme) {
+    return ctx.answerCbQuery('Ushbu mavzu allaqachon faol.').catch(() => {});
+  }
 
-  const kb = buildThemeSwitcherKeyboard(theme);
-  const themeLabel = theme === 'light' ? '☀️ Kunduzgi' : theme === 'vibrant' ? '⚡ Neon' : '🌙 Tungi';
-  const caption = `🎓 <b>Haftalik Jadval: ${escapeHtml(className)}</b>\n<i>🎨 Mavzu: ${themeLabel}</i>`;
+  activeThemeSwitches.add(userId);
+  await ctx.answerCbQuery('Mavzu almashtirilmoqda...').catch(() => {});
 
   try {
-    await ctx.editMessageMedia(
-      {
-        type: 'photo',
-        media: { source: imageBuffer },
-        caption,
-        parse_mode: 'HTML',
-      },
-      kb
-    );
-  } catch {
-    // If in-place edit fails, delete and send new photo with keyboard
-    await ctx.deleteMessage().catch(() => {});
-    await ctx.replyWithPhoto({ source: imageBuffer }, { caption, parse_mode: 'HTML', ...kb });
+    const className = await dbService.getUserClass(userId);
+    if (!className) return;
+
+    await dbService.setUserScheduleTheme(userId, theme);
+    const imageBuffer = await scheduleService.fetchWeeklyScheduleImage(className, theme);
+    if (!imageBuffer) return;
+
+    const kb = buildThemeSwitcherKeyboard(theme);
+    const themeLabel = theme === 'light' ? '☀️ Kunduzgi' : theme === 'vibrant' ? '⚡ Neon' : '🌙 Tungi';
+    const caption = `🎓 <b>Haftalik Jadval: ${escapeHtml(className)}</b>\n<i>🎨 Mavzu: ${themeLabel}</i>`;
+
+    try {
+      await ctx.editMessageMedia(
+        {
+          type: 'photo',
+          media: { source: imageBuffer },
+          caption,
+          parse_mode: 'HTML',
+        },
+        kb
+      );
+    } catch (editErr) {
+      if (editErr?.message?.includes('message is not modified')) return;
+      // Fallback if media cannot be edited in-place
+      await ctx.deleteMessage().catch(() => {});
+      await ctx.replyWithPhoto({ source: imageBuffer }, { caption, parse_mode: 'HTML', ...kb }).catch(() => {});
+    }
+  } catch (err) {
+    logger.error('cbSwitchScheduleTheme error', { error: err.message, userId, theme });
+  } finally {
+    activeThemeSwitches.delete(userId);
   }
 }
 

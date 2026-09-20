@@ -2,6 +2,7 @@
 
 const { createClient } = require('@supabase/supabase-js');
 const { SUPABASE_URL, SUPABASE_KEY } = require('../config/config');
+const { TTLMap } = require('../core/utils');
 const redis = require('./redisService');
 const logger = require('../core/logger');
 
@@ -427,7 +428,8 @@ async function updateUserTestQuestions(testId, creatorId, newQuestions) {
   }
 }
 
-const localUserClasses = new Map();
+// Bounded in-memory caches (24-hour TTL, max 5,000 users) to eliminate unbounded memory growth
+const localUserClasses = new TTLMap(24 * 60 * 60 * 1000, 5000);
 
 async function updateUserClass(telegramId, className) {
   const uid = String(telegramId);
@@ -500,7 +502,7 @@ async function getUserClass(telegramId) {
   return localUserClasses.get(uid) || null;
 }
 
-const localUserThemes = new Map();
+const localUserThemes = new TTLMap(24 * 60 * 60 * 1000, 5000);
 
 async function getUserScheduleTheme(telegramId) {
   const uid = String(telegramId);

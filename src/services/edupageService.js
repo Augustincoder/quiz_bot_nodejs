@@ -383,6 +383,16 @@ async function fetchRawTimetable(defaultNum) {
   );
 }
 
+async function saveDiskCache(raw) {
+  try {
+    const tmpPath = `${DISK_CACHE_PATH}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
+    await fs.promises.writeFile(tmpPath, JSON.stringify(raw), 'utf8');
+    await fs.promises.rename(tmpPath, DISK_CACHE_PATH);
+  } catch (err) {
+    logger.warn('Failed to atomically write EduPage L3 Disk Cache', { error: err.message });
+  }
+}
+
 /**
  * Resolves indexed timetable with Singleflight concurrency protection and multi-tier caching
  */
@@ -459,10 +469,8 @@ async function getOrFetchIndexedData(forceRefresh = false) {
       l1IndexedDatabase = buildIndexedDatabase(raw, defaultNum);
       l1CacheTime = Date.now();
 
-      // Async write to L3 Disk Cache (guarantees survival across reboots)
-      fs.promises.writeFile(DISK_CACHE_PATH, JSON.stringify(raw), 'utf8').catch(err => {
-        logger.warn('Failed to write EduPage L3 Disk Cache', { error: err.message });
-      });
+      // Async atomic write to L3 Disk Cache (guarantees zero corruption across reboots)
+      saveDiskCache(raw).catch(() => {});
 
       // Async write to L2 Redis
       if (redis) {

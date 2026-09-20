@@ -11,10 +11,10 @@ const { generateScheduleImage } = require('./imageService');
 const { TTLMap } = require('../core/utils');
 const logger = require('../core/logger');
 
-// L1 in-memory cache for rendered weekly PNG images (15 minutes TTL)
-const imageMemoryCache = new TTLMap(15 * 60 * 1000);
+// L1 in-memory cache for rendered weekly PNG images (15 minutes TTL, max 50 items ~12.5MB)
+const imageMemoryCache = new TTLMap(15 * 60 * 1000, 50);
 
-// Singleflight promise map to coalesce concurrent image generations per group
+// Singleflight promise map to coalesce concurrent image generations per group & theme
 const imageGenerationInflight = new Map();
 
 const REDIS_IMAGE_TTL_SEC = 12 * 60 * 60; // 12 hours
@@ -34,6 +34,8 @@ function getRedisClient() {
  * @param {number|null} specificDayIdx 0=Monday .. 5=Saturday
  */
 async function fetchTodaySchedule(className, specificDayIdx = null) {
+  if (!className) return '⚠️ Guruh tanlanmagan.';
+
   let dayOfWeek;
   if (specificDayIdx !== null && specificDayIdx !== undefined) {
     dayOfWeek = specificDayIdx;
@@ -49,7 +51,7 @@ async function fetchTodaySchedule(className, specificDayIdx = null) {
 
 /**
  * High-performance weekly schedule image generator with multi-tier caching
- * (L1 Memory -> L2 Redis -> Singleflight Sharp generation)
+ * (L1 Memory -> Singleflight Coalescence -> L2 Redis -> Sharp generation)
  * @param {string} className Group name (e.g. "MO-900/26")
  * @param {string} theme Theme name: 'dark' | 'light' | 'vibrant' (defaults to 'dark')
  * @returns {Promise<Buffer|null>} PNG image Buffer
@@ -62,33 +64,33 @@ async function fetchWeeklyScheduleImage(className, theme = 'dark') {
   const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
   const memKey = `${normalized}:${validTheme}`;
 
-  // 1. L1 In-Memory Cache Hit
+  // 1. L1 In-Memory Cache Hit (Instant sync return)
   if (imageMemoryCache.has(memKey)) {
     return imageMemoryCache.get(memKey);
   }
 
-  // 2. L2 Redis Cache Hit
-  const redis = getRedisClient();
-  const redisKey = `cache:schedule:img:${normalized}:${validTheme}`;
-  if (redis) {
-    try {
-      const cachedBuf = await redis.getBuffer(redisKey);
-      if (cachedBuf && cachedBuf.length > 0) {
-        imageMemoryCache.set(memKey, cachedBuf);
-        return cachedBuf;
-      }
-    } catch (redisErr) {
-      logger.warn('Redis image cache read failed', { error: redisErr.message, group: normalized, theme: validTheme });
-    }
-  }
-
-  // 3. Singleflight: coalesce concurrent image renders for the same group and theme
+  // 2. Singleflight: if a fetch/generation is already in-flight for this key, join it!
   if (imageGenerationInflight.has(memKey)) {
     return imageGenerationInflight.get(memKey);
   }
 
   const generationPromise = (async () => {
     try {
+      // Check L2 Redis cache inside singleflight (prevents stampeding Redis)
+      const redis = getRedisClient();
+      const redisKey = `cache:schedule:img:${normalized}:${validTheme}`;
+      if (redis) {
+        try {
+          const cachedBuf = await redis.getBuffer(redisKey);
+          if (cachedBuf && cachedBuf.length > 0) {
+            imageMemoryCache.set(memKey, cachedBuf);
+            return cachedBuf;
+          }
+        } catch (redisErr) {
+          logger.warn('Redis image cache read failed', { error: redisErr.message, group: normalized, theme: validTheme });
+        }
+      }
+
       const schedule = await getRawSchedule(className);
       if (!schedule || Object.keys(schedule).length === 0) return null;
 

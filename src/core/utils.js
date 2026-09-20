@@ -5,15 +5,24 @@ const https = require('https');
 const http = require('http');
 const { ADMIN_ID, ADMIN_IDS, SUBJECTS } = require('../config/config');
 
-// ─── TTLMap (Auto-expiring in-memory cache) ──────────────────
+// ─── TTLMap (Auto-expiring in-memory cache with bounded size & eviction) ───
 class TTLMap {
-  constructor(ttlMs = 3600000) {
+  constructor(ttlMs = 3600000, maxSize = 2000) {
     this._map = new Map();
     this._ttl = ttlMs;
+    this._maxSize = maxSize;
   }
   set(key, value) {
     const existing = this._map.get(key);
     if (existing?.timer) clearTimeout(existing.timer);
+
+    if (this._map.size >= this._maxSize && !this._map.has(key)) {
+      const oldestKey = this._map.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.delete(oldestKey);
+      }
+    }
+
     const timer = setTimeout(() => this._map.delete(key), this._ttl);
     timer.unref();
     this._map.set(key, { value, timer });
@@ -23,7 +32,16 @@ class TTLMap {
   delete(key) {
     const existing = this._map.get(key);
     if (existing?.timer) clearTimeout(existing.timer);
-    this._map.delete(key);
+    return this._map.delete(key);
+  }
+  clear() {
+    for (const [, entry] of this._map) {
+      if (entry?.timer) clearTimeout(entry.timer);
+    }
+    this._map.clear();
+  }
+  get size() {
+    return this._map.size;
   }
 }
 

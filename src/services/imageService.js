@@ -33,7 +33,7 @@ function escapeXml(unsafe) {
 function cleanSubjectTitle(subject) {
   if (!subject) return '';
   return subject
-    .replace(/\s*\((Ma|Sem|Lab|Amal|Pr|Lk)\)\s*/gi, '')
+    .replace(/\s*\((Ma['ʼ`]?ruza|Maruza|Seminar|Amaliy|Laboratoriya|Lab|Sem|Ma|Lk|Pr|Amal)\)\s*/gi, '')
     .replace(/\s*\((Ma'naviyat|Manaviyat)\)\s*/gi, '')
     .trim();
 }
@@ -59,12 +59,16 @@ function wrapText(text, maxChars) {
 
 function formatTeacherName(name) {
   if (!name) return '';
-  const trimmed = name.trim();
-  const parts = trimmed.split(/\s+/);
-  if (parts.length >= 2) {
-    return `${parts[0]} ${parts[1][0]}.`;
-  }
-  return trimmed.length > 16 ? trimmed.slice(0, 15) + '…' : trimmed;
+  const teachers = name.split(',').map(t => t.trim()).filter(Boolean);
+  const formatted = teachers.map(t => {
+    const parts = t.split(/\s+/);
+    if (parts.length >= 2) {
+      return `${parts[0]} ${parts[1][0]}.`;
+    }
+    return t.length > 14 ? t.slice(0, 13) + '…' : t;
+  });
+  const result = formatted.join(', ');
+  return result.length > 24 ? result.slice(0, 23) + '…' : result;
 }
 
 function wrapSubjectText(text, cardW) {
@@ -86,10 +90,10 @@ function wrapSubjectText(text, cardW) {
 }
 
 function formatRoomBanner(rawRoom) {
-  let room = (rawRoom || '?').trim();
-  room = room.replace(/\s*\(?(maruza|seminar|amaliy)\)?\s*/gi, '').trim();
+  let room = (rawRoom || '').trim();
+  room = room.replace(/\s*\(?(maruza|seminar|amaliy|lab)\)?\s*/gi, '').trim();
 
-  let label = `XONA: ${room}`;
+  let label = (!room || room === '?') ? 'XONA: ANIQMAS' : `XONA: ${room}`;
   let fontSize = 34;
 
   if (/^(xona|bochka|\d+-bochka)/i.test(room)) {
@@ -109,15 +113,15 @@ function formatRoomBanner(rawRoom) {
 
 function getLessonType(subject) {
   if (!subject) return 'other';
-  if (/\(Ma\)/i.test(subject) || /ma['ʼ`]?ruza/i.test(subject)) return 'lecture';
-  if (/\(Sem\)/i.test(subject) || /seminar/i.test(subject) || /amaliy/i.test(subject)) return 'seminar';
+  if (/\(Ma\)/i.test(subject) || /\(Lk\)/i.test(subject) || /ma['ʼ`]?ruza/i.test(subject) || /lek[ts]iya/i.test(subject)) return 'lecture';
+  if (/\(Sem\)/i.test(subject) || /\(Pr\)/i.test(subject) || /\(Amal\)/i.test(subject) || /seminar/i.test(subject) || /amaliy/i.test(subject) || /praktika/i.test(subject)) return 'seminar';
   if (/\(Lab\)/i.test(subject) || /laboratoriya/i.test(subject)) return 'lab';
   return 'other';
 }
 
 function getBaseSubject(subject) {
   return (subject || '')
-    .replace(/\s*\((Ma|Sem|Lab|Amal|Pr|Lk)\)\s*/gi, '')
+    .replace(/\s*\((Ma['ʼ`]?ruza|Maruza|Seminar|Amaliy|Laboratoriya|Lab|Sem|Ma|Lk|Pr|Amal)\)\s*/gi, '')
     .replace(/\s*\(.*?\)\s*/g, '')
     .trim()
     .toLowerCase();
@@ -650,7 +654,13 @@ async function generateScheduleImage(className, schedule, themeName = 'dark') {
       const baseX = DAY_W + (pNum - 1) * cellW;
       const c = resolveColors(lesson);
 
-      cardsHtml += buildCardSvg(lesson, baseX, baseY, span, cellW, c);
+      const combinedLesson = lessons.length > 1 ? {
+        ...lesson,
+        room: [...new Set(lessons.map(l => l.room).filter(Boolean))].join(', ') || lesson.room,
+        teacher: [...new Set(lessons.map(l => l.teacher).filter(Boolean))].join(', ') || lesson.teacher,
+      } : lesson;
+
+      cardsHtml += buildCardSvg(combinedLesson, baseX, baseY, span, cellW, c);
       pNum += span;
     }
   }
