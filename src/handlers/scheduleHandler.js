@@ -346,7 +346,16 @@ async function renderRoomView(ctx, periodNum, binoId, pageIdx) {
     dayIdx = 0;
   } else {
     const nowMins = tzDate.getHours() * 60 + tzDate.getMinutes();
-    const periodEnd = { 1: 590, 2: 680, 3: 770, 4: 890, 5: 980, 6: 1070 };
+    const periodEnd = {
+      1: 9 * 60 + 20,   // 09:20 -> 560
+      2: 10 * 60 + 50,  // 10:50 -> 650
+      3: 12 * 60 + 20,  // 12:20 -> 740
+      4: 14 * 60 + 20,  // 14:20 -> 860
+      5: 15 * 60 + 50,  // 15:50 -> 950
+      6: 17 * 60 + 20,  // 17:20 -> 1040
+      7: 18 * 60 + 50,  // 18:50 -> 1130
+      8: 20 * 60 + 20,  // 20:20 -> 1220
+    };
     if (nowMins > (periodEnd[periodNum] ?? 1440)) {
       offsetDays = 1;
       dayIdx = (dayIdx + 1) % 7;

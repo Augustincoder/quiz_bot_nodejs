@@ -213,7 +213,7 @@ async function getOrGenerateTimetablePhoto(telegram, className, theme = 'dark') 
  * Non-blocking helper to warm the remaining 2 themes for a requested group
  */
 async function warmRemainingThemesInBackground(telegram, className, rawSchedule, scheduleHash, completedTheme) {
-  if (!TIMETABLE_STORAGE_CHANNEL_ID || !telegram) return;
+  if (!TIMETABLE_STORAGE_CHANNEL_ID || !telegram || workerState.isRunning) return;
   const norm = edupageService.normalizeGroupName(className);
   const remaining = ALL_THEMES.filter((t) => t !== completedTheme);
 

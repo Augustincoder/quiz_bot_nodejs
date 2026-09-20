@@ -374,11 +374,17 @@ async function cmdRefreshAllTimetable(ctx) {
     );
   }
 
-  const statusMsg = await ctx.reply(
-    `🔄 <b>Jadvallarni EduPage bilan solishtirish va yangilash boshlanmoqda...</b>\n\n` +
-    `⏳ <i>EduPage serverlaridan eng so'nggi ma'lumotlar yuklanmoqda...</i>`,
-    { parse_mode: 'HTML' }
-  );
+  let statusMsg = null;
+  try {
+    statusMsg = await ctx.reply(
+      `🔄 <b>Jadvallarni EduPage bilan solishtirish va yangilash boshlanmoqda...</b>\n\n` +
+      `⏳ <i>EduPage serverlaridan eng so'nggi ma'lumotlar yuklanmoqda...</i>`,
+      { parse_mode: 'HTML' }
+    );
+  } catch (replyErr) {
+    logger.error('cmdRefreshAllTimetable cannot send initial statusMsg', replyErr);
+    return;
+  }
 
   try {
     // 1. Force fresh index from EduPage
@@ -391,73 +397,86 @@ async function cmdRefreshAllTimetable(ctx) {
     });
 
     if (result.status !== 'started') {
-      return ctx.telegram.editMessageText(
-        ctx.chat.id,
-        statusMsg.message_id,
-        undefined,
-        `❌ <b>Xatolik:</b> Worker ishga tushmadi (${result.status}).`,
-        { parse_mode: 'HTML' }
-      );
+      if (statusMsg?.message_id) {
+        return ctx.telegram.editMessageText(
+          ctx.chat.id,
+          statusMsg.message_id,
+          undefined,
+          `❌ <b>Xatolik:</b> Worker ishga tushmadi (${result.status}).`,
+          { parse_mode: 'HTML' }
+        ).catch(() => {});
+      }
+      return;
     }
 
     // 3. Periodic real-time progress monitor
     let lastEditTime = Date.now();
     const interval = setInterval(async () => {
-      const st = timetableCdnService.getWorkerStatus();
-      if (!st.isRunning) {
-        clearInterval(interval);
-        const durationSec = Math.floor((Date.now() - (st.startTime || Date.now())) / 1000);
-        const min = Math.floor(durationSec / 60);
-        const sec = durationSec % 60;
-        const timeStr = min > 0 ? `${min}m ${sec}s` : `${sec}s`;
+      try {
+        const st = timetableCdnService.getWorkerStatus();
+        if (!st.isRunning) {
+          clearInterval(interval);
+          const durationSec = Math.floor((Date.now() - (st.startTime || Date.now())) / 1000);
+          const min = Math.floor(durationSec / 60);
+          const sec = durationSec % 60;
+          const timeStr = min > 0 ? `${min}m ${sec}s` : `${sec}s`;
 
-        await ctx.telegram.editMessageText(
-          ctx.chat.id,
-          statusMsg.message_id,
-          undefined,
-          `🎉 <b>EduPage jadvallari to'liq sinxronlashtirildi!</b>\n\n` +
-          `✅ <b>Jami tekshirildi:</b> ${st.processed} ta\n` +
-          `🆕 <b>Yangi yangilandi:</b> ${st.generated} ta guruh jadvali\n` +
-          `⏭️ <b>O'zgarishsiz (bazadan):</b> ${st.skipped} ta\n` +
-          `❌ <b>Xatoliklar:</b> ${st.failed} ta\n` +
-          `⏱️ <b>Umumiy ketgan vaqt:</b> ${timeStr}\n\n` +
-          `⚡ <i>Barcha talabalar eng so'nggi jadvalni darhol ko'rishlari mumkin.</i>`,
-          { parse_mode: 'HTML' }
-        ).catch(() => {});
-        return;
-      }
+          if (statusMsg?.message_id) {
+            await ctx.telegram.editMessageText(
+              ctx.chat.id,
+              statusMsg.message_id,
+              undefined,
+              `🎉 <b>EduPage jadvallari to'liq sinxronlashtirildi!</b>\n\n` +
+              `✅ <b>Jami tekshirildi:</b> ${st.processed} ta\n` +
+              `🆕 <b>Yangi yangilandi:</b> ${st.generated} ta guruh jadvali\n` +
+              `⏭️ <b>O'zgarishsiz (bazadan):</b> ${st.skipped} ta\n` +
+              `❌ <b>Xatoliklar:</b> ${st.failed} ta\n` +
+              `⏱️ <b>Umumiy ketgan vaqt:</b> ${timeStr}\n\n` +
+              `⚡ <i>Barcha talabalar eng so'nggi jadvalni darhol ko'rishlari mumkin.</i>`,
+              { parse_mode: 'HTML' }
+            ).catch(() => {});
+          }
+          return;
+        }
 
-      if (Date.now() - lastEditTime >= 4000) {
-        lastEditTime = Date.now();
-        const percent = st.total > 0 ? ((st.processed / st.total) * 100).toFixed(1) : '0';
-        const elapsed = Math.floor((Date.now() - (st.startTime || Date.now())) / 1000);
+        if (Date.now() - lastEditTime >= 4000) {
+          lastEditTime = Date.now();
+          const percent = st.total > 0 ? ((st.processed / st.total) * 100).toFixed(1) : '0';
+          const elapsed = Math.floor((Date.now() - (st.startTime || Date.now())) / 1000);
 
-        await ctx.telegram.editMessageText(
-          ctx.chat.id,
-          statusMsg.message_id,
-          undefined,
-          `🔄 <b>EduPage bilan to'liq solishtirish davom etmoqda...</b>\n\n` +
-          `📊 <b>Jarayon:</b> ${st.processed}/${st.total} (${percent}%)\n` +
-          `🆕 <b>Yangilandi:</b> ${st.generated} ta\n` +
-          `⏭️ <b>O'zgarishsiz:</b> ${st.skipped} ta\n` +
-          `❌ <b>Xatolar:</b> ${st.failed} ta\n` +
-          `🎯 <b>Hozirgi guruh:</b> <code>${escapeHtml(st.currentGroup || '...')}</code> [${st.currentTheme || ''}]\n` +
-          `⏱️ <b>O'tgan vaqt:</b> ${elapsed}s\n\n` +
-          `🛑 To'xtatish uchun: /stop_refresh_timetable`,
-          { parse_mode: 'HTML' }
-        ).catch(() => {});
+          if (statusMsg?.message_id) {
+            await ctx.telegram.editMessageText(
+              ctx.chat.id,
+              statusMsg.message_id,
+              undefined,
+              `🔄 <b>EduPage bilan to'liq solishtirish davom etmoqda...</b>\n\n` +
+              `📊 <b>Jarayon:</b> ${st.processed}/${st.total} (${percent}%)\n` +
+              `🆕 <b>Yangilandi:</b> ${st.generated} ta\n` +
+              `⏭️ <b>O'zgarishsiz:</b> ${st.skipped} ta\n` +
+              `❌ <b>Xatolar:</b> ${st.failed} ta\n` +
+              `🎯 <b>Hozirgi guruh:</b> <code>${escapeHtml(st.currentGroup || '...')}</code> [${st.currentTheme || ''}]\n` +
+              `⏱️ <b>O'tgan vaqt:</b> ${elapsed}s\n\n` +
+              `🛑 To'xtatish uchun: /stop_refresh_timetable`,
+              { parse_mode: 'HTML' }
+            ).catch(() => {});
+          }
+        }
+      } catch (intervalErr) {
+        logger.error('cmdRefreshAllTimetable interval error', intervalErr);
       }
     }, 2000);
 
   } catch (err) {
     logger.error('cmdRefreshAllTimetable', err);
-    await ctx.telegram.editMessageText(
-      ctx.chat.id,
-      statusMsg.message_id,
-      undefined,
-      `❌ <b>Sinxronizatsiyada xatolik yuz berdi:</b> ${escapeHtml(err.message)}`,
-      { parse_mode: 'HTML' }
-    ).catch(() => {});
+    if (statusMsg?.message_id) {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        undefined,
+        `❌ <b>Sinxronizatsiyada xatolik yuz berdi:</b> ${escapeHtml(err.message)}`,
+        { parse_mode: 'HTML' }
+      ).catch(() => {});
+    }
   }
 }
 
