@@ -4,6 +4,7 @@ const { Worker } = require('bullmq');
 const redisConnection = require('../services/redisService');
 const { escapeHtml } = require('../core/utils');
 const logger = require('../core/logger');
+const dbService = require('../services/dbService');
 
 function initWorkers(bot, scheduleService) {
   const broadcastWorker = new Worker('broadcastQueue', async (job) => {
@@ -12,8 +13,14 @@ function initWorkers(bot, scheduleService) {
       try {
         await bot.telegram.sendMessage(userId, message, { parse_mode: 'HTML' });
       } catch (err) {
-        if (err?.message?.includes('blocked') || err?.message?.includes('deactivated')) {
-          logger.info('User blocked bot or deactivated during alert', { userId });
+        const isBlocked = err?.message?.includes('blocked') ||
+          err?.message?.includes('deactivated') ||
+          err?.message?.includes('chat not found') ||
+          err?.response?.error_code === 403;
+
+        if (isBlocked) {
+          logger.info('User blocked bot or deactivated during alert, marking blocked', { userId });
+          dbService.markUserBlocked(userId, true).catch(() => {});
         } else if (err?.parameters?.retry_after) {
           const retrySec = err.parameters.retry_after;
           logger.warn(`Alert rate limit hit. Waiting ${retrySec}s`, { userId });
@@ -46,8 +53,14 @@ function initWorkers(bot, scheduleService) {
       try {
         await bot.telegram.sendMessage(userId, msg, { parse_mode: 'HTML' });
       } catch (err) {
-        if (err?.message?.includes('blocked') || err?.message?.includes('deactivated')) {
-          logger.info('Broadcast user blocked bot or deactivated', { userId });
+        const isBlocked = err?.message?.includes('blocked') ||
+          err?.message?.includes('deactivated') ||
+          err?.message?.includes('chat not found') ||
+          err?.response?.error_code === 403;
+
+        if (isBlocked) {
+          logger.info('Broadcast user blocked bot or deactivated, marking blocked', { userId });
+          dbService.markUserBlocked(userId, true).catch(() => {});
         } else if (err?.parameters?.retry_after) {
           const retrySec = err.parameters.retry_after;
           logger.warn(`Broadcast rate limit hit. Waiting ${retrySec}s`, { userId });

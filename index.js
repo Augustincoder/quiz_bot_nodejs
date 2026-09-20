@@ -245,8 +245,12 @@ async function queueSchedules(isTomorrow = false) {
     // 1. Pre-warm / ensure cache is fresh
     await scheduleService.warmUpCache();
 
-    // 2. Fetch users from DB
-    const users = await dbService.getAllUsers();
+    // 2. Fetch users from DB (filtered: active, valid group, not banned, not blocked)
+    let users = await dbService.getScheduleBroadcastUsers();
+    if (!users || users.length === 0) {
+      const all = await dbService.getAllUsers();
+      users = (all || []).filter((u) => u.class_name && !u.is_banned && !u.is_blocked);
+    }
     if (!users || users.length === 0) return;
 
     // 3. Compute target day in Asia/Tashkent

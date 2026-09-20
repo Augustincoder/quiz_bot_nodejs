@@ -549,14 +549,20 @@ function parseSchedule(raw, className) {
 /**
  * Returns empty rooms paginated HTML text pages
  */
-async function getEmptyRoomsText(className, dayIdx, periodNum, offsetDays = 0) {
+async function getEmptyRoomsText(className, dayIdx, periodNum, offsetDays = 0, binoFilter = null) {
   try {
     const db = await getOrFetchIndexedData();
     const matrixKey = `${dayIdx}:${periodNum}`;
     let emptyRooms = db.emptyRoomsMatrix.get(matrixKey) || [];
 
-    // Building filter support: e.g. "*3" or "*4"
-    if (className && className.startsWith('*') && className.length > 1) {
+    // Building filter support: explicit binoFilter or "*3" prefix
+    if (binoFilter && binoFilter !== 'all') {
+      const cleanFilter = binoFilter.toLowerCase();
+      emptyRooms = emptyRooms.filter(xona => {
+        const loc = parseRoomLocation(xona);
+        return loc.bino.toLowerCase().includes(cleanFilter);
+      });
+    } else if (className && className.startsWith('*') && className.length > 1) {
       const binoNum = className.slice(1);
       emptyRooms = emptyRooms.filter(xona => {
         const loc = parseRoomLocation(xona);

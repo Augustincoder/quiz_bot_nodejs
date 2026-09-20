@@ -114,8 +114,8 @@ async function fetchWeeklyScheduleImage(className) {
 /**
  * Fetches paginated empty rooms text
  */
-async function fetchEmptyRooms(className, dayIdx, periodNum, offsetDays = 0) {
-  return getEmptyRoomsText(className, dayIdx, periodNum, offsetDays);
+async function fetchEmptyRooms(className, dayIdx, periodNum, offsetDays = 0, binoFilter = null) {
+  return getEmptyRoomsText(className, dayIdx, periodNum, offsetDays, binoFilter);
 }
 
 /**

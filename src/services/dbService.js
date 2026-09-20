@@ -569,6 +569,82 @@ async function isUserBanned(userId) {
   }
 }
 
+// ==========================================
+// 📵 USER BLOCKED STATUS (TELEGRAM FLOOD GUARD)
+// ==========================================
+
+const localBlockedUsers = new Set();
+
+async function markUserBlocked(userId, isBlocked = true) {
+  const uid = String(userId);
+  if (isBlocked) {
+    localBlockedUsers.add(uid);
+  } else {
+    localBlockedUsers.delete(uid);
+  }
+
+  try {
+    if (redis) {
+      await redis.set(`user_blocked:${uid}`, isBlocked ? '1' : '0', 'EX', 86400 * 7).catch(() => {});
+    }
+    if (supabase) {
+      await supabase.from('users').update({ is_blocked: isBlocked }).eq('telegram_id', uid);
+    }
+    logger.debug('Updated user blocked status', { userId: uid, isBlocked });
+  } catch (err) {
+    logger.warn('markUserBlocked error:', { userId: uid, error: err.message });
+  }
+}
+
+async function isUserBlocked(userId) {
+  const uid = String(userId);
+  try {
+    if (redis) {
+      const cached = await redis.get(`user_blocked:${uid}`);
+      if (cached !== null) return cached === '1';
+    }
+    if (localBlockedUsers.has(uid)) return true;
+    if (!supabase) return false;
+
+    const { data, error } = await supabase
+      .from('users')
+      .select('is_blocked')
+      .eq('telegram_id', uid)
+      .maybeSingle();
+
+    if (error) throw error;
+    const isBlocked = data?.is_blocked === true;
+    if (redis) {
+      await redis.set(`user_blocked:${uid}`, isBlocked ? '1' : '0', 'EX', 3600).catch(() => {});
+    }
+    return isBlocked;
+  } catch {
+    return localBlockedUsers.has(uid);
+  }
+}
+
+/**
+ * High-efficiency query: fetches only active students with a valid class name,
+ * filtering out banned and blocked users to conserve BullMQ and Telegram API capacity.
+ */
+async function getScheduleBroadcastUsers() {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('telegram_id, class_name, is_banned, is_blocked')
+      .not('class_name', 'is', null)
+      .or('is_banned.is.null,is_banned.eq.false')
+      .or('is_blocked.is.null,is_blocked.eq.false');
+
+    if (error) throw error;
+    return (data || []).filter(u => u.class_name && u.class_name.trim() && !u.is_banned && !u.is_blocked);
+  } catch (err) {
+    logger.error('getScheduleBroadcastUsers error:', { error: err.message });
+    return [];
+  }
+}
+
 module.exports = {
   loadAllOfficialTests,
   saveOfficialTest,
@@ -601,4 +677,7 @@ module.exports = {
   banUser,
   unbanUser,
   isUserBanned,
+  markUserBlocked,
+  isUserBlocked,
+  getScheduleBroadcastUsers,
 };
