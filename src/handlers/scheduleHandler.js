@@ -4,7 +4,7 @@ const { Markup } = require('telegraf');
 const dbService = require('../services/dbService');
 const scheduleService = require('../services/scheduleService');
 const { getTimetableKeyboard, getTimetableInlineKeyboard } = require('../keyboards/keyboards');
-const { TTLMap, escapeHtml } = require('../core/utils');
+const { TTLMap, escapeHtml, safeAnswerCb } = require('../core/utils');
 const logger = require('../core/logger');
 
 const roomsPaginationCache = new TTLMap(5 * 60 * 1000, 200); // 5-minute TTL, max 200 slots
@@ -101,7 +101,7 @@ function buildRoomPageKb(periodNum, currentBino, currentPage, totalPages) {
 }
 
 async function cmdJadval(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
+  await safeAnswerCb(ctx);
   const className = await dbService.getUserClass(ctx.from.id);
   if (!className) {
     return ctx.reply('⚠️ Avval guruhingizni saqlashingiz kerak!\n\n👉 <code>/setclass MI-15</code>', { parse_mode: 'HTML' });
@@ -137,7 +137,7 @@ async function cmdJadval(ctx) {
 }
 
 async function cbScheduleDay(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
+  await safeAnswerCb(ctx);
   const className = await dbService.getUserClass(ctx.from.id);
   if (!className) {
     return ctx.reply('⚠️ Avval guruhingizni saqlashingiz kerak!\n\n👉 <code>/setclass MI-15</code>', { parse_mode: 'HTML' });
@@ -179,7 +179,7 @@ function buildThemeSwitcherKeyboard(currentTheme = 'dark') {
 }
 
 async function cmdHafta(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
+  await safeAnswerCb(ctx);
   const userId = ctx.from?.id;
   if (!userId) return;
 
@@ -237,21 +237,21 @@ async function cbSwitchScheduleTheme(ctx) {
   const data = ctx.callbackQuery?.data;
   const theme = data ? data.replace('sched_theme_', '') : 'dark';
   if (!['dark', 'light', 'vibrant'].includes(theme)) {
-    return ctx.answerCbQuery().catch(() => {});
+    return safeAnswerCb(ctx);
   }
 
   // Prevent multiple rapid clicks from the same user
   if (activeThemeSwitches.has(userId)) {
-    return ctx.answerCbQuery('Mavzu almashtirilmoqda, iltimos kuting...').catch(() => {});
+    return safeAnswerCb(ctx, 'Mavzu almashtirilmoqda, iltimos kuting...');
   }
 
   const currentTheme = await dbService.getUserScheduleTheme(userId);
   if (currentTheme === theme) {
-    return ctx.answerCbQuery('Ushbu mavzu allaqachon faol.').catch(() => {});
+    return safeAnswerCb(ctx, 'Ushbu mavzu allaqachon faol.');
   }
 
   activeThemeSwitches.add(userId);
-  await ctx.answerCbQuery('Mavzu almashtirilmoqda...').catch(() => {});
+  await safeAnswerCb(ctx, 'Mavzu almashtirilmoqda...');
 
   try {
     const className = await dbService.getUserClass(userId);
@@ -289,7 +289,7 @@ async function cbSwitchScheduleTheme(ctx) {
 }
 
 async function cmdTimetable(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
+  await safeAnswerCb(ctx);
   const className = await dbService.getUserClass(ctx.from.id);
   const status = className ? `✅ Sizning guruhingiz: <b>${className}</b>` : '⚠️ <b>Guruh tanlanmagan.</b>';
   const text = `🎓 <b>Dars jadvali bo'limi</b>\n\n${status}\n\nQuyidagi menyudan kerakli bo'limni tanlang:`;
@@ -308,12 +308,12 @@ async function cmdTimetable(ctx) {
 }
 
 async function cmdTimetableHelp(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
+  await safeAnswerCb(ctx);
   await ctx.reply('⚙️ <b>Guruhni qanday sozlash mumkin?</b>\n\n👉 <code>/setclass MNP-81</code>\n\n💡 Guruhingiz nomini aniq yozing, shunda bot har kuni jadvalingizni eslatib turadi.', { parse_mode: 'HTML' });
 }
 
 async function cmdXonalar(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
+  await safeAnswerCb(ctx);
   await ctx.reply('🏢 Qaysi para uchun bo\'sh xonalarni ko\'rmoqchisiz?', PARA_KB);
 }
 
@@ -363,13 +363,13 @@ async function renderRoomView(ctx, periodNum, binoId, pageIdx) {
 }
 
 async function cbBoshXona(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
+  await safeAnswerCb(ctx);
   const periodNum = parseInt(ctx.callbackQuery.data.split('_')[1], 10);
   await renderRoomView(ctx, periodNum, 'all', 0);
 }
 
 async function cbRoomAction(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
+  await safeAnswerCb(ctx);
   const parts = ctx.callbackQuery.data.split('_');
   const periodNum = parseInt(parts[1], 10);
   const binoId = parts[2];
@@ -378,12 +378,12 @@ async function cbRoomAction(ctx) {
 }
 
 async function cbBackToRoomsMenu(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
+  await safeAnswerCb(ctx);
   await ctx.editMessageText('🏢 Qaysi para uchun bo\'sh xonalarni ko\'rmoqchisiz?', PARA_KB);
 }
 
 async function cbRetryHafta(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
+  await safeAnswerCb(ctx);
   await ctx.deleteMessage().catch(() => {});
   await cmdHafta(ctx);
 }

@@ -72,21 +72,32 @@ bot.use(async (ctx, next) => {
   if (ignoredUpdates.includes(ctx.updateType)) return next();
 
   const key = `tg_session:${ctx.from?.id || ctx.chat?.id || "unknown"}`;
+  let originalSessionStr = '{"state":null,"data":{}}';
+
   try {
     const sessionData = await redisConnection.get(key);
-    const originalSessionStr = sessionData || '{"state":null,"data":{}}';
+    if (sessionData) originalSessionStr = sessionData;
+  } catch (err) {
+    logger.error("Session Redis read error:", { error: err.message });
+  }
+
+  try {
     ctx.session = JSON.parse(originalSessionStr);
+  } catch {
+    ctx.session = { state: null, data: {} };
+  }
 
-    await next();
+  // Call downstream handlers ONCE. Never call next() inside a catch block!
+  await next();
 
-    const newSessionStr = JSON.stringify(ctx.session);
+  // Save session to Redis if modified
+  try {
+    const newSessionStr = JSON.stringify(ctx.session || { state: null, data: {} });
     if (originalSessionStr !== newSessionStr) {
       await redisConnection.set(key, newSessionStr, "EX", 86400);
     }
   } catch (err) {
-    logger.error("Session Redis error:", { error: err.message });
-    ctx.session = { state: null, data: {} };
-    await next();
+    logger.error("Session Redis write error:", { error: err.message });
   }
 });
 

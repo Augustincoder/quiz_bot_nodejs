@@ -121,7 +121,10 @@ const navKb = (backAction, extraButtons = []) => {
 
 const backToMainKb = (extraButtons = []) => Markup.inlineKeyboard([...extraButtons, [Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')]]);
 
-const safeAnswerCb = async (ctx, text, opts) => { try { await ctx.answerCbQuery(text, opts); } catch {} };
+const safeAnswerCb = async (ctx, text, opts) => {
+  if (!ctx?.callbackQuery) return;
+  try { return await ctx.answerCbQuery(text, opts); } catch {}
+};
 
 const truncateText = (text, max = 4000) => {
   if (!text || typeof text !== 'string') return text || '';
