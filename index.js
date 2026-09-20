@@ -321,6 +321,10 @@ async function gracefulShutdown(signal) {
   logger.info(`⚡ ${signal} received — graceful shutdown started`);
 
   try {
+    try {
+      const timetableCdnService = require('./src/services/timetableCdnService');
+      timetableCdnService.stopPrewarmWorker();
+    } catch {}
     _cronJobs.forEach((job) => job?.stop());
     bot.stop(signal);
     await Promise.allSettled([
@@ -355,6 +359,21 @@ async function main() {
   scheduleService.warmUpCache().catch((err) => {
     logger.warn('Initial cache warm-up deferred', { error: err.message });
   });
+
+  // Start Timetable CDN pre-warm in background if storage channel is configured
+  const { TIMETABLE_STORAGE_CHANNEL_ID } = require('./src/config/config');
+  if (TIMETABLE_STORAGE_CHANNEL_ID) {
+    setTimeout(() => {
+      try {
+        const timetableCdnService = require('./src/services/timetableCdnService');
+        timetableCdnService.prewarmAllTimetables(bot.telegram, { activeOnly: false }).catch((err) => {
+          logger.warn('Timetable CDN background prewarm deferred', { error: err.message });
+        });
+      } catch (e) {
+        logger.warn('Could not initialize timetable CDN prewarm', { error: e.message });
+      }
+    }, 15000);
+  }
 
   // ═══ Cron Tasks (Asia/Tashkent) ══════════════════════════════
   // 1. Ertalab 07:30 (Bugungi jadval uchun) — Dushanbadan Shanbagacha

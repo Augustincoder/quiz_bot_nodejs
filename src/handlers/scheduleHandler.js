@@ -3,6 +3,7 @@
 const { Markup } = require('telegraf');
 const dbService = require('../services/dbService');
 const scheduleService = require('../services/scheduleService');
+const edupageService = require('../services/edupageService');
 const { getTimetableKeyboard, getTimetableInlineKeyboard } = require('../keyboards/keyboards');
 const { TTLMap, escapeHtml, safeAnswerCb } = require('../core/utils');
 const logger = require('../core/logger');
@@ -195,23 +196,39 @@ async function cmdHafta(ctx) {
   activeHaftaRequests.add(userId);
 
   const userTheme = await dbService.getUserScheduleTheme(userId);
-  const msg = await ctx.reply('⏳ Haftalik dars jadvali rasmga olinmoqda. Iltimos kuting...');
+  const norm = edupageService.normalizeGroupName(className);
+  let msg = null;
+
+  // Show loading notification only if not already cached in CDN
+  const cached = await dbService.getTimetableCache(norm, userTheme);
+  if (!cached || !cached.file_id) {
+    msg = await ctx.reply('⏳ Haftalik dars jadvali rasmga olinmoqda. Iltimos kuting...').catch(() => null);
+  }
+
   try {
-    const imageBuffer = await scheduleService.fetchWeeklyScheduleImage(className, userTheme);
-    if (!imageBuffer) {
-      return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, `📭 "<b>${escapeHtml(className)}</b>" guruhi uchun haftalik jadval topilmadi.`, { parse_mode: 'HTML' });
+    const photoResult = await scheduleService.fetchWeeklySchedulePhoto(className, userTheme, ctx.telegram);
+    if (!photoResult) {
+      if (msg?.message_id) {
+        return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, `📭 "<b>${escapeHtml(className)}</b>" guruhi uchun haftalik jadval topilmadi.`, { parse_mode: 'HTML' });
+      }
+      return ctx.reply(`📭 "<b>${escapeHtml(className)}</b>" guruhi uchun haftalik jadval topilmadi.`, { parse_mode: 'HTML' });
     }
+
     const kb = buildThemeSwitcherKeyboard(userTheme);
     const themeLabel = userTheme === 'light' ? '☀️ Kunduzgi' : userTheme === 'vibrant' ? '⚡ Neon' : '🌙 Tungi';
+    const media = photoResult.fileId ? photoResult.fileId : { source: photoResult.buffer };
+
     await ctx.replyWithPhoto(
-      { source: imageBuffer },
+      media,
       {
         caption: `🎓 <b>Haftalik Jadval: ${escapeHtml(className)}</b>\n<i>🎨 Mavzu: ${themeLabel}</i>`,
         parse_mode: 'HTML',
         ...kb,
       }
     );
-    await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(() => {});
+    if (msg?.message_id) {
+      await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(() => {});
+    }
   } catch (err) {
     logger.error('cmdHafta error', { error: err.message, className });
     if (msg?.message_id) {
@@ -257,19 +274,20 @@ async function cbSwitchScheduleTheme(ctx) {
     const className = await dbService.getUserClass(userId);
     if (!className) return;
 
+    const photoResult = await scheduleService.fetchWeeklySchedulePhoto(className, theme, ctx.telegram);
+    if (!photoResult) return;
     await dbService.setUserScheduleTheme(userId, theme);
-    const imageBuffer = await scheduleService.fetchWeeklyScheduleImage(className, theme);
-    if (!imageBuffer) return;
 
     const kb = buildThemeSwitcherKeyboard(theme);
     const themeLabel = theme === 'light' ? '☀️ Kunduzgi' : theme === 'vibrant' ? '⚡ Neon' : '🌙 Tungi';
     const caption = `🎓 <b>Haftalik Jadval: ${escapeHtml(className)}</b>\n<i>🎨 Mavzu: ${themeLabel}</i>`;
+    const media = photoResult.fileId ? photoResult.fileId : { source: photoResult.buffer };
 
     try {
       await ctx.editMessageMedia(
         {
           type: 'photo',
-          media: { source: imageBuffer },
+          media,
           caption,
           parse_mode: 'HTML',
         },
@@ -279,7 +297,7 @@ async function cbSwitchScheduleTheme(ctx) {
       if (editErr?.message?.includes('message is not modified')) return;
       // Fallback if media cannot be edited in-place
       await ctx.deleteMessage().catch(() => {});
-      await ctx.replyWithPhoto({ source: imageBuffer }, { caption, parse_mode: 'HTML', ...kb }).catch(() => {});
+      await ctx.replyWithPhoto(media, { caption, parse_mode: 'HTML', ...kb }).catch(() => {});
     }
   } catch (err) {
     logger.error('cbSwitchScheduleTheme error', { error: err.message, userId, theme });

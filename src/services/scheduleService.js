@@ -118,6 +118,33 @@ async function fetchWeeklyScheduleImage(className, theme = 'dark') {
 }
 
 /**
+ * High-performance weekly schedule photo resolver with Telegram Channel CDN & Supabase cache
+ * @param {string} className Group name
+ * @param {string} theme 'dark' | 'light' | 'vibrant'
+ * @param {object} telegram Telegraf telegram client instance
+ * @returns {Promise<{ fileId?: string, buffer?: Buffer, isHit?: boolean } | null>}
+ */
+async function fetchWeeklySchedulePhoto(className, theme = 'dark', telegram = null) {
+  if (!className) return null;
+  const normalized = normalizeGroupName(className);
+  if (!normalized) return null;
+
+  const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
+
+  try {
+    const timetableCdnService = require('./timetableCdnService');
+    const res = await timetableCdnService.getOrGenerateTimetablePhoto(telegram, className, validTheme);
+    if (res) return res;
+  } catch (err) {
+    logger.warn('timetableCdnService lookup failed, falling back to local generator', { error: err.message });
+  }
+
+  // Fallback to local image generator
+  const buffer = await fetchWeeklyScheduleImage(className, validTheme);
+  return buffer ? { buffer, isHit: false } : null;
+}
+
+/**
  * Fetches paginated empty rooms text
  */
 async function fetchEmptyRooms(className, dayIdx, periodNum, offsetDays = 0, binoFilter = null) {
@@ -127,7 +154,7 @@ async function fetchEmptyRooms(className, dayIdx, periodNum, offsetDays = 0, bin
 /**
  * Invalidates cached weekly schedule image for a group (all themes)
  */
-function invalidateImageCache(className) {
+async function invalidateImageCache(className) {
   if (!className) return;
   const normalized = normalizeGroupName(className);
   ['dark', 'light', 'vibrant'].forEach(t => imageMemoryCache.delete(`${normalized}:${t}`));
@@ -137,11 +164,18 @@ function invalidateImageCache(className) {
       redis.del(`cache:schedule:img:${normalized}:${t}`).catch(() => {});
     });
   }
+  try {
+    const timetableCdnService = require('./timetableCdnService');
+    await timetableCdnService.invalidateTimetable(className);
+  } catch (e) {
+    logger.debug('Timetable CDN cache invalidation error', { error: e.message });
+  }
 }
 
 module.exports = {
   fetchTodaySchedule,
   fetchWeeklyScheduleImage,
+  fetchWeeklySchedulePhoto,
   fetchEmptyRooms,
   invalidateImageCache,
   warmUpCache,

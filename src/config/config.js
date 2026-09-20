@@ -44,6 +44,11 @@ const ADMIN_IDS = String(rawAdminId)
   .filter((id) => !Number.isNaN(id) && id > 0);
 const ADMIN_ID = ADMIN_IDS[0] || 2014973670;
 const GEMINI_API_KEY = env('GEMINI_API_KEY', '');
+const TIMETABLE_STORAGE_CHANNEL_ID = env('TIMETABLE_STORAGE_CHANNEL_ID') ||
+  env('CHANNEL_ID') ||
+  env('STORAGE_CHANNEL_ID') ||
+  env('TIMETABLE_CHANNEL_ID', '');
+
 if (!BOT_TOKEN) {
   throw new Error(
     'BOT_TOKEN is missing. Create a .env file (see .env.example) and set BOT_TOKEN=...'
@@ -67,4 +72,5 @@ module.exports = {
   ADMIN_ID,
   ADMIN_IDS,
   GEMINI_API_KEY,
+  TIMETABLE_STORAGE_CHANNEL_ID,
 };

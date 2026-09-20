@@ -1,6 +1,28 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const sharp = require('sharp');
+
+// Sync bundled fonts to ~/.fonts for fontconfig/librsvg detection
+try {
+  const userFontsDir = path.join(os.homedir(), '.fonts');
+  const projectFonts = path.join(__dirname, '../../assets/fonts');
+  if (fs.existsSync(projectFonts)) {
+    if (!fs.existsSync(userFontsDir)) fs.mkdirSync(userFontsDir, { recursive: true });
+    for (const file of fs.readdirSync(projectFonts)) {
+      if (file.endsWith('.otf') || file.endsWith('.ttf')) {
+        const dest = path.join(userFontsDir, file);
+        if (!fs.existsSync(dest)) {
+          fs.copyFileSync(path.join(projectFonts, file), dest);
+        }
+      }
+    }
+  }
+} catch {
+  // Silent fallback if filesystem is read-only
+}
 
 // ─── Dimensions & Geometry ───────────────────────────────────────────────────
 const SVG_W   = 2970;
@@ -89,26 +111,61 @@ function wrapSubjectText(text, cardW) {
   return { lines, fSize };
 }
 
-function formatRoomBanner(rawRoom) {
+// Load raw groups from groups.json for exact naming
+let rawGroupsMap = new Map();
+try {
+  const groupsPath = path.join(__dirname, '../data/groups.json');
+  if (fs.existsSync(groupsPath)) {
+    const arr = JSON.parse(fs.readFileSync(groupsPath, 'utf8'));
+    for (const g of arr) {
+      if (typeof g === 'string' && g.trim()) {
+        const norm = g.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (norm && !rawGroupsMap.has(norm)) {
+          rawGroupsMap.set(norm, g.trim());
+        }
+      }
+    }
+  }
+} catch {
+  // Silent fallback
+}
+
+function resolveRawGroupName(name) {
+  if (!name) return '';
+  const norm = name.toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (rawGroupsMap.has(norm)) {
+    return rawGroupsMap.get(norm);
+  }
+  return name.toString().trim();
+}
+
+function formatRoomBanner(rawRoom, cardW = 400) {
   let room = (rawRoom || '').trim();
   room = room.replace(/\s*\(?(maruza|seminar|amaliy|lab)\)?\s*/gi, '').trim();
 
-  let label = (!room || room === '?') ? 'XONA: ANIQMAS' : `XONA: ${room}`;
-  let fontSize = 34;
+  // Strip leading "xona" or "xona:" or "xona -" if present
+  room = room.replace(/^xona\s*[:\-\s]*/i, '').trim();
 
-  if (/^(xona|bochka|\d+-bochka)/i.test(room)) {
-    label = room.toUpperCase();
+  let label = (!room || room === '?') ? 'ANIQMAS' : room.toUpperCase();
+
+  // Base font size: 46px for maximum legibility and presence
+  let fontSize = 46;
+  const safeW = cardW - 44; // safe width inside rounded banner
+
+  // Dynamically calculate font size to guarantee 100% containment
+  const charRatio = 0.62;
+  while (fontSize > 22 && (label.length * fontSize * charRatio) > safeW) {
+    fontSize -= 1;
   }
 
-  if (label.length > 22) {
-    fontSize = 24;
-  } else if (label.length > 17) {
-    fontSize = 28;
-  } else if (label.length > 13) {
-    fontSize = 31;
+  if ((label.length * fontSize * charRatio) > safeW) {
+    const maxChars = Math.floor(safeW / (fontSize * charRatio));
+    label = label.slice(0, Math.max(6, maxChars - 1)) + '…';
   }
 
-  return { label, fontSize };
+  const letterSpacing = fontSize >= 38 ? '1.5px' : '0.5px';
+
+  return { label, fontSize, letterSpacing };
 }
 
 function getLessonType(subject) {
@@ -491,14 +548,25 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
 
   // 2. Room banner (Priority #1)
   const rawRoom = (lesson.room || '?').trim();
-  const { label: roomLabel, fontSize: roomFontSize } = formatRoomBanner(rawRoom);
+  const { label: roomLabel, fontSize: roomFontSize, letterSpacing: roomLetterSpacing } = formatRoomBanner(rawRoom, cardW);
   const bannerH = 70;
   const bannerY = cardY + cardH - bannerH;
 
-  // 3. Format badge (Priority #3)
-  const tagW = isLecture ? 134 : 124;
-  const tagH = 38;
+  // 3. Format badge & Teacher layout (No overlap guarantee)
+  const tagW = isLecture ? 130 : 120;
+  const tagH = 36;
   const tagLabel = isLecture ? "MA'RUZA" : "SEMINAR";
+
+  let teacherStr = teacher;
+  let teacherFontSize = 29;
+  const maxTeacherW = cardW - 20 - tagW - 24 - 20;
+  while (teacherFontSize > 20 && (teacherStr.length * teacherFontSize * 0.58) > maxTeacherW) {
+    teacherFontSize -= 1;
+  }
+  if ((teacherStr.length * teacherFontSize * 0.58) > maxTeacherW) {
+    const maxChars = Math.floor(maxTeacherW / (teacherFontSize * 0.58));
+    teacherStr = teacherStr.slice(0, Math.max(4, maxChars - 1)) + '…';
+  }
 
   const topZoneY = cardY + 16 + tagH;
   const availableH = bannerY - topZoneY - 14;
@@ -514,14 +582,14 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
       <!-- Lesson Format Badge (Priority #3) -->
       <rect x="${cardX + 20}" y="${cardY + 16}" width="${tagW}" height="${tagH}" rx="10" fill="${colorSet.tagBg}"></rect>
       <text x="${cardX + 20 + tagW / 2}" y="${cardY + 16 + tagH / 2 + 1}"
-            font-size="21" font-weight="900" letter-spacing="1px"
+            font-size="20" font-weight="900" letter-spacing="1px"
             text-anchor="middle" dominant-baseline="central" fill="${colorSet.tagText}">${tagLabel}</text>
 
-      <!-- Teacher Name (Top Right) -->
-      ${teacher ? `
+      <!-- Teacher Name (UPGRADED: font-size 29, dynamically scaled) -->
+      ${teacherStr ? `
       <text x="${cardX + cardW - 20}" y="${cardY + 16 + tagH / 2 + 1}"
-            font-size="24" font-weight="700" text-anchor="end" dominant-baseline="central"
-            fill="${colorSet.accent}">${teacher}</text>
+            font-size="${teacherFontSize}" font-weight="800" text-anchor="end" dominant-baseline="central"
+            fill="${colorSet.accent}">${teacherStr}</text>
       ` : ''}
 
       <!-- Subject Title (Priority #2) -->
@@ -543,9 +611,9 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
                Z"
             fill="${colorSet.roomBg}"></path>
 
-      <!-- Room Text -->
+      <!-- Room Text (UPGRADED: font-size with dynamic width scaling) -->
       <text x="${cardX + cardW / 2}" y="${bannerY + bannerH / 2 + 1}"
-            font-size="${roomFontSize}" font-weight="900" letter-spacing="1.5px"
+            font-size="${roomFontSize}" font-weight="900" letter-spacing="${roomLetterSpacing}"
             text-anchor="middle" dominant-baseline="central"
             fill="${colorSet.roomText}">${escapeXml(roomLabel)}</text>
     </g>
@@ -665,10 +733,12 @@ async function generateScheduleImage(className, schedule, themeName = 'dark') {
     }
   }
 
+  const displayGroupName = resolveRawGroupName(className);
+
   const svgString = `
 <svg width="${SVG_W}" height="${svgH}" viewBox="0 0 ${SVG_W} ${svgH}"
      xmlns="http://www.w3.org/2000/svg"
-     style="background-color: ${themeConfig.canvasBg}; font-family: 'Segoe UI', -apple-system, Roboto, Helvetica, Arial, sans-serif;">
+     style="background-color: ${themeConfig.canvasBg}; font-family: 'Inter', sans-serif;">
   <defs>
     <filter id="shadow-card" x="-4%" y="-4%" width="112%" height="118%">
       <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="${themeConfig.isLight ? '0.15' : '0.65'}"/>
@@ -685,12 +755,9 @@ async function generateScheduleImage(className, schedule, themeName = 'dark') {
   <rect x="0" y="0" width="${SVG_W}" height="${TITLE_H}" fill="${themeConfig.titleBarBg}" filter="url(#shadow-title)"></rect>
   <rect x="0" y="0" width="14" height="${TITLE_H}" fill="${themeConfig.titleAccentBar}"></rect>
 
-  <text font-size="88" font-weight="900" letter-spacing="3px"
+  <text font-size="104" font-weight="900" letter-spacing="3px"
         text-anchor="middle" dominant-baseline="central"
-        x="${SVG_W / 2}" y="${TITLE_H / 2 - 18}" fill="${themeConfig.titleTextColor}">${escapeXml(className)} — HAFTALIK DARS JADVALI</text>
-  <text font-size="28" font-weight="800" letter-spacing="4px"
-        text-anchor="middle" dominant-baseline="central"
-        x="${SVG_W / 2}" y="${TITLE_H / 2 + 42}" fill="${themeConfig.titleSubtitleColor}">TOSHKENT DAVLAT IQTISODIYOT UNIVERSITETI • RASMIY DARS JADVALI</text>
+        x="${SVG_W / 2}" y="${TITLE_H / 2}" fill="${themeConfig.titleTextColor}">${escapeXml(displayGroupName)}</text>
 
   ${headerHtml}
   ${dayLabelsHtml}

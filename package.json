@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "prewarm:cdn": "node scripts/prewarm_timetable_cdn.js",
+    "prewarm:cdn:active": "node scripts/prewarm_timetable_cdn.js --active-only"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

@@ -732,6 +732,127 @@ async function getScheduleBroadcastUsers() {
   }
 }
 
+// ==========================================
+// 📅 TIMETABLE CDN CACHE (Telegram CDN + Supabase)
+// ==========================================
+
+async function getTimetableCache(groupNormalized, theme) {
+  if (!groupNormalized || !theme) return null;
+  const norm = String(groupNormalized).toUpperCase().trim();
+  const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
+  const cacheKey = `cache:timetable_cdn:${norm}:${validTheme}`;
+
+  if (redis) {
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    } catch (e) {
+      logger.debug('Redis getTimetableCache error', { error: e.message });
+    }
+  }
+
+  if (!supabase) return null;
+
+  try {
+    const { data, error } = await supabase
+      .from('timetable_cache')
+      .select('id, group_name, group_normalized, theme, file_id, channel_message_id, schedule_hash, updated_at')
+      .eq('group_normalized', norm)
+      .eq('theme', validTheme)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (data) {
+      if (redis) {
+        await redis.set(cacheKey, JSON.stringify(data), 'EX', 86400 * 7).catch(() => {});
+      }
+      return data;
+    }
+    return null;
+  } catch (err) {
+    logger.error('getTimetableCache error:', { error: err.message, group: norm, theme: validTheme });
+    return null;
+  }
+}
+
+async function upsertTimetableCache({ groupName, groupNormalized, theme, fileId, channelMessageId, scheduleHash }) {
+  if (!groupNormalized || !theme || !fileId) return false;
+  const norm = String(groupNormalized).toUpperCase().trim();
+  const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
+  const row = {
+    group_name: groupName || norm,
+    group_normalized: norm,
+    theme: validTheme,
+    file_id: String(fileId).trim(),
+    channel_message_id: channelMessageId ? Number(channelMessageId) : null,
+    schedule_hash: String(scheduleHash || '').trim(),
+    updated_at: new Date().toISOString(),
+  };
+
+  const cacheKey = `cache:timetable_cdn:${norm}:${validTheme}`;
+
+  // Update Redis immediately
+  if (redis) {
+    try {
+      await redis.set(cacheKey, JSON.stringify(row), 'EX', 86400 * 7);
+    } catch (e) {
+      logger.debug('Redis upsertTimetableCache error', { error: e.message });
+    }
+  }
+
+  if (!supabase) return true;
+
+  try {
+    const { error } = await supabase
+      .from('timetable_cache')
+      .upsert(row, { onConflict: 'group_normalized,theme' });
+
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    logger.error('upsertTimetableCache error:', { error: err.message, group: norm, theme: validTheme });
+    return false;
+  }
+}
+
+async function deleteTimetableCache(groupNormalized, theme = null) {
+  if (!groupNormalized) return;
+  const norm = String(groupNormalized).toUpperCase().trim();
+
+  if (theme) {
+    const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
+    if (redis) await redis.del(`cache:timetable_cdn:${norm}:${validTheme}`).catch(() => {});
+    if (supabase) {
+      await supabase.from('timetable_cache').delete().eq('group_normalized', norm).eq('theme', validTheme).catch(() => {});
+    }
+  } else {
+    if (redis) {
+      ['dark', 'light', 'vibrant'].forEach(t => {
+        redis.del(`cache:timetable_cdn:${norm}:${t}`).catch(() => {});
+      });
+    }
+    if (supabase) {
+      await supabase.from('timetable_cache').delete().eq('group_normalized', norm).catch(() => {});
+    }
+  }
+}
+
+async function getAllCachedTimetables() {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase
+      .from('timetable_cache')
+      .select('group_name, group_normalized, theme, file_id, schedule_hash, channel_message_id, updated_at');
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    logger.error('getAllCachedTimetables error:', { error: err.message });
+    return [];
+  }
+}
+
 module.exports = {
   loadAllOfficialTests,
   saveOfficialTest,
@@ -769,4 +890,8 @@ module.exports = {
   markUserBlocked,
   isUserBlocked,
   getScheduleBroadcastUsers,
+  getTimetableCache,
+  upsertTimetableCache,
+  deleteTimetableCache,
+  getAllCachedTimetables,
 };
