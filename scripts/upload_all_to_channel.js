@@ -29,7 +29,6 @@ const targetTheme = getArgVal('theme', 'all'); // 'dark' | 'light' | 'vibrant' |
 const delayMs = parseInt(getArgVal('delay', '2200'), 10);
 const limitCount = parseInt(getArgVal('limit', '0'), 10);
 const forceUpload = args.includes('--force');
-const useEdupageColors = args.includes('--edupage-colors');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHANNEL_ID = process.env.TIMETABLE_STORAGE_CHANNEL_ID || process.env.CHANNEL_ID;
@@ -198,7 +197,7 @@ async function main() {
         }
 
         // Render schedule image
-        const imageBuffer = await imageService.generateScheduleImage(groupName, rawSchedule, theme, { useEdupageColors });
+        const imageBuffer = await imageService.generateScheduleImage(groupName, rawSchedule, theme);
         if (!imageBuffer) {
           stats.failed++;
           console.error(`\n❌ [${groupName} | ${theme}] Rasm chizishda xatolik yuz berdi.`);

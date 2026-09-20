@@ -1194,7 +1194,7 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
   const textStartY = Math.round(topZoneY + (availableH - totalTextH) / 2 + fSize * 0.85);
 
   return `
-    <g filter="url(#shadow-card)">
+    <g>
       <!-- Card Base -->
       <rect x="${cardX}" y="${cardY}" width="${cardW}" height="${cardH}" rx="22" ry="22"
             fill="${colorSet.bg}" stroke="${colorSet.border}" stroke-width="2.5"></rect>
@@ -1236,93 +1236,6 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
   `;
 }
 
-function hexToHsl(hex) {
-  if (!hex || typeof hex !== 'string') return [215, 60, 50];
-  let c = hex.replace('#', '').trim();
-  if (c.length === 3) c = c.split('').map(x => x + x).join('');
-  if (c.length !== 6) return [215, 60, 50];
-
-  const r = parseInt(c.substring(0, 2), 16) / 255;
-  const g = parseInt(c.substring(2, 4), 16) / 255;
-  const b = parseInt(c.substring(4, 6), 16) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let h, s, l = (max + min) / 2;
-  if (max === min) {
-    h = s = 0;
-  } else {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    switch (max) {
-      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-      case g: h = (b - r) / d + 2; break;
-      case b: h = (r - g) / d + 4; break;
-    }
-    h /= 6;
-  }
-  return [Math.round(h * 360), Math.round(s * 100), Math.round(l * 100)];
-}
-
-function hslToHex(h, s, l) {
-  l /= 100;
-  const a = s * Math.min(l, 1 - l) / 100;
-  const f = n => {
-    const k = (n + h / 30) % 12;
-    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
-    return Math.round(255 * color).toString(16).padStart(2, '0');
-  };
-  return `#${f(0)}${f(8)}${f(4)}`.toUpperCase();
-}
-
-function generateColorSetFromEdupage(edupageHex, themeName, lessonType) {
-  let [h, s, l] = hexToHsl(edupageHex);
-  if (s < 12) {
-    h = 215;
-    s = 35;
-    l = 55;
-  }
-
-  if (themeName === 'light') {
-    return {
-      bg: hslToHex(h, Math.min(s, 50), 93),
-      border: hslToHex(h, Math.max(s, 70), 38),
-      subjText: '#0F172A',
-      accent: hslToHex(h, Math.max(s, 80), 30),
-      tagBg: hslToHex(h, Math.max(s, 70), 40),
-      tagText: '#FFFFFF',
-      roomBg: hslToHex(h, Math.max(s, 70), 38),
-      roomText: '#FFFFFF',
-      type: lessonType,
-    };
-  }
-
-  if (themeName === 'vibrant') {
-    return {
-      bg: '#0F172A',
-      border: hslToHex(h, 95, 55),
-      subjText: '#FFFFFF',
-      accent: hslToHex(h, 95, 72),
-      tagBg: hslToHex(h, 90, 50),
-      tagText: l > 60 ? '#0F172A' : '#FFFFFF',
-      roomBg: hslToHex(h, 85, 45),
-      roomText: '#FFFFFF',
-      type: lessonType,
-    };
-  }
-
-  // Default: Dark theme
-  return {
-    bg: hslToHex(h, Math.min(s, 35), 11),
-    border: hslToHex(h, Math.max(s, 70), 48),
-    subjText: '#FFFFFF',
-    accent: hslToHex(h, Math.max(s, 85), 72),
-    tagBg: hslToHex(h, Math.max(s, 70), 46),
-    tagText: '#FFFFFF',
-    roomBg: hslToHex(h, Math.max(s, 70), 42),
-    roomText: '#FFFFFF',
-    type: lessonType,
-  };
-}
-
 // ─── Main Generator ──────────────────────────────────────────────────────────
 async function generateScheduleImage(className, schedule, themeName = 'dark', options = {}) {
   const themeConfig = THEMES[themeName] || THEMES.dark;
@@ -1343,19 +1256,10 @@ async function generateScheduleImage(className, schedule, themeName = 'dark', op
 
   const subjectClusterMap = clusterSubjects(schedule);
   const palettes = themeConfig.palettes;
-  const useEdupage = options.useEdupageColors ?? (process.env.USE_EDUPAGE_COLORS === 'true');
 
   function resolveColors(lesson) {
     const raw = (lesson.subject || '').trim();
     const type = getLessonType(raw);
-
-    if (useEdupage && lesson.color) {
-      return {
-        ...generateColorSetFromEdupage(lesson.color, themeName, type),
-        rawSubject: raw,
-      };
-    }
-
     const clusterIdx = subjectClusterMap.get(raw.toLowerCase()) ?? 0;
     const pal = palettes[clusterIdx % palettes.length];
 
@@ -1461,20 +1365,11 @@ async function generateScheduleImage(className, schedule, themeName = 'dark', op
 <svg width="${SVG_W}" height="${svgH}" viewBox="0 0 ${SVG_W} ${svgH}"
      xmlns="http://www.w3.org/2000/svg"
      style="background-color: ${themeConfig.canvasBg}; font-family: 'Inter', sans-serif;">
-  <defs>
-    <filter id="shadow-card" x="-4%" y="-4%" width="112%" height="118%">
-      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="${themeConfig.isLight ? '0.15' : '0.65'}"/>
-    </filter>
-    <filter id="shadow-title" x="-1%" y="-5%" width="104%" height="130%">
-      <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#000000" flood-opacity="${themeConfig.isLight ? '0.2' : '0.7'}"/>
-    </filter>
-  </defs>
-
   <rect x="0" y="0" width="${SVG_W}" height="${svgH}" fill="${themeConfig.canvasBg}"></rect>
   ${zebraHtml}
   <rect x="0" y="${TITLE_H}" width="${DAY_W}" height="${HDR_H + numRows * CELL_H}" fill="${themeConfig.isLight ? '#FFFFFF' : '#0B0F19'}"></rect>
 
-  <rect x="0" y="0" width="${SVG_W}" height="${TITLE_H}" fill="${themeConfig.titleBarBg}" filter="url(#shadow-title)"></rect>
+  <rect x="0" y="0" width="${SVG_W}" height="${TITLE_H}" fill="${themeConfig.titleBarBg}"></rect>
   <rect x="0" y="0" width="14" height="${TITLE_H}" fill="${themeConfig.titleAccentBar}"></rect>
 
   <text font-size="104" font-weight="900" letter-spacing="3px"
@@ -1493,12 +1388,14 @@ async function generateScheduleImage(className, schedule, themeName = 'dark', op
 </svg>
   `;
 
+  if (options && options.returnSvg) {
+    return svgString;
+  }
+
   return sharp(Buffer.from(svgString))
     .png({
-      palette: true,
-      quality: 90,
-      compressionLevel: 7,
-      effort: 3,
+      compressionLevel: 4,
+      effort: 1,
     })
     .toBuffer();
 }
