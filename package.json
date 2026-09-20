@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
+    "upload:cdn": "node --expose-gc scripts/upload_all_to_channel.js",
     "prewarm:cdn": "node scripts/prewarm_timetable_cdn.js",
     "prewarm:cdn:active": "node scripts/prewarm_timetable_cdn.js --active-only"
   },

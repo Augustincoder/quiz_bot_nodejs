@@ -5,6 +5,10 @@ const path = require('path');
 const os = require('os');
 const sharp = require('sharp');
 
+// Disable internal libvips cache and concurrency to prevent memory leaks/buildup
+sharp.cache(false);
+sharp.concurrency(1);
+
 // Sync bundled fonts to ~/.fonts for fontconfig/librsvg detection
 try {
   const userFontsDir = path.join(os.homedir(), '.fonts');
@@ -54,10 +58,8 @@ function escapeXml(unsafe) {
 
 function cleanSubjectTitle(subject) {
   if (!subject) return '';
-  return subject
-    .replace(/\s*\((Ma['ʼ`]?ruza|Maruza|Seminar|Amaliy|Laboratoriya|Lab|Sem|Ma|Lk|Pr|Amal)\)\s*/gi, '')
-    .replace(/\s*\((Ma'naviyat|Manaviyat)\)\s*/gi, '')
-    .trim();
+  // Preserve full subject name including (Ma), (Sem), (Lab) as requested by user
+  return subject.trim().replace(/\s+/g, ' ');
 }
 
 function wrapText(text, maxChars) {
@@ -170,18 +172,109 @@ function formatRoomBanner(rawRoom, cardW = 400) {
 
 function getLessonType(subject) {
   if (!subject) return 'other';
-  if (/\(Ma\)/i.test(subject) || /\(Lk\)/i.test(subject) || /ma['ʼ`]?ruza/i.test(subject) || /lek[ts]iya/i.test(subject)) return 'lecture';
-  if (/\(Sem\)/i.test(subject) || /\(Pr\)/i.test(subject) || /\(Amal\)/i.test(subject) || /seminar/i.test(subject) || /amaliy/i.test(subject) || /praktika/i.test(subject)) return 'seminar';
-  if (/\(Lab\)/i.test(subject) || /laboratoriya/i.test(subject)) return 'lab';
+  const s = subject.toString();
+  if (/\((lab|laboratoriya|лаб)\)/i.test(s) || /\b(lab|laboratoriya|labaratoriya)\b/i.test(s)) return 'lab';
+  if (/\((amal|amaliy|praktika)\)/i.test(s) || /\b(amaliy|praktika)\b/i.test(s)) return 'practice';
+  if (/\((sem|pr|seminar|сем)\)/i.test(s) || /\b(seminar)\b/i.test(s)) return 'seminar';
+  if (/\((ma|lk|lek|ma['ʼ`]?ruza|lektsiya|leksiya|лек|ма)\)/i.test(s) || /\b(ma['ʼ`]?ruza|leksiya|lektsiya)\b/i.test(s)) return 'lecture';
+  if (/\((ma'naviyat|manaviyat|tyutorlik|tyutorlik soati)\)/i.test(s)) return 'spiritual';
   return 'other';
 }
 
-function getBaseSubject(subject) {
-  return (subject || '')
-    .replace(/\s*\((Ma['ʼ`]?ruza|Maruza|Seminar|Amaliy|Laboratoriya|Lab|Sem|Ma|Lk|Pr|Amal)\)\s*/gi, '')
-    .replace(/\s*\(.*?\)\s*/g, '')
-    .trim()
-    .toLowerCase();
+function getLessonBadge(type, rawSubject = '') {
+  switch (type) {
+    case 'lecture': return "MA'RUZA";
+    case 'seminar': return "SEMINAR";
+    case 'lab': return "LABORATORIYA";
+    case 'practice': return "AMALIY";
+    case 'spiritual': return "MA'NAVIYAT";
+    default: {
+      const m = (rawSubject || '').match(/\((.*?)\)/);
+      if (m && m[1] && m[1].length <= 12) {
+        return m[1].toUpperCase().trim();
+      }
+      return "DARS";
+    }
+  }
+}
+
+function cleanForClustering(str) {
+  return (str || '')
+    .toLowerCase()
+    .replace(/\(.*?\)/g, '')
+    .replace(/[^a-z0-9\u0400-\u04FF\s]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function wordsMatch(w1, w2) {
+  if (w1 === w2) return true;
+  if (w1.length >= 3 && w2.length >= 3) {
+    if (w1.startsWith(w2) || w2.startsWith(w1)) return true;
+  }
+  return false;
+}
+
+function areSameSubject(s1, s2) {
+  const c1 = cleanForClustering(s1);
+  const c2 = cleanForClustering(s2);
+  if (c1 === c2) return true;
+
+  const words1 = c1.split(' ').filter(w => w.length >= 2);
+  const words2 = c2.split(' ').filter(w => w.length >= 2);
+  if (words1.length === 0 || words2.length === 0) return false;
+
+  let matches = 0;
+  for (const w1 of words1) {
+    if (words2.some(w2 => wordsMatch(w1, w2))) {
+      matches++;
+    }
+  }
+
+  const minWords = Math.min(words1.length, words2.length);
+  if (minWords <= 2) {
+    return matches >= minWords && (matches / Math.max(words1.length, words2.length) >= 0.5);
+  }
+
+  const ratio1 = matches / words1.length;
+  const ratio2 = matches / words2.length;
+  return matches >= 2 && (ratio1 >= 0.6 || ratio2 >= 0.6);
+}
+
+function clusterSubjects(schedule) {
+  const allSubjects = new Set();
+  for (let d = 0; d < 6; d++) {
+    if (!schedule[d]) continue;
+    for (let p = 1; p <= 8; p++) {
+      if (!schedule[d][p]) continue;
+      for (const l of schedule[d][p]) {
+        if (l.subject) allSubjects.add(l.subject.trim());
+      }
+    }
+  }
+
+  const clusters = [];
+  for (const subj of allSubjects) {
+    let added = false;
+    for (const cluster of clusters) {
+      if (cluster.some(existing => areSameSubject(existing, subj))) {
+        cluster.push(subj);
+        added = true;
+        break;
+      }
+    }
+    if (!added) {
+      clusters.push([subj]);
+    }
+  }
+
+  const subjectToPaletteIndex = new Map();
+  clusters.forEach((cluster, idx) => {
+    for (const s of cluster) {
+      subjectToPaletteIndex.set(s.toLowerCase(), idx);
+    }
+  });
+  return subjectToPaletteIndex;
 }
 
 function getMaxActivePeriod(schedule) {
@@ -211,7 +304,7 @@ function getActiveDays(schedule) {
 
 // ─── PALETTES DEFINITIONS ────────────────────────────────────────────────────
 
-// 1. FRESH SLATE DARK (Variant 6A) — Ma'ruza: To'qroq | Seminar: Sezilarli ochroq
+// 1. FRESH SLATE DARK (Variant 6A) — Ma'ruza: To'qroq | Seminar: Sezilarli ochroq | Lab: Texnik aksent
 const FRESH_SLATE_PALETTES = [
   // 1. Sky / Azure
   {
@@ -225,6 +318,16 @@ const FRESH_SLATE_PALETTES = [
       bg: '#1E3A8A', border: '#60A5FA', subjText: '#F0F9FF',
       accent: '#BAE6FD', tagBg: '#38BDF8', tagText: '#082F49',
       roomBg: '#38BDF8', roomText: '#082F49',
+    },
+    lab: {
+      bg: '#082F49', border: '#06B6D4', subjText: '#F0F9FF',
+      accent: '#67E8F9', tagBg: '#06B6D4', tagText: '#082F49',
+      roomBg: '#0891B2', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#1E1B4B', border: '#818CF8', subjText: '#EEF2FF',
+      accent: '#C7D2FE', tagBg: '#818CF8', tagText: '#0F172A',
+      roomBg: '#4F46E5', roomText: '#FFFFFF',
     },
   },
   // 2. Fresh Emerald
@@ -240,6 +343,16 @@ const FRESH_SLATE_PALETTES = [
       accent: '#A7F3D0', tagBg: '#34D399', tagText: '#022C22',
       roomBg: '#34D399', roomText: '#022C22',
     },
+    lab: {
+      bg: '#042F2E', border: '#14B8A6', subjText: '#F0FDFA',
+      accent: '#5EEAD4', tagBg: '#14B8A6', tagText: '#042F2E',
+      roomBg: '#0D9488', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#14532D', border: '#84CC16', subjText: '#F7FEE7',
+      accent: '#BEF264', tagBg: '#84CC16', tagText: '#14532D',
+      roomBg: '#65A30D', roomText: '#FFFFFF',
+    },
   },
   // 3. Electric Violet
   {
@@ -253,6 +366,16 @@ const FRESH_SLATE_PALETTES = [
       bg: '#581C87', border: '#C084FC', subjText: '#FAF5FF',
       accent: '#E9D5FF', tagBg: '#C084FC', tagText: '#2E1065',
       roomBg: '#C084FC', roomText: '#2E1065',
+    },
+    lab: {
+      bg: '#3B0764', border: '#D946EF', subjText: '#FDF4FF',
+      accent: '#F0ABFC', tagBg: '#D946EF', tagText: '#3B0764',
+      roomBg: '#C026D3', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#312E81', border: '#6366F1', subjText: '#EEF2FF',
+      accent: '#A5B4FC', tagBg: '#6366F1', tagText: '#1E1B4B',
+      roomBg: '#4F46E5', roomText: '#FFFFFF',
     },
   },
   // 4. Warm Coral
@@ -268,6 +391,16 @@ const FRESH_SLATE_PALETTES = [
       accent: '#FED7AA', tagBg: '#FBBF24', tagText: '#451A03',
       roomBg: '#FBBF24', roomText: '#451A03',
     },
+    lab: {
+      bg: '#431407', border: '#F97316', subjText: '#FFF7ED',
+      accent: '#FDBA74', tagBg: '#F97316', tagText: '#431407',
+      roomBg: '#EA580C', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#451A03', border: '#EAB308', subjText: '#FEFCE8',
+      accent: '#FDE047', tagBg: '#EAB308', tagText: '#451A03',
+      roomBg: '#CA8A04', roomText: '#FFFFFF',
+    },
   },
   // 5. Vibrant Teal
   {
@@ -281,6 +414,16 @@ const FRESH_SLATE_PALETTES = [
       bg: '#0F766E', border: '#2DD4BF', subjText: '#F0FDFA',
       accent: '#CCFBF1', tagBg: '#2DD4BF', tagText: '#042F2E',
       roomBg: '#2DD4BF', roomText: '#042F2E',
+    },
+    lab: {
+      bg: '#022C22', border: '#10B981', subjText: '#ECFDF5',
+      accent: '#6EE7B7', tagBg: '#10B981', tagText: '#022C22',
+      roomBg: '#059669', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#082F49', border: '#38BDF8', subjText: '#F0F9FF',
+      accent: '#7DD3FC', tagBg: '#38BDF8', tagText: '#082F49',
+      roomBg: '#0284C7', roomText: '#FFFFFF',
     },
   },
   // 6. Rose Magenta
@@ -296,10 +439,20 @@ const FRESH_SLATE_PALETTES = [
       accent: '#FCE7F3', tagBg: '#FB7185', tagText: '#4C0519',
       roomBg: '#FB7185', roomText: '#4C0519',
     },
+    lab: {
+      bg: '#4C0519', border: '#F43F5E', subjText: '#FFF1F2',
+      accent: '#FDA4AF', tagBg: '#F43F5E', tagText: '#4C0519',
+      roomBg: '#E11D48', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#3B0764', border: '#C084FC', subjText: '#FAF5FF',
+      accent: '#E9D5FF', tagBg: '#C084FC', tagText: '#2E1065',
+      roomBg: '#9333EA', roomText: '#FFFFFF',
+    },
   },
 ];
 
-// 2. CLEAN AIR LIGHT (Variant 6B) — Ma'ruza: To'yingan pastel | Seminar: Juda och oqish
+// 2. CLEAN AIR LIGHT (Variant 6B) — Ma'ruza: To'yingan pastel | Seminar: Juda och oqish | Lab/Amaliy: Ajralib turuvchi
 const CLEAN_AIR_LIGHT_PALETTES = [
   // 1. Sky Blue
   {
@@ -313,6 +466,16 @@ const CLEAN_AIR_LIGHT_PALETTES = [
       bg: '#F0F9FF', border: '#0284C7', subjText: '#1E293B',
       accent: '#0369A1', tagBg: '#0284C7', tagText: '#FFFFFF',
       roomBg: '#0284C7', roomText: '#FFFFFF',
+    },
+    lab: {
+      bg: '#E0F2FE', border: '#0891B2', subjText: '#0F172A',
+      accent: '#0E7490', tagBg: '#0891B2', tagText: '#FFFFFF',
+      roomBg: '#0891B2', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#EEF2FF', border: '#4F46E5', subjText: '#0F172A',
+      accent: '#4338CA', tagBg: '#4F46E5', tagText: '#FFFFFF',
+      roomBg: '#4F46E5', roomText: '#FFFFFF',
     },
   },
   // 2. Fresh Emerald
@@ -328,6 +491,16 @@ const CLEAN_AIR_LIGHT_PALETTES = [
       accent: '#047857', tagBg: '#059669', tagText: '#FFFFFF',
       roomBg: '#059669', roomText: '#FFFFFF',
     },
+    lab: {
+      bg: '#CCFBF1', border: '#0D9488', subjText: '#0F172A',
+      accent: '#115E59', tagBg: '#0D9488', tagText: '#FFFFFF',
+      roomBg: '#0D9488', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#F7FEE7', border: '#65A30D', subjText: '#0F172A',
+      accent: '#4D7C0F', tagBg: '#65A30D', tagText: '#FFFFFF',
+      roomBg: '#65A30D', roomText: '#FFFFFF',
+    },
   },
   // 3. Purple
   {
@@ -341,6 +514,16 @@ const CLEAN_AIR_LIGHT_PALETTES = [
       bg: '#FAF5FF', border: '#7C3AED', subjText: '#1E293B',
       accent: '#6D28D9', tagBg: '#7C3AED', tagText: '#FFFFFF',
       roomBg: '#7C3AED', roomText: '#FFFFFF',
+    },
+    lab: {
+      bg: '#F5D0FE', border: '#C026D3', subjText: '#0F172A',
+      accent: '#86198F', tagBg: '#C026D3', tagText: '#FFFFFF',
+      roomBg: '#C026D3', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#E0E7FF', border: '#4338CA', subjText: '#0F172A',
+      accent: '#3730A3', tagBg: '#4338CA', tagText: '#FFFFFF',
+      roomBg: '#4338CA', roomText: '#FFFFFF',
     },
   },
   // 4. Amber
@@ -356,6 +539,16 @@ const CLEAN_AIR_LIGHT_PALETTES = [
       accent: '#B45309', tagBg: '#D97706', tagText: '#FFFFFF',
       roomBg: '#D97706', roomText: '#FFFFFF',
     },
+    lab: {
+      bg: '#FFEDD5', border: '#EA580C', subjText: '#0F172A',
+      accent: '#9A3412', tagBg: '#EA580C', tagText: '#FFFFFF',
+      roomBg: '#EA580C', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#FEF9C3', border: '#CA8A04', subjText: '#0F172A',
+      accent: '#854D0E', tagBg: '#CA8A04', tagText: '#FFFFFF',
+      roomBg: '#CA8A04', roomText: '#FFFFFF',
+    },
   },
   // 5. Teal
   {
@@ -370,6 +563,16 @@ const CLEAN_AIR_LIGHT_PALETTES = [
       accent: '#0F766E', tagBg: '#0D9488', tagText: '#FFFFFF',
       roomBg: '#0D9488', roomText: '#FFFFFF',
     },
+    lab: {
+      bg: '#CFFAFE', border: '#0284C7', subjText: '#0F172A',
+      accent: '#0369A1', tagBg: '#0284C7', tagText: '#FFFFFF',
+      roomBg: '#0284C7', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#D1FAE5', border: '#059669', subjText: '#0F172A',
+      accent: '#047857', tagBg: '#059669', tagText: '#FFFFFF',
+      roomBg: '#059669', roomText: '#FFFFFF',
+    },
   },
   // 6. Rose
   {
@@ -383,6 +586,16 @@ const CLEAN_AIR_LIGHT_PALETTES = [
       bg: '#FFF1F2', border: '#E11D48', subjText: '#1E293B',
       accent: '#BE123C', tagBg: '#E11D48', tagText: '#FFFFFF',
       roomBg: '#E11D48', roomText: '#FFFFFF',
+    },
+    lab: {
+      bg: '#FFE4E6', border: '#F43F5E', subjText: '#0F172A',
+      accent: '#9F1239', tagBg: '#F43F5E', tagText: '#FFFFFF',
+      roomBg: '#F43F5E', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#FCE7F3', border: '#DB2777', subjText: '#0F172A',
+      accent: '#9D174D', tagBg: '#DB2777', tagText: '#FFFFFF',
+      roomBg: '#DB2777', roomText: '#FFFFFF',
     },
   },
 ];
@@ -402,6 +615,16 @@ const VIBRANT_TINT_PALETTES = [
       accent: '#BAE6FD', tagBg: '#38BDF8', tagText: '#082F49',
       roomBg: '#38BDF8', roomText: '#082F49',
     },
+    lab: {
+      bg: '#082F49', border: '#06B6D4', subjText: '#F0F9FF',
+      accent: '#67E8F9', tagBg: '#06B6D4', tagText: '#082F49',
+      roomBg: '#0891B2', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#1E1B4B', border: '#818CF8', subjText: '#EEF2FF',
+      accent: '#C7D2FE', tagBg: '#818CF8', tagText: '#0F172A',
+      roomBg: '#4F46E5', roomText: '#FFFFFF',
+    },
   },
   // 2. Emerald
   {
@@ -415,6 +638,16 @@ const VIBRANT_TINT_PALETTES = [
       bg: '#1E293B', border: '#34D399', subjText: '#F1F5F9',
       accent: '#A7F3D0', tagBg: '#34D399', tagText: '#022C22',
       roomBg: '#34D399', roomText: '#022C22',
+    },
+    lab: {
+      bg: '#042F2E', border: '#14B8A6', subjText: '#F0FDFA',
+      accent: '#5EEAD4', tagBg: '#14B8A6', tagText: '#042F2E',
+      roomBg: '#0D9488', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#14532D', border: '#84CC16', subjText: '#F7FEE7',
+      accent: '#BEF264', tagBg: '#84CC16', tagText: '#14532D',
+      roomBg: '#65A30D', roomText: '#FFFFFF',
     },
   },
   // 3. Purple
@@ -430,6 +663,16 @@ const VIBRANT_TINT_PALETTES = [
       accent: '#E9D5FF', tagBg: '#C084FC', tagText: '#2E1065',
       roomBg: '#C084FC', roomText: '#2E1065',
     },
+    lab: {
+      bg: '#3B0764', border: '#D946EF', subjText: '#FDF4FF',
+      accent: '#F0ABFC', tagBg: '#D946EF', tagText: '#3B0764',
+      roomBg: '#C026D3', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#312E81', border: '#6366F1', subjText: '#EEF2FF',
+      accent: '#A5B4FC', tagBg: '#6366F1', tagText: '#1E1B4B',
+      roomBg: '#4F46E5', roomText: '#FFFFFF',
+    },
   },
   // 4. Amber
   {
@@ -443,6 +686,16 @@ const VIBRANT_TINT_PALETTES = [
       bg: '#1E293B', border: '#FBBF24', subjText: '#F1F5F9',
       accent: '#FED7AA', tagBg: '#FBBF24', tagText: '#451A03',
       roomBg: '#FBBF24', roomText: '#451A03',
+    },
+    lab: {
+      bg: '#431407', border: '#F97316', subjText: '#FFF7ED',
+      accent: '#FDBA74', tagBg: '#F97316', tagText: '#431407',
+      roomBg: '#EA580C', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#451A03', border: '#EAB308', subjText: '#FEFCE8',
+      accent: '#FDE047', tagBg: '#EAB308', tagText: '#451A03',
+      roomBg: '#CA8A04', roomText: '#FFFFFF',
     },
   },
   // 5. Rose
@@ -458,6 +711,16 @@ const VIBRANT_TINT_PALETTES = [
       accent: '#FECDD3', tagBg: '#FB7185', tagText: '#4C0519',
       roomBg: '#FB7185', roomText: '#4C0519',
     },
+    lab: {
+      bg: '#4C0519', border: '#F43F5E', subjText: '#FFF1F2',
+      accent: '#FDA4AF', tagBg: '#F43F5E', tagText: '#4C0519',
+      roomBg: '#E11D48', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#3B0764', border: '#C084FC', subjText: '#FAF5FF',
+      accent: '#E9D5FF', tagBg: '#C084FC', tagText: '#2E1065',
+      roomBg: '#9333EA', roomText: '#FFFFFF',
+    },
   },
   // 6. Teal
   {
@@ -471,6 +734,16 @@ const VIBRANT_TINT_PALETTES = [
       bg: '#1E293B', border: '#2DD4BF', subjText: '#F1F5F9',
       accent: '#CCFBF1', tagBg: '#2DD4BF', tagText: '#042F2E',
       roomBg: '#2DD4BF', roomText: '#042F2E',
+    },
+    lab: {
+      bg: '#022C22', border: '#10B981', subjText: '#ECFDF5',
+      accent: '#6EE7B7', tagBg: '#10B981', tagText: '#022C22',
+      roomBg: '#059669', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#082F49', border: '#38BDF8', subjText: '#F0F9FF',
+      accent: '#7DD3FC', tagBg: '#38BDF8', tagText: '#082F49',
+      roomBg: '#0284C7', roomText: '#FFFFFF',
     },
   },
 ];
@@ -541,7 +814,6 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
   const cleanSubj = cleanSubjectTitle(rawSubj);
   const subj = escapeXml(cleanSubj);
   const teacher = escapeXml(formatTeacherName(lesson.teacher));
-  const isLecture = colorSet.type === 'lecture';
 
   // 1. Subject text
   const { lines: subjLines, fSize } = wrapSubjectText(subj, cardW);
@@ -553,9 +825,9 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
   const bannerY = cardY + cardH - bannerH;
 
   // 3. Format badge & Teacher layout (No overlap guarantee)
-  const tagW = isLecture ? 130 : 120;
+  const tagLabel = getLessonBadge(colorSet.type, colorSet.rawSubject || rawSubj);
+  const tagW = Math.max(115, Math.min(185, Math.round(tagLabel.length * 12.5 + 24)));
   const tagH = 36;
-  const tagLabel = isLecture ? "MA'RUZA" : "SEMINAR";
 
   let teacherStr = teacher;
   let teacherFontSize = 29;
@@ -609,7 +881,7 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
                L ${cardX + 22} ${cardY + cardH}
                A 22 22 0 0 1 ${cardX} ${cardY + cardH - 22}
                Z"
-            fill="${colorSet.roomBg}"></path>
+             fill="${colorSet.roomBg}"></path>
 
       <!-- Room Text (UPGRADED: font-size with dynamic width scaling) -->
       <text x="${cardX + cardW / 2}" y="${bannerY + bannerH / 2 + 1}"
@@ -635,20 +907,27 @@ async function generateScheduleImage(className, schedule, themeName = 'dark') {
   const gridY     = TITLE_H + HDR_H;
   const svgH      = gridY + numRows * CELL_H + 40;
 
-  const baseColorMap = {};
-  let colorCounter = 0;
+  const subjectClusterMap = clusterSubjects(schedule);
   const palettes = themeConfig.palettes;
 
   function resolveColors(lesson) {
-    const base = getBaseSubject(lesson.subject || '');
-    if (!(base in baseColorMap)) {
-      baseColorMap[base] = colorCounter % palettes.length;
-      colorCounter++;
+    const raw = (lesson.subject || '').trim();
+    const clusterIdx = subjectClusterMap.get(raw.toLowerCase()) ?? 0;
+    const pal = palettes[clusterIdx % palettes.length];
+    const type = getLessonType(raw);
+
+    let colorSet;
+    if (type === 'lab') {
+      colorSet = pal.lab || pal.seminar;
+    } else if (type === 'practice') {
+      colorSet = pal.practice || pal.seminar;
+    } else if (type === 'seminar') {
+      colorSet = pal.seminar;
+    } else {
+      colorSet = pal.lecture;
     }
-    const pal = palettes[baseColorMap[base]];
-    const type = getLessonType(lesson.subject);
-    const colorSet = type === 'seminar' ? pal.seminar : pal.lecture;
-    return { ...colorSet, type };
+
+    return { ...colorSet, type, rawSubject: raw };
   }
 
   // Header periods

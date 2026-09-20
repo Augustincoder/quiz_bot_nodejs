@@ -360,9 +360,9 @@ async function main() {
     logger.warn('Initial cache warm-up deferred', { error: err.message });
   });
 
-  // Start Timetable CDN pre-warm in background if storage channel is configured
+  // Timetable CDN background prewarm (Opt-in only via AUTO_PREWARM_CDN=true to prevent OOM on Render)
   const { TIMETABLE_STORAGE_CHANNEL_ID } = require('./src/config/config');
-  if (TIMETABLE_STORAGE_CHANNEL_ID) {
+  if (TIMETABLE_STORAGE_CHANNEL_ID && process.env.AUTO_PREWARM_CDN === 'true') {
     setTimeout(() => {
       try {
         const timetableCdnService = require('./src/services/timetableCdnService');
@@ -373,6 +373,8 @@ async function main() {
         logger.warn('Could not initialize timetable CDN prewarm', { error: e.message });
       }
     }, 15000);
+  } else {
+    logger.info('ℹ️ Timetable CDN prewarm worker is idle on startup (Run `npm run upload:cdn` locally for bulk pre-warming)');
   }
 
   // ═══ Cron Tasks (Asia/Tashkent) ══════════════════════════════
