@@ -26,9 +26,10 @@ const BINOLAR = [
 ];
 
 const PARA_KB = Markup.inlineKeyboard([
-  [Markup.button.callback('1-para  08:30–09:50', 'bosh_1'), Markup.button.callback('2-para  10:00–11:20', 'bosh_2')],
-  [Markup.button.callback('3-para  11:30–12:50', 'bosh_3'), Markup.button.callback('4-para  13:30–14:50', 'bosh_4')],
-  [Markup.button.callback('5-para  15:00–16:20', 'bosh_5'), Markup.button.callback('6-para  16:30–17:50', 'bosh_6')],
+  [Markup.button.callback('1-para  08:00–09:20', 'bosh_1'), Markup.button.callback('2-para  09:30–10:50', 'bosh_2')],
+  [Markup.button.callback('3-para  11:00–12:20', 'bosh_3'), Markup.button.callback('4-para  13:00–14:20', 'bosh_4')],
+  [Markup.button.callback('5-para  14:30–15:50', 'bosh_5'), Markup.button.callback('6-para  16:00–17:20', 'bosh_6')],
+  [Markup.button.callback('7-para  17:30–18:50', 'bosh_7'), Markup.button.callback('8-para  19:00–20:20', 'bosh_8')],
   [Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')],
 ]);
 

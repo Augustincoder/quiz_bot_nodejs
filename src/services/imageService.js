@@ -36,8 +36,8 @@ const CELL_H  = 340;
 const MARGIN  = 14;
 
 const TIMES = [
-  '08:30–09:50', '10:00–11:20', '11:30–12:50', '13:30–14:50',
-  '15:00–16:20', '16:30–17:50', '18:00–19:20', '19:30–20:50',
+  '08:00–09:20', '09:30–10:50', '11:00–12:20', '13:00–14:20',
+  '14:30–15:50', '16:00–17:20', '17:30–18:50', '19:00–20:20',
 ];
 const DAY_NAMES = ['Dush', 'Sesh', 'Chor', 'Pay', 'Juma', 'Shan'];
 
@@ -316,16 +316,16 @@ function getActiveDays(schedule) {
 
 // 1. FRESH SLATE DARK (Variant 6A) — Ma'ruza: To'qroq | Seminar: Sezilarli ochroq va yorqin | Lab: Texnik aksent
 const FRESH_SLATE_PALETTES = [
-  // 1. Sky / Azure
+  // 1. Sky Azure (Moviy Ko'k)
   {
     name: 'Sky Azure',
     lecture: {
-      bg: '#0D172A', border: '#2563EB', subjText: '#FFFFFF',
+      bg: '#081730', border: '#2563EB', subjText: '#FFFFFF',
       accent: '#93C5FD', tagBg: '#1D4ED8', tagText: '#FFFFFF',
       roomBg: '#1D4ED8', roomText: '#FFFFFF',
     },
     seminar: {
-      bg: '#1A2E5A', border: '#38BDF8', subjText: '#F8FAFC',
+      bg: '#122B54', border: '#38BDF8', subjText: '#F8FAFC',
       accent: '#BAE6FD', tagBg: '#38BDF8', tagText: '#082F49',
       roomBg: '#38BDF8', roomText: '#082F49',
     },
@@ -340,16 +340,16 @@ const FRESH_SLATE_PALETTES = [
       roomBg: '#4F46E5', roomText: '#FFFFFF',
     },
   },
-  // 2. Fresh Emerald
+  // 2. Emerald Mint (Zumrad Yashil)
   {
     name: 'Emerald Mint',
     lecture: {
-      bg: '#052219', border: '#059669', subjText: '#FFFFFF',
+      bg: '#042217', border: '#059669', subjText: '#FFFFFF',
       accent: '#6EE7B7', tagBg: '#047857', tagText: '#FFFFFF',
       roomBg: '#047857', roomText: '#FFFFFF',
     },
     seminar: {
-      bg: '#0E4434', border: '#34D399', subjText: '#F0FDF4',
+      bg: '#0D4230', border: '#34D399', subjText: '#F0FDF4',
       accent: '#A7F3D0', tagBg: '#34D399', tagText: '#022C22',
       roomBg: '#34D399', roomText: '#022C22',
     },
@@ -364,21 +364,93 @@ const FRESH_SLATE_PALETTES = [
       roomBg: '#65A30D', roomText: '#FFFFFF',
     },
   },
-  // 3. Electric Violet
+  // 3. Warm Amber (Yorqin Malla / Oltin Asal)
+  {
+    name: 'Warm Amber',
+    lecture: {
+      bg: '#2B1705', border: '#D97706', subjText: '#FFFFFF',
+      accent: '#FDE68A', tagBg: '#B45309', tagText: '#FFFFFF',
+      roomBg: '#B45309', roomText: '#FFFFFF',
+    },
+    seminar: {
+      bg: '#452608', border: '#FBBF24', subjText: '#FFFBEB',
+      accent: '#FED7AA', tagBg: '#FBBF24', tagText: '#451A03',
+      roomBg: '#FBBF24', roomText: '#451A03',
+    },
+    lab: {
+      bg: '#3A1F06', border: '#F59E0B', subjText: '#FFFBEB',
+      accent: '#FCD34D', tagBg: '#FCD34D', tagText: '#451A03',
+      roomBg: '#D97706', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#331B05', border: '#EAB308', subjText: '#FEFCE8',
+      accent: '#FDE047', tagBg: '#EAB308', tagText: '#451A03',
+      roomBg: '#CA8A04', roomText: '#FFFFFF',
+    },
+  },
+  // 4. Ruby Crimson (Yorqin Qizil / Yoqut)
+  {
+    name: 'Ruby Crimson',
+    lecture: {
+      bg: '#2B0A0E', border: '#DC2626', subjText: '#FFFFFF',
+      accent: '#FECACA', tagBg: '#B91C1C', tagText: '#FFFFFF',
+      roomBg: '#B91C1C', roomText: '#FFFFFF',
+    },
+    seminar: {
+      bg: '#4A1118', border: '#F87171', subjText: '#FEF2F2',
+      accent: '#FEE2E2', tagBg: '#F87171', tagText: '#450A0A',
+      roomBg: '#F87171', roomText: '#450A0A',
+    },
+    lab: {
+      bg: '#3B0D14', border: '#EF4444', subjText: '#FEF2F2',
+      accent: '#FCA5A5', tagBg: '#EF4444', tagText: '#FFFFFF',
+      roomBg: '#DC2626', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#360910', border: '#E11D48', subjText: '#FFF1F2',
+      accent: '#FDA4AF', tagBg: '#E11D48', tagText: '#FFFFFF',
+      roomBg: '#BE123C', roomText: '#FFFFFF',
+    },
+  },
+  // 5. Roasted Bronze (Boy Jigarrang / Shokolad)
+  {
+    name: 'Roasted Bronze',
+    lecture: {
+      bg: '#211209', border: '#92400E', subjText: '#FFFFFF',
+      accent: '#FDE68A', tagBg: '#78350F', tagText: '#FFFFFF',
+      roomBg: '#78350F', roomText: '#FFFFFF',
+    },
+    seminar: {
+      bg: '#3D2010', border: '#D97706', subjText: '#FFFBEB',
+      accent: '#FED7AA', tagBg: '#D97706', tagText: '#FFFFFF',
+      roomBg: '#D97706', roomText: '#FFFFFF',
+    },
+    lab: {
+      bg: '#2F190D', border: '#B45309', subjText: '#FFFBEB',
+      accent: '#FCD34D', tagBg: '#B45309', tagText: '#FFFFFF',
+      roomBg: '#92400E', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#29150B', border: '#CA8A04', subjText: '#FEFCE8',
+      accent: '#FEF08A', tagBg: '#CA8A04', tagText: '#422006',
+      roomBg: '#A16207', roomText: '#FFFFFF',
+    },
+  },
+  // 6. Electric Violet (Yorqin Siyohrang)
   {
     name: 'Electric Violet',
     lecture: {
-      bg: '#1E1035', border: '#7C3AED', subjText: '#FFFFFF',
+      bg: '#1A0E30', border: '#7C3AED', subjText: '#FFFFFF',
       accent: '#D8B4FE', tagBg: '#6D28D9', tagText: '#FFFFFF',
       roomBg: '#6D28D9', roomText: '#FFFFFF',
     },
     seminar: {
-      bg: '#3B1D66', border: '#C084FC', subjText: '#FAF5FF',
+      bg: '#35185C', border: '#C084FC', subjText: '#FAF5FF',
       accent: '#E9D5FF', tagBg: '#C084FC', tagText: '#2E1065',
       roomBg: '#C084FC', roomText: '#2E1065',
     },
     lab: {
-      bg: '#2A0845', border: '#E879F9', subjText: '#FDF4FF',
+      bg: '#26063F', border: '#E879F9', subjText: '#FDF4FF',
       accent: '#F0ABFC', tagBg: '#E879F9', tagText: '#3B0764',
       roomBg: '#C026D3', roomText: '#FFFFFF',
     },
@@ -388,31 +460,7 @@ const FRESH_SLATE_PALETTES = [
       roomBg: '#4F46E5', roomText: '#FFFFFF',
     },
   },
-  // 4. Warm Coral
-  {
-    name: 'Warm Coral',
-    lecture: {
-      bg: '#2B1408', border: '#D97706', subjText: '#FFFFFF',
-      accent: '#FCD34D', tagBg: '#B45309', tagText: '#FFFFFF',
-      roomBg: '#B45309', roomText: '#FFFFFF',
-    },
-    seminar: {
-      bg: '#4A240C', border: '#FBBF24', subjText: '#FFF7ED',
-      accent: '#FED7AA', tagBg: '#FBBF24', tagText: '#451A03',
-      roomBg: '#FBBF24', roomText: '#451A03',
-    },
-    lab: {
-      bg: '#361006', border: '#FB923C', subjText: '#FFF7ED',
-      accent: '#FDBA74', tagBg: '#FB923C', tagText: '#431407',
-      roomBg: '#EA580C', roomText: '#FFFFFF',
-    },
-    practice: {
-      bg: '#331B05', border: '#EAB308', subjText: '#FEFCE8',
-      accent: '#FDE047', tagBg: '#EAB308', tagText: '#451A03',
-      roomBg: '#CA8A04', roomText: '#FFFFFF',
-    },
-  },
-  // 5. Vibrant Teal
+  // 7. Vibrant Teal (Firuza Dengiz)
   {
     name: 'Vibrant Teal',
     lecture: {
@@ -436,7 +484,31 @@ const FRESH_SLATE_PALETTES = [
       roomBg: '#0284C7', roomText: '#FFFFFF',
     },
   },
-  // 6. Rose Magenta
+  // 8. Sunset Orange (Olovrang Apelsin)
+  {
+    name: 'Sunset Orange',
+    lecture: {
+      bg: '#2C1204', border: '#EA580C', subjText: '#FFFFFF',
+      accent: '#FDBA74', tagBg: '#C2410C', tagText: '#FFFFFF',
+      roomBg: '#C2410C', roomText: '#FFFFFF',
+    },
+    seminar: {
+      bg: '#471C07', border: '#FB923C', subjText: '#FFF7ED',
+      accent: '#FFEDD5', tagBg: '#FB923C', tagText: '#431407',
+      roomBg: '#FB923C', roomText: '#431407',
+    },
+    lab: {
+      bg: '#381505', border: '#F97316', subjText: '#FFF7ED',
+      accent: '#FED7AA', tagBg: '#F97316', tagText: '#FFFFFF',
+      roomBg: '#EA580C', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#341705', border: '#F59E0B', subjText: '#FFFBEB',
+      accent: '#FDE68A', tagBg: '#F59E0B', tagText: '#451A03',
+      roomBg: '#D97706', roomText: '#FFFFFF',
+    },
+  },
+  // 9. Rose Magenta (Pushti Yoqut)
   {
     name: 'Rose Magenta',
     lecture: {
@@ -458,6 +530,30 @@ const FRESH_SLATE_PALETTES = [
       bg: '#2C0A33', border: '#C084FC', subjText: '#FAF5FF',
       accent: '#E9D5FF', tagBg: '#C084FC', tagText: '#2E1065',
       roomBg: '#9333EA', roomText: '#FFFFFF',
+    },
+  },
+  // 10. Lime Chartreuse (Limon & Ohak Yashil)
+  {
+    name: 'Lime Chartreuse',
+    lecture: {
+      bg: '#142207', border: '#65A30D', subjText: '#FFFFFF',
+      accent: '#BEF264', tagBg: '#4D7C0F', tagText: '#FFFFFF',
+      roomBg: '#4D7C0F', roomText: '#FFFFFF',
+    },
+    seminar: {
+      bg: '#233B0B', border: '#A3E635', subjText: '#F7FEE7',
+      accent: '#ECFCCB', tagBg: '#A3E635', tagText: '#14532D',
+      roomBg: '#A3E635', roomText: '#14532D',
+    },
+    lab: {
+      bg: '#1B2E09', border: '#84CC16', subjText: '#F7FEE7',
+      accent: '#D9F99D', tagBg: '#84CC16', tagText: '#14532D',
+      roomBg: '#65A30D', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#1E320A', border: '#4ADE80', subjText: '#F0FDF4',
+      accent: '#BBF7D0', tagBg: '#4ADE80', tagText: '#052E16',
+      roomBg: '#16A34A', roomText: '#FFFFFF',
     },
   },
 ];
@@ -512,7 +608,79 @@ const CLEAN_AIR_LIGHT_PALETTES = [
       roomBg: '#65A30D', roomText: '#FFFFFF',
     },
   },
-  // 3. Purple
+  // 3. Warm Amber (Malla)
+  {
+    name: 'Warm Amber',
+    lecture: {
+      bg: '#FDE68A', border: '#B45309', subjText: '#0F172A',
+      accent: '#78350F', tagBg: '#B45309', tagText: '#FFFFFF',
+      roomBg: '#B45309', roomText: '#FFFFFF',
+    },
+    seminar: {
+      bg: '#FFFBEB', border: '#D97706', subjText: '#1E293B',
+      accent: '#B45309', tagBg: '#D97706', tagText: '#FFFFFF',
+      roomBg: '#D97706', roomText: '#FFFFFF',
+    },
+    lab: {
+      bg: '#FEF08A', border: '#EA580C', subjText: '#0F172A',
+      accent: '#9A3412', tagBg: '#EA580C', tagText: '#FFFFFF',
+      roomBg: '#EA580C', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#FEF9C3', border: '#CA8A04', subjText: '#0F172A',
+      accent: '#854D0E', tagBg: '#CA8A04', tagText: '#FFFFFF',
+      roomBg: '#CA8A04', roomText: '#FFFFFF',
+    },
+  },
+  // 4. Ruby Crimson (Qizil)
+  {
+    name: 'Ruby Crimson',
+    lecture: {
+      bg: '#FECDD3', border: '#B91C1C', subjText: '#0F172A',
+      accent: '#7F1D1D', tagBg: '#B91C1C', tagText: '#FFFFFF',
+      roomBg: '#B91C1C', roomText: '#FFFFFF',
+    },
+    seminar: {
+      bg: '#FFF1F2', border: '#DC2626', subjText: '#1E293B',
+      accent: '#991B1B', tagBg: '#DC2626', tagText: '#FFFFFF',
+      roomBg: '#DC2626', roomText: '#FFFFFF',
+    },
+    lab: {
+      bg: '#FFE4E6', border: '#EF4444', subjText: '#0F172A',
+      accent: '#B91C1C', tagBg: '#EF4444', tagText: '#FFFFFF',
+      roomBg: '#EF4444', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#FEE2E2', border: '#E11D48', subjText: '#0F172A',
+      accent: '#9F1239', tagBg: '#E11D48', tagText: '#FFFFFF',
+      roomBg: '#E11D48', roomText: '#FFFFFF',
+    },
+  },
+  // 5. Roasted Bronze (Jigarrang)
+  {
+    name: 'Roasted Bronze',
+    lecture: {
+      bg: '#E7D7CB', border: '#78350F', subjText: '#0F172A',
+      accent: '#451A03', tagBg: '#78350F', tagText: '#FFFFFF',
+      roomBg: '#78350F', roomText: '#FFFFFF',
+    },
+    seminar: {
+      bg: '#FBF8F5', border: '#92400E', subjText: '#1E293B',
+      accent: '#78350F', tagBg: '#92400E', tagText: '#FFFFFF',
+      roomBg: '#92400E', roomText: '#FFFFFF',
+    },
+    lab: {
+      bg: '#EFE5DC', border: '#B45309', subjText: '#0F172A',
+      accent: '#78350F', tagBg: '#B45309', tagText: '#FFFFFF',
+      roomBg: '#B45309', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#F5EBE1', border: '#A16207', subjText: '#0F172A',
+      accent: '#713F12', tagBg: '#A16207', tagText: '#FFFFFF',
+      roomBg: '#A16207', roomText: '#FFFFFF',
+    },
+  },
+  // 6. Purple
   {
     name: 'Purple',
     lecture: {
@@ -536,31 +704,7 @@ const CLEAN_AIR_LIGHT_PALETTES = [
       roomBg: '#4338CA', roomText: '#FFFFFF',
     },
   },
-  // 4. Amber
-  {
-    name: 'Amber',
-    lecture: {
-      bg: '#FDE68A', border: '#B45309', subjText: '#0F172A',
-      accent: '#78350F', tagBg: '#B45309', tagText: '#FFFFFF',
-      roomBg: '#B45309', roomText: '#FFFFFF',
-    },
-    seminar: {
-      bg: '#FFFBEB', border: '#D97706', subjText: '#1E293B',
-      accent: '#B45309', tagBg: '#D97706', tagText: '#FFFFFF',
-      roomBg: '#D97706', roomText: '#FFFFFF',
-    },
-    lab: {
-      bg: '#FFEDD5', border: '#EA580C', subjText: '#0F172A',
-      accent: '#9A3412', tagBg: '#EA580C', tagText: '#FFFFFF',
-      roomBg: '#EA580C', roomText: '#FFFFFF',
-    },
-    practice: {
-      bg: '#FEF9C3', border: '#CA8A04', subjText: '#0F172A',
-      accent: '#854D0E', tagBg: '#CA8A04', tagText: '#FFFFFF',
-      roomBg: '#CA8A04', roomText: '#FFFFFF',
-    },
-  },
-  // 5. Teal
+  // 7. Teal
   {
     name: 'Teal',
     lecture: {
@@ -584,16 +728,40 @@ const CLEAN_AIR_LIGHT_PALETTES = [
       roomBg: '#059669', roomText: '#FFFFFF',
     },
   },
-  // 6. Rose
+  // 8. Sunset Orange
+  {
+    name: 'Sunset Orange',
+    lecture: {
+      bg: '#FED7AA', border: '#C2410C', subjText: '#0F172A',
+      accent: '#7C2D12', tagBg: '#C2410C', tagText: '#FFFFFF',
+      roomBg: '#C2410C', roomText: '#FFFFFF',
+    },
+    seminar: {
+      bg: '#FFF7ED', border: '#EA580C', subjText: '#1E293B',
+      accent: '#9A3412', tagBg: '#EA580C', tagText: '#FFFFFF',
+      roomBg: '#EA580C', roomText: '#FFFFFF',
+    },
+    lab: {
+      bg: '#FFEDD5', border: '#F97316', subjText: '#0F172A',
+      accent: '#9A3412', tagBg: '#F97316', tagText: '#FFFFFF',
+      roomBg: '#F97316', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#FEF3C7', border: '#D97706', subjText: '#0F172A',
+      accent: '#92400E', tagBg: '#D97706', tagText: '#FFFFFF',
+      roomBg: '#D97706', roomText: '#FFFFFF',
+    },
+  },
+  // 9. Rose
   {
     name: 'Rose',
     lecture: {
-      bg: '#FECDD3', border: '#BE123C', subjText: '#0F172A',
+      bg: '#FBCFE8', border: '#BE123C', subjText: '#0F172A',
       accent: '#881337', tagBg: '#BE123C', tagText: '#FFFFFF',
       roomBg: '#BE123C', roomText: '#FFFFFF',
     },
     seminar: {
-      bg: '#FFF1F2', border: '#E11D48', subjText: '#1E293B',
+      bg: '#FDF2F8', border: '#E11D48', subjText: '#1E293B',
       accent: '#BE123C', tagBg: '#E11D48', tagText: '#FFFFFF',
       roomBg: '#E11D48', roomText: '#FFFFFF',
     },
@@ -606,6 +774,30 @@ const CLEAN_AIR_LIGHT_PALETTES = [
       bg: '#FCE7F3', border: '#DB2777', subjText: '#0F172A',
       accent: '#9D174D', tagBg: '#DB2777', tagText: '#FFFFFF',
       roomBg: '#DB2777', roomText: '#FFFFFF',
+    },
+  },
+  // 10. Lime Chartreuse
+  {
+    name: 'Lime Chartreuse',
+    lecture: {
+      bg: '#D9F99D', border: '#4D7C0F', subjText: '#0F172A',
+      accent: '#365314', tagBg: '#4D7C0F', tagText: '#FFFFFF',
+      roomBg: '#4D7C0F', roomText: '#FFFFFF',
+    },
+    seminar: {
+      bg: '#F7FEE7', border: '#65A30D', subjText: '#1E293B',
+      accent: '#4D7C0F', tagBg: '#65A30D', tagText: '#FFFFFF',
+      roomBg: '#65A30D', roomText: '#FFFFFF',
+    },
+    lab: {
+      bg: '#ECFCCB', border: '#84CC16', subjText: '#0F172A',
+      accent: '#3F6212', tagBg: '#84CC16', tagText: '#FFFFFF',
+      roomBg: '#84CC16', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#DCFCE7', border: '#16A34A', subjText: '#0F172A',
+      accent: '#14532D', tagBg: '#16A34A', tagText: '#FFFFFF',
+      roomBg: '#16A34A', roomText: '#FFFFFF',
     },
   },
 ];
@@ -660,7 +852,79 @@ const VIBRANT_TINT_PALETTES = [
       roomBg: '#65A30D', roomText: '#FFFFFF',
     },
   },
-  // 3. Purple
+  // 3. Warm Amber (Malla)
+  {
+    name: 'Warm Amber',
+    lecture: {
+      bg: '#0F172A', border: '#B45309', subjText: '#FFFFFF',
+      accent: '#FBBF24', tagBg: '#B45309', tagText: '#FFFFFF',
+      roomBg: '#B45309', roomText: '#FFFFFF',
+    },
+    seminar: {
+      bg: '#1E293B', border: '#FBBF24', subjText: '#F1F5F9',
+      accent: '#FED7AA', tagBg: '#FBBF24', tagText: '#451A03',
+      roomBg: '#FBBF24', roomText: '#451A03',
+    },
+    lab: {
+      bg: '#1A1412', border: '#F59E0B', subjText: '#FFFFFF',
+      accent: '#FCD34D', tagBg: '#F59E0B', tagText: '#451A03',
+      roomBg: '#D97706', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#181512', border: '#EAB308', subjText: '#FFFFFF',
+      accent: '#FDE047', tagBg: '#EAB308', tagText: '#451A03',
+      roomBg: '#CA8A04', roomText: '#FFFFFF',
+    },
+  },
+  // 4. Ruby Crimson (Qizil)
+  {
+    name: 'Ruby Crimson',
+    lecture: {
+      bg: '#0F172A', border: '#B91C1C', subjText: '#FFFFFF',
+      accent: '#F87171', tagBg: '#B91C1C', tagText: '#FFFFFF',
+      roomBg: '#B91C1C', roomText: '#FFFFFF',
+    },
+    seminar: {
+      bg: '#1E293B', border: '#EF4444', subjText: '#F1F5F9',
+      accent: '#FCA5A5', tagBg: '#EF4444', tagText: '#FFFFFF',
+      roomBg: '#DC2626', roomText: '#FFFFFF',
+    },
+    lab: {
+      bg: '#1A0E10', border: '#F87171', subjText: '#FFFFFF',
+      accent: '#FECACA', tagBg: '#F87171', tagText: '#450A0A',
+      roomBg: '#B91C1C', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#170D12', border: '#E11D48', subjText: '#FFFFFF',
+      accent: '#FDA4AF', tagBg: '#E11D48', tagText: '#FFFFFF',
+      roomBg: '#BE123C', roomText: '#FFFFFF',
+    },
+  },
+  // 5. Roasted Bronze (Jigarrang)
+  {
+    name: 'Roasted Bronze',
+    lecture: {
+      bg: '#0F172A', border: '#78350F', subjText: '#FFFFFF',
+      accent: '#FCD34D', tagBg: '#78350F', tagText: '#FFFFFF',
+      roomBg: '#78350F', roomText: '#FFFFFF',
+    },
+    seminar: {
+      bg: '#1E293B', border: '#D97706', subjText: '#F1F5F9',
+      accent: '#FED7AA', tagBg: '#D97706', tagText: '#FFFFFF',
+      roomBg: '#D97706', roomText: '#FFFFFF',
+    },
+    lab: {
+      bg: '#18120F', border: '#B45309', subjText: '#FFFFFF',
+      accent: '#FDE68A', tagBg: '#B45309', tagText: '#FFFFFF',
+      roomBg: '#92400E', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#16110D', border: '#CA8A04', subjText: '#FFFFFF',
+      accent: '#FEF08A', tagBg: '#CA8A04', tagText: '#422006',
+      roomBg: '#A16207', roomText: '#FFFFFF',
+    },
+  },
+  // 6. Purple
   {
     name: 'Purple',
     lecture: {
@@ -684,31 +948,55 @@ const VIBRANT_TINT_PALETTES = [
       roomBg: '#4F46E5', roomText: '#FFFFFF',
     },
   },
-  // 4. Amber
+  // 7. Teal
   {
-    name: 'Amber',
+    name: 'Teal',
     lecture: {
-      bg: '#0F172A', border: '#B45309', subjText: '#FFFFFF',
-      accent: '#FBBF24', tagBg: '#B45309', tagText: '#FFFFFF',
-      roomBg: '#B45309', roomText: '#FFFFFF',
+      bg: '#0F172A', border: '#0F766E', subjText: '#FFFFFF',
+      accent: '#2DD4BF', tagBg: '#0F766E', tagText: '#FFFFFF',
+      roomBg: '#0F766E', roomText: '#FFFFFF',
     },
     seminar: {
-      bg: '#1E293B', border: '#FBBF24', subjText: '#F1F5F9',
-      accent: '#FED7AA', tagBg: '#FBBF24', tagText: '#451A03',
-      roomBg: '#FBBF24', roomText: '#451A03',
+      bg: '#1E293B', border: '#2DD4BF', subjText: '#F1F5F9',
+      accent: '#CCFBF1', tagBg: '#2DD4BF', tagText: '#042F2E',
+      roomBg: '#2DD4BF', roomText: '#042F2E',
     },
     lab: {
-      bg: '#1A1412', border: '#F97316', subjText: '#FFFFFF',
-      accent: '#FDBA74', tagBg: '#F97316', tagText: '#431407',
+      bg: '#0A1820', border: '#10B981', subjText: '#FFFFFF',
+      accent: '#6EE7B7', tagBg: '#10B981', tagText: '#022C22',
+      roomBg: '#059669', roomText: '#FFFFFF',
+    },
+    practice: {
+      bg: '#0B1626', border: '#38BDF8', subjText: '#F0F9FF',
+      accent: '#7DD3FC', tagBg: '#38BDF8', tagText: '#082F49',
+      roomBg: '#0284C7', roomText: '#FFFFFF',
+    },
+  },
+  // 8. Sunset Orange
+  {
+    name: 'Sunset Orange',
+    lecture: {
+      bg: '#0F172A', border: '#EA580C', subjText: '#FFFFFF',
+      accent: '#FB923C', tagBg: '#C2410C', tagText: '#FFFFFF',
+      roomBg: '#C2410C', roomText: '#FFFFFF',
+    },
+    seminar: {
+      bg: '#1E293B', border: '#FB923C', subjText: '#F1F5F9',
+      accent: '#FED7AA', tagBg: '#FB923C', tagText: '#431407',
+      roomBg: '#FB923C', roomText: '#431407',
+    },
+    lab: {
+      bg: '#1A130E', border: '#F97316', subjText: '#FFFFFF',
+      accent: '#FED7AA', tagBg: '#F97316', tagText: '#FFFFFF',
       roomBg: '#EA580C', roomText: '#FFFFFF',
     },
     practice: {
-      bg: '#181512', border: '#EAB308', subjText: '#FFFFFF',
-      accent: '#FDE047', tagBg: '#EAB308', tagText: '#451A03',
-      roomBg: '#CA8A04', roomText: '#FFFFFF',
+      bg: '#18120B', border: '#F59E0B', subjText: '#FFFFFF',
+      accent: '#FDE047', tagBg: '#F59E0B', tagText: '#451A03',
+      roomBg: '#D97706', roomText: '#FFFFFF',
     },
   },
-  // 5. Rose
+  // 9. Rose
   {
     name: 'Rose',
     lecture: {
@@ -732,28 +1020,28 @@ const VIBRANT_TINT_PALETTES = [
       roomBg: '#9333EA', roomText: '#FFFFFF',
     },
   },
-  // 6. Teal
+  // 10. Lime Chartreuse
   {
-    name: 'Teal',
+    name: 'Lime Chartreuse',
     lecture: {
-      bg: '#0F172A', border: '#0F766E', subjText: '#FFFFFF',
-      accent: '#2DD4BF', tagBg: '#0F766E', tagText: '#FFFFFF',
-      roomBg: '#0F766E', roomText: '#FFFFFF',
+      bg: '#0F172A', border: '#4D7C0F', subjText: '#FFFFFF',
+      accent: '#A3E635', tagBg: '#4D7C0F', tagText: '#FFFFFF',
+      roomBg: '#4D7C0F', roomText: '#FFFFFF',
     },
     seminar: {
-      bg: '#1E293B', border: '#2DD4BF', subjText: '#F1F5F9',
-      accent: '#CCFBF1', tagBg: '#2DD4BF', tagText: '#042F2E',
-      roomBg: '#2DD4BF', roomText: '#042F2E',
+      bg: '#1E293B', border: '#A3E635', subjText: '#F1F5F9',
+      accent: '#ECFCCB', tagBg: '#A3E635', tagText: '#14532D',
+      roomBg: '#A3E635', roomText: '#14532D',
     },
     lab: {
-      bg: '#0A1820', border: '#10B981', subjText: '#FFFFFF',
-      accent: '#6EE7B7', tagBg: '#10B981', tagText: '#022C22',
-      roomBg: '#059669', roomText: '#FFFFFF',
+      bg: '#121A0F', border: '#84CC16', subjText: '#FFFFFF',
+      accent: '#D9F99D', tagBg: '#84CC16', tagText: '#14532D',
+      roomBg: '#65A30D', roomText: '#FFFFFF',
     },
     practice: {
-      bg: '#0B1626', border: '#38BDF8', subjText: '#F0F9FF',
-      accent: '#7DD3FC', tagBg: '#38BDF8', tagText: '#082F49',
-      roomBg: '#0284C7', roomText: '#FFFFFF',
+      bg: '#0F1A14', border: '#10B981', subjText: '#FFFFFF',
+      accent: '#6EE7B7', tagBg: '#10B981', tagText: '#022C22',
+      roomBg: '#059669', roomText: '#FFFFFF',
     },
   },
 ];
@@ -837,10 +1125,11 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
   const tagLabel = getLessonBadge(colorSet.type, colorSet.rawSubject || rawSubj);
   const isLongTag = tagLabel.length > 8;
   const tagFontSize = isLongTag ? 22 : 26;
-  const tagLetterSpacing = isLongTag ? '0.8px' : '1.5px';
-  const tagW = isLongTag
-    ? Math.max(160, Math.min(220, Math.round(tagLabel.length * 13.5 + 32)))
-    : Math.max(140, Math.min(180, Math.round(tagLabel.length * 15 + 28)));
+  const tagLetterSpacing = isLongTag ? '0.8px' : '1.2px';
+  // Generous horizontal padding on both sides so text never touches the pill edges
+  const tagPadX = 26;
+  const estTextW = isLongTag ? (tagLabel.length * 14.5) : (tagLabel.length * 17.5);
+  const tagW = Math.max(isLongTag ? 225 : 180, Math.round(estTextW + tagPadX * 2));
   const tagH = 48;
 
   const teachers = parseTeachers(lesson.teacher);

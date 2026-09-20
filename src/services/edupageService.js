@@ -9,14 +9,14 @@ const DISK_CACHE_PATH = path.join(__dirname, '../../data/timetable_cache.json');
 
 const DAY_NAMES = ['Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba'];
 const PERIOD_TIMES = {
-  1: { start: '08:30', end: '09:50' },
-  2: { start: '10:00', end: '11:20' },
-  3: { start: '11:30', end: '12:50' },
-  4: { start: '13:30', end: '14:50' },
-  5: { start: '15:00', end: '16:20' },
-  6: { start: '16:30', end: '17:50' },
-  7: { start: '18:00', end: '19:20' },
-  8: { start: '19:30', end: '20:50' },
+  1: { start: '08:00', end: '09:20' },
+  2: { start: '09:30', end: '10:50' },
+  3: { start: '11:00', end: '12:20' },
+  4: { start: '13:00', end: '14:20' },
+  5: { start: '14:30', end: '15:50' },
+  6: { start: '16:00', end: '17:20' },
+  7: { start: '17:30', end: '18:50' },
+  8: { start: '19:00', end: '20:20' },
 };
 
 // Fallback semester version if dynamic discovery is temporarily unavailable
