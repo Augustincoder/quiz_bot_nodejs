@@ -81,18 +81,29 @@ function wrapText(text, maxChars) {
   return lines;
 }
 
-function formatTeacherName(name) {
+function formatSingleTeacher(name) {
   if (!name) return '';
-  const teachers = name.split(',').map(t => t.trim()).filter(Boolean);
-  const formatted = teachers.map(t => {
-    const parts = t.split(/\s+/);
-    if (parts.length >= 2) {
-      return `${parts[0]} ${parts[1][0]}.`;
-    }
-    return t.length > 14 ? t.slice(0, 13) + '…' : t;
-  });
-  const result = formatted.join(', ');
-  return result.length > 24 ? result.slice(0, 23) + '…' : result;
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return `${parts[0]} ${parts[1][0]}.`;
+  }
+  return parts[0] || '';
+}
+
+function parseTeachers(name) {
+  if (!name) return [];
+  return name
+    .split(',')
+    .map(t => t.trim())
+    .filter(Boolean)
+    .map(formatSingleTeacher);
+}
+
+function formatTeacherName(name) {
+  const list = parseTeachers(name);
+  if (list.length === 0) return '';
+  const result = list.join(', ');
+  return result.length > 28 ? result.slice(0, 27) + '…' : result;
 }
 
 function wrapSubjectText(text, cardW) {
@@ -600,7 +611,7 @@ const CLEAN_AIR_LIGHT_PALETTES = [
   },
 ];
 
-// 3. VIBRANT TINT SLATE (Variant 6C) — Toza Slate bazasi, o'ta kontrastli xona va teglari
+// 3. VIBRANT TINT SLATE (Variant 6C) — Toza Slate bazasi, o'ta kontrastli neon xona va teglari
 const VIBRANT_TINT_PALETTES = [
   // 1. Sky
   {
@@ -616,12 +627,12 @@ const VIBRANT_TINT_PALETTES = [
       roomBg: '#38BDF8', roomText: '#082F49',
     },
     lab: {
-      bg: '#082F49', border: '#06B6D4', subjText: '#F0F9FF',
+      bg: '#0B132B', border: '#06B6D4', subjText: '#FFFFFF',
       accent: '#67E8F9', tagBg: '#06B6D4', tagText: '#082F49',
       roomBg: '#0891B2', roomText: '#FFFFFF',
     },
     practice: {
-      bg: '#1E1B4B', border: '#818CF8', subjText: '#EEF2FF',
+      bg: '#131A2E', border: '#818CF8', subjText: '#FFFFFF',
       accent: '#C7D2FE', tagBg: '#818CF8', tagText: '#0F172A',
       roomBg: '#4F46E5', roomText: '#FFFFFF',
     },
@@ -640,12 +651,12 @@ const VIBRANT_TINT_PALETTES = [
       roomBg: '#34D399', roomText: '#022C22',
     },
     lab: {
-      bg: '#042F2E', border: '#14B8A6', subjText: '#F0FDFA',
-      accent: '#5EEAD4', tagBg: '#14B8A6', tagText: '#042F2E',
-      roomBg: '#0D9488', roomText: '#FFFFFF',
+      bg: '#0B1A1E', border: '#10B981', subjText: '#FFFFFF',
+      accent: '#6EE7B7', tagBg: '#10B981', tagText: '#022C22',
+      roomBg: '#059669', roomText: '#FFFFFF',
     },
     practice: {
-      bg: '#14532D', border: '#84CC16', subjText: '#F7FEE7',
+      bg: '#131D24', border: '#84CC16', subjText: '#FFFFFF',
       accent: '#BEF264', tagBg: '#84CC16', tagText: '#14532D',
       roomBg: '#65A30D', roomText: '#FFFFFF',
     },
@@ -664,12 +675,12 @@ const VIBRANT_TINT_PALETTES = [
       roomBg: '#C084FC', roomText: '#2E1065',
     },
     lab: {
-      bg: '#3B0764', border: '#D946EF', subjText: '#FDF4FF',
+      bg: '#141126', border: '#D946EF', subjText: '#FFFFFF',
       accent: '#F0ABFC', tagBg: '#D946EF', tagText: '#3B0764',
       roomBg: '#C026D3', roomText: '#FFFFFF',
     },
     practice: {
-      bg: '#312E81', border: '#6366F1', subjText: '#EEF2FF',
+      bg: '#15132B', border: '#6366F1', subjText: '#FFFFFF',
       accent: '#A5B4FC', tagBg: '#6366F1', tagText: '#1E1B4B',
       roomBg: '#4F46E5', roomText: '#FFFFFF',
     },
@@ -688,12 +699,12 @@ const VIBRANT_TINT_PALETTES = [
       roomBg: '#FBBF24', roomText: '#451A03',
     },
     lab: {
-      bg: '#431407', border: '#F97316', subjText: '#FFF7ED',
+      bg: '#1A1412', border: '#F97316', subjText: '#FFFFFF',
       accent: '#FDBA74', tagBg: '#F97316', tagText: '#431407',
       roomBg: '#EA580C', roomText: '#FFFFFF',
     },
     practice: {
-      bg: '#451A03', border: '#EAB308', subjText: '#FEFCE8',
+      bg: '#181512', border: '#EAB308', subjText: '#FFFFFF',
       accent: '#FDE047', tagBg: '#EAB308', tagText: '#451A03',
       roomBg: '#CA8A04', roomText: '#FFFFFF',
     },
@@ -712,12 +723,12 @@ const VIBRANT_TINT_PALETTES = [
       roomBg: '#FB7185', roomText: '#4C0519',
     },
     lab: {
-      bg: '#4C0519', border: '#F43F5E', subjText: '#FFF1F2',
+      bg: '#1A0E18', border: '#F43F5E', subjText: '#FFFFFF',
       accent: '#FDA4AF', tagBg: '#F43F5E', tagText: '#4C0519',
       roomBg: '#E11D48', roomText: '#FFFFFF',
     },
     practice: {
-      bg: '#3B0764', border: '#C084FC', subjText: '#FAF5FF',
+      bg: '#180F22', border: '#C084FC', subjText: '#FFFFFF',
       accent: '#E9D5FF', tagBg: '#C084FC', tagText: '#2E1065',
       roomBg: '#9333EA', roomText: '#FFFFFF',
     },
@@ -736,12 +747,12 @@ const VIBRANT_TINT_PALETTES = [
       roomBg: '#2DD4BF', roomText: '#042F2E',
     },
     lab: {
-      bg: '#022C22', border: '#10B981', subjText: '#ECFDF5',
+      bg: '#0A1820', border: '#10B981', subjText: '#FFFFFF',
       accent: '#6EE7B7', tagBg: '#10B981', tagText: '#022C22',
       roomBg: '#059669', roomText: '#FFFFFF',
     },
     practice: {
-      bg: '#082F49', border: '#38BDF8', subjText: '#F0F9FF',
+      bg: '#0B1626', border: '#38BDF8', subjText: '#F0F9FF',
       accent: '#7DD3FC', tagBg: '#38BDF8', tagText: '#082F49',
       roomBg: '#0284C7', roomText: '#FFFFFF',
     },
@@ -813,7 +824,6 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
   const rawSubj = lesson.subject || '';
   const cleanSubj = cleanSubjectTitle(rawSubj);
   const subj = escapeXml(cleanSubj);
-  const teacher = escapeXml(formatTeacherName(lesson.teacher));
 
   // 1. Subject text
   const { lines: subjLines, fSize } = wrapSubjectText(subj, cardW);
@@ -826,21 +836,71 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
 
   // 3. Format badge & Teacher layout (No overlap guarantee)
   const tagLabel = getLessonBadge(colorSet.type, colorSet.rawSubject || rawSubj);
-  const tagW = Math.max(115, Math.min(185, Math.round(tagLabel.length * 12.5 + 24)));
-  const tagH = 36;
+  const isLongTag = tagLabel.length > 8;
+  const tagFontSize = isLongTag ? 15 : 17;
+  const tagLetterSpacing = isLongTag ? '0.5px' : '0.8px';
+  const tagW = isLongTag
+    ? Math.max(110, Math.min(155, Math.round(tagLabel.length * 10 + 26)))
+    : Math.max(105, Math.min(130, Math.round(tagLabel.length * 11 + 24)));
+  const tagH = 34;
 
-  let teacherStr = teacher;
-  let teacherFontSize = 29;
+  const teachers = parseTeachers(lesson.teacher);
   const maxTeacherW = cardW - 20 - tagW - 24 - 20;
-  while (teacherFontSize > 20 && (teacherStr.length * teacherFontSize * 0.58) > maxTeacherW) {
-    teacherFontSize -= 1;
-  }
-  if ((teacherStr.length * teacherFontSize * 0.58) > maxTeacherW) {
-    const maxChars = Math.floor(maxTeacherW / (teacherFontSize * 0.58));
-    teacherStr = teacherStr.slice(0, Math.max(4, maxChars - 1)) + '…';
+
+  let teacherSvg = '';
+  let topZoneY = cardY + 16 + tagH;
+
+  if (teachers.length === 1) {
+    let tStr = teachers[0];
+    let fSize = 28;
+    while (fSize > 18 && (tStr.length * fSize * 0.58) > maxTeacherW) {
+      fSize -= 1;
+    }
+    if ((tStr.length * fSize * 0.58) > maxTeacherW) {
+      const maxChars = Math.floor(maxTeacherW / (fSize * 0.58));
+      tStr = tStr.slice(0, Math.max(4, maxChars - 1)) + '…';
+    }
+    const tY = cardY + 16 + tagH / 2 + 1;
+    teacherSvg = `
+      <text x="${cardX + cardW - 20}" y="${tY}"
+            font-size="${fSize}" font-weight="800" text-anchor="end" dominant-baseline="central"
+            fill="${colorSet.accent}">${escapeXml(tStr)}</text>
+    `;
+  } else if (teachers.length >= 2) {
+    const singleLine = teachers.join(', ');
+    if (singleLine.length * 22 * 0.58 <= maxTeacherW) {
+      const tY = cardY + 16 + tagH / 2 + 1;
+      teacherSvg = `
+        <text x="${cardX + cardW - 20}" y="${tY}"
+              font-size="22" font-weight="800" text-anchor="end" dominant-baseline="central"
+              fill="${colorSet.accent}">${escapeXml(singleLine)}</text>
+      `;
+    } else {
+      let t1 = teachers[0];
+      let t2 = teachers.slice(1).join(', ');
+      let fSize1 = 21;
+      let fSize2 = 21;
+      while (fSize1 > 15 && (t1.length * fSize1 * 0.58) > maxTeacherW) fSize1--;
+      while (fSize2 > 15 && (t2.length * fSize2 * 0.58) > maxTeacherW) fSize2--;
+      if ((t1.length * fSize1 * 0.58) > maxTeacherW) {
+        t1 = t1.slice(0, Math.floor(maxTeacherW / (fSize1 * 0.58)) - 1) + '…';
+      }
+      if ((t2.length * fSize2 * 0.58) > maxTeacherW) {
+        t2 = t2.slice(0, Math.floor(maxTeacherW / (fSize2 * 0.58)) - 1) + '…';
+      }
+
+      topZoneY = cardY + 54;
+      teacherSvg = `
+        <text x="${cardX + cardW - 20}" y="${cardY + 19}"
+              font-size="${fSize1}" font-weight="800" text-anchor="end" dominant-baseline="central"
+              fill="${colorSet.accent}">${escapeXml(t1)}</text>
+        <text x="${cardX + cardW - 20}" y="${cardY + 41}"
+              font-size="${fSize2}" font-weight="800" text-anchor="end" dominant-baseline="central"
+              fill="${colorSet.accent}">${escapeXml(t2)}</text>
+      `;
+    }
   }
 
-  const topZoneY = cardY + 16 + tagH;
   const availableH = bannerY - topZoneY - 14;
   const totalTextH = subjLines.length * (fSize * 1.18);
   const textStartY = Math.round(topZoneY + (availableH - totalTextH) / 2 + fSize * 0.85);
@@ -852,17 +912,13 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
             fill="${colorSet.bg}" stroke="${colorSet.border}" stroke-width="2.5"></rect>
 
       <!-- Lesson Format Badge (Priority #3) -->
-      <rect x="${cardX + 20}" y="${cardY + 16}" width="${tagW}" height="${tagH}" rx="10" fill="${colorSet.tagBg}"></rect>
+      <rect x="${cardX + 20}" y="${cardY + 16}" width="${tagW}" height="${tagH}" rx="9" fill="${colorSet.tagBg}"></rect>
       <text x="${cardX + 20 + tagW / 2}" y="${cardY + 16 + tagH / 2 + 1}"
-            font-size="20" font-weight="900" letter-spacing="1px"
+            font-size="${tagFontSize}" font-weight="900" letter-spacing="${tagLetterSpacing}"
             text-anchor="middle" dominant-baseline="central" fill="${colorSet.tagText}">${tagLabel}</text>
 
-      <!-- Teacher Name (UPGRADED: font-size 29, dynamically scaled) -->
-      ${teacherStr ? `
-      <text x="${cardX + cardW - 20}" y="${cardY + 16 + tagH / 2 + 1}"
-            font-size="${teacherFontSize}" font-weight="800" text-anchor="end" dominant-baseline="central"
-            fill="${colorSet.accent}">${teacherStr}</text>
-      ` : ''}
+      <!-- Teacher Name (UPGRADED: 1-line or 2-line stacked for lab teachers) -->
+      ${teacherSvg}
 
       <!-- Subject Title (Priority #2) -->
       <g transform="translate(${cardX + 24}, 0)">
@@ -892,8 +948,95 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
   `;
 }
 
+function hexToHsl(hex) {
+  if (!hex || typeof hex !== 'string') return [215, 60, 50];
+  let c = hex.replace('#', '').trim();
+  if (c.length === 3) c = c.split('').map(x => x + x).join('');
+  if (c.length !== 6) return [215, 60, 50];
+
+  const r = parseInt(c.substring(0, 2), 16) / 255;
+  const g = parseInt(c.substring(2, 4), 16) / 255;
+  const b = parseInt(c.substring(4, 6), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h, s, l = (max + min) / 2;
+  if (max === min) {
+    h = s = 0;
+  } else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return [Math.round(h * 360), Math.round(s * 100), Math.round(l * 100)];
+}
+
+function hslToHex(h, s, l) {
+  l /= 100;
+  const a = s * Math.min(l, 1 - l) / 100;
+  const f = n => {
+    const k = (n + h / 30) % 12;
+    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * color).toString(16).padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`.toUpperCase();
+}
+
+function generateColorSetFromEdupage(edupageHex, themeName, lessonType) {
+  let [h, s, l] = hexToHsl(edupageHex);
+  if (s < 12) {
+    h = 215;
+    s = 35;
+    l = 55;
+  }
+
+  if (themeName === 'light') {
+    return {
+      bg: hslToHex(h, Math.min(s, 50), 93),
+      border: hslToHex(h, Math.max(s, 70), 38),
+      subjText: '#0F172A',
+      accent: hslToHex(h, Math.max(s, 80), 30),
+      tagBg: hslToHex(h, Math.max(s, 70), 40),
+      tagText: '#FFFFFF',
+      roomBg: hslToHex(h, Math.max(s, 70), 38),
+      roomText: '#FFFFFF',
+      type: lessonType,
+    };
+  }
+
+  if (themeName === 'vibrant') {
+    return {
+      bg: '#0F172A',
+      border: hslToHex(h, 95, 55),
+      subjText: '#FFFFFF',
+      accent: hslToHex(h, 95, 72),
+      tagBg: hslToHex(h, 90, 50),
+      tagText: l > 60 ? '#0F172A' : '#FFFFFF',
+      roomBg: hslToHex(h, 85, 45),
+      roomText: '#FFFFFF',
+      type: lessonType,
+    };
+  }
+
+  // Default: Dark theme
+  return {
+    bg: hslToHex(h, Math.min(s, 35), 11),
+    border: hslToHex(h, Math.max(s, 70), 48),
+    subjText: '#FFFFFF',
+    accent: hslToHex(h, Math.max(s, 85), 72),
+    tagBg: hslToHex(h, Math.max(s, 70), 46),
+    tagText: '#FFFFFF',
+    roomBg: hslToHex(h, Math.max(s, 70), 42),
+    roomText: '#FFFFFF',
+    type: lessonType,
+  };
+}
+
 // ─── Main Generator ──────────────────────────────────────────────────────────
-async function generateScheduleImage(className, schedule, themeName = 'dark') {
+async function generateScheduleImage(className, schedule, themeName = 'dark', options = {}) {
   const themeConfig = THEMES[themeName] || THEMES.dark;
 
   const maxPeriod  = getMaxActivePeriod(schedule);
@@ -909,12 +1052,21 @@ async function generateScheduleImage(className, schedule, themeName = 'dark') {
 
   const subjectClusterMap = clusterSubjects(schedule);
   const palettes = themeConfig.palettes;
+  const useEdupage = options.useEdupageColors ?? (process.env.USE_EDUPAGE_COLORS === 'true');
 
   function resolveColors(lesson) {
     const raw = (lesson.subject || '').trim();
+    const type = getLessonType(raw);
+
+    if (useEdupage && lesson.color) {
+      return {
+        ...generateColorSetFromEdupage(lesson.color, themeName, type),
+        rawSubject: raw,
+      };
+    }
+
     const clusterIdx = subjectClusterMap.get(raw.toLowerCase()) ?? 0;
     const pal = palettes[clusterIdx % palettes.length];
-    const type = getLessonType(raw);
 
     let colorSet;
     if (type === 'lab') {
@@ -1063,4 +1215,6 @@ async function generateScheduleImage(className, schedule, themeName = 'dark') {
 module.exports = {
   generateScheduleImage,
   THEMES,
+  parseTeachers,
+  formatTeacherName,
 };
