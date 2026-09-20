@@ -7,6 +7,7 @@ const {
   warmUpCache,
   normalizeGroupName,
   getCanonicalGroupName,
+  getGroupBuildings,
 } = require('./edupageService');
 const { generateScheduleImage } = require('./imageService');
 const { TTLMap } = require('../core/utils');
@@ -151,9 +152,9 @@ async function fetchWeeklySchedulePhoto(className, theme = 'dark', telegram = nu
 /**
  * Fetches paginated empty rooms text
  */
-async function fetchEmptyRooms(className, dayIdx, periodNum, offsetDays = 0, binoFilter = null) {
+async function fetchEmptyRooms(className, dayIdx, periodNum, offsetDays = 0, binoFilter = null, timeMode = null) {
   const canonical = className ? (getCanonicalGroupName(className) || className) : null;
-  return getEmptyRoomsText(canonical, dayIdx, periodNum, offsetDays, binoFilter);
+  return getEmptyRoomsText(canonical, dayIdx, periodNum, offsetDays, binoFilter, timeMode);
 }
 
 /**
@@ -183,6 +184,7 @@ module.exports = {
   fetchWeeklyScheduleImage,
   fetchWeeklySchedulePhoto,
   fetchEmptyRooms,
+  getGroupBuildings,
   invalidateImageCache,
   warmUpCache,
 };

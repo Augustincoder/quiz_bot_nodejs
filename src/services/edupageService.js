@@ -372,13 +372,61 @@ async function getMetadataSignature() {
  * Parses building and floor information from classroom code
  */
 function parseRoomLocation(xona) {
-  const slashMatch = xona.match(/^(\d+)\/(\d+)/);
-  const dashMatch = xona.match(/^(\d+)-.*?(\d)(\d{2})/);
-  const normalMatch = xona.match(/^(\d)(\d{2})/);
-  if (slashMatch) return { bino: slashMatch[1] === '1' ? '4-bino' : `${slashMatch[1]}-bino`, qavat: `${slashMatch[2].charAt(0)}-qavat` };
+  const clean = (xona || '').trim();
+  const bochkaMatch = clean.match(/^(\d+)-bochka/i);
+  if (bochkaMatch) return { bino: `${bochkaMatch[1]}-bochka`, qavat: '1-qavat' };
+
+  const multiSlashMatch = clean.match(/^(\d+)\/+(\d+)/);
+  if (multiSlashMatch) {
+    const bNum = multiSlashMatch[1];
+    return { bino: bNum === '1' ? '4-bino' : `${bNum}-bino`, qavat: `${multiSlashMatch[2].charAt(0)}-qavat` };
+  }
+
+  const dashMatch = clean.match(/^(\d+)-.*?(\d)(\d{2})/);
   if (dashMatch) return { bino: `${dashMatch[1]}-bino`, qavat: `${dashMatch[2]}-qavat` };
+
+  const normalMatch = clean.match(/^(\d)(\d{2})/);
   if (normalMatch) return { bino: 'Asosiy bino', qavat: `${normalMatch[1]}-qavat` };
-  return { bino: 'Asosiy bino', qavat: `${xona.charAt(0)}-qavat` };
+
+  return { bino: 'Asosiy bino', qavat: `${clean.charAt(0) || '1'}-qavat` };
+}
+
+/**
+ * Resolves all university campus buildings where a class/group has scheduled lessons
+ * @param {string} className Group name (e.g. "BHA-51k/24")
+ * @returns {Promise<string[]>} Array of building names, e.g. ["1-bochka", "13-bino", "14-bino"]
+ */
+async function getGroupBuildings(className) {
+  if (!className) return [];
+  try {
+    const canonical = getCanonicalGroupName(className) || className;
+    const schedule = await getRawSchedule(canonical);
+    if (!schedule) return [];
+
+    const binos = new Set();
+    for (let d = 0; d < 6; d++) {
+      if (!schedule[d]) continue;
+      for (const p of Object.keys(schedule[d])) {
+        const lessons = schedule[d][p];
+        if (!Array.isArray(lessons)) continue;
+        for (const l of lessons) {
+          if (l.room && l.room !== '?' && !l.room.toLowerCase().includes('online')) {
+            const loc = parseRoomLocation(l.room);
+            if (loc && loc.bino) binos.add(loc.bino);
+          }
+        }
+      }
+    }
+
+    return Array.from(binos).sort((a, b) => {
+      if (a === 'Asosiy bino') return -1;
+      if (b === 'Asosiy bino') return 1;
+      return a.localeCompare(b, undefined, { numeric: true });
+    });
+  } catch (err) {
+    logger.warn('Failed to resolve group buildings', { className, error: err.message });
+    return [];
+  }
 }
 
 /**
@@ -759,18 +807,38 @@ function parseSchedule(raw, className) {
 /**
  * Returns empty rooms paginated HTML text pages
  */
-async function getEmptyRoomsText(className, dayIdx, periodNum, offsetDays = 0, binoFilter = null) {
+async function getEmptyRoomsText(className, dayIdx, periodNum, offsetDays = 0, binoFilter = null, timeMode = null) {
   try {
     const db = await getOrFetchIndexedData();
     const matrixKey = `${dayIdx}:${periodNum}`;
     let emptyRooms = db.emptyRoomsMatrix.get(matrixKey) || [];
 
-    // Building filter support: explicit binoFilter or "*3" prefix
-    if (binoFilter && binoFilter !== 'all') {
+    let studentBinos = [];
+    if (className) {
+      studentBinos = await getGroupBuildings(className);
+    }
+
+    // Building filter support: 'my' (student's buildings), explicit binoFilter, or "*3" prefix
+    if (binoFilter === 'my') {
+      if (studentBinos.length > 0) {
+        const binoSet = new Set(studentBinos.map(b => b.toLowerCase()));
+        emptyRooms = emptyRooms.filter(xona => {
+          const loc = parseRoomLocation(xona);
+          return binoSet.has(loc.bino.toLowerCase());
+        });
+      } else {
+        emptyRooms = [];
+      }
+    } else if (binoFilter && binoFilter !== 'all') {
       const cleanFilter = binoFilter.toLowerCase();
       emptyRooms = emptyRooms.filter(xona => {
         const loc = parseRoomLocation(xona);
-        return loc.bino.toLowerCase().includes(cleanFilter);
+        const bName = loc.bino.toLowerCase();
+        if (cleanFilter === 'asosiy') return bName.includes('asosiy');
+        if (cleanFilter.endsWith('-bochka') || cleanFilter.endsWith('-bino')) {
+          return bName === cleanFilter;
+        }
+        return bName === `${cleanFilter}-bino` || bName.includes(cleanFilter);
       });
     } else if (className && className.startsWith('*') && className.length > 1) {
       const binoNum = className.slice(1);
@@ -781,7 +849,13 @@ async function getEmptyRoomsText(className, dayIdx, periodNum, offsetDays = 0, b
     }
 
     if (emptyRooms.length === 0) {
-      return [`⚠️ <b>${periodNum}-para</b> uchun barcha xonalar band!`];
+      if (binoFilter === 'my') {
+        if (studentBinos.length > 0) {
+          return [`⚠️ <b>${periodNum}-para</b> uchun guruhingiz binolarida (<i>${escapeHtml(studentBinos.join(', '))}</i>) bo'sh xonalar topilmadi!`];
+        }
+        return [`⚠️ <b>${escapeHtml(className || '')}</b> guruhi jadvalida bino xonalari belgilanmagan.`];
+      }
+      return [`⚠️ <b>${periodNum}-para</b> uchun tanlangan binoda barcha xonalar band!`];
     }
 
     const grouped = {};
@@ -794,7 +868,20 @@ async function getEmptyRoomsText(className, dayIdx, periodNum, offsetDays = 0, b
     const tzDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
     if (offsetDays > 0) tzDate.setDate(tzDate.getDate() + offsetDays);
     const dateStr = `${String(tzDate.getDate()).padStart(2, '0')}.${String(tzDate.getMonth() + 1).padStart(2, '0')}.${tzDate.getFullYear()}`;
-    const header = `✅ <b>${dateStr}, ${DAY_NAMES[dayIdx]}</b>\n📚 <b>${periodNum}-para</b> — bo'sh xonalar:\n`;
+    const pTime = PERIOD_TIMES[periodNum] ? ` (${PERIOD_TIMES[periodNum].start}–${PERIOD_TIMES[periodNum].end})` : '';
+
+    let header = '';
+    if (timeMode === 'now') {
+      header = `⚡️ <b>Hozirgi para: ${periodNum}-para${pTime}</b>\n📅 <b>${dateStr}, ${DAY_NAMES[dayIdx]}</b>\n`;
+    } else if (timeMode === 'next') {
+      header = `⏭️ <b>Keyingi para: ${periodNum}-para${pTime}</b>\n📅 <b>${dateStr}, ${DAY_NAMES[dayIdx]}</b>\n`;
+    } else {
+      header = `✅ <b>${dateStr}, ${DAY_NAMES[dayIdx]}</b>\n📚 <b>${periodNum}-para${pTime}</b> — bo'sh xonalar:\n`;
+    }
+
+    if (binoFilter === 'my' && studentBinos.length > 0) {
+      header += `🎓 <b>Mening binolarim:</b> <i>${escapeHtml(studentBinos.join(', '))}</i>\n`;
+    }
 
     const sortedBinos = Object.keys(grouped).sort((a, b) => {
       if (a === 'Asosiy bino') return -1;
@@ -891,4 +978,6 @@ module.exports = {
   normalizeGroupName,
   getCanonicalGroupName,
   extractGroupBase,
+  getGroupBuildings,
+  parseRoomLocation,
 };
