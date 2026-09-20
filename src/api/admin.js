@@ -6,9 +6,18 @@ const { z } = require('zod');
 const { supabase } = require('../lib/supabase');
 const { isAdmin } = require('../core/utils');
 const { validateTelegramInitData } = require('../socket/auth');
+const crypto = require('crypto');
 const logger = require('../core/logger');
 
 const router = express.Router();
+
+function safeCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
 
 /**
  * Admin Authentication Middleware
@@ -22,9 +31,11 @@ function adminAuthMiddleware(req, res, next) {
   const authHeader = req.headers['authorization'];
   const bearerToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
-  // 1. API key authentication
-  if (envAdminKey && (apiKeyHeader === envAdminKey || bearerToken === envAdminKey)) {
-    return next();
+  // 1. API key authentication with constant-time comparison
+  if (envAdminKey) {
+    if ((apiKeyHeader && safeCompare(apiKeyHeader, envAdminKey)) || (bearerToken && safeCompare(bearerToken, envAdminKey))) {
+      return next();
+    }
   }
 
   // 2. Telegram WebApp initData authentication

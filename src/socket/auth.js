@@ -4,7 +4,7 @@ const { BOT_TOKEN } = require("../config/config");
 const logger = require("../core/logger");
 
 function validateTelegramInitData(initData) {
-  if (!initData) return false;
+  if (!initData || !BOT_TOKEN) return false;
 
   try {
     const urlParams = new URLSearchParams(initData);
@@ -21,10 +21,11 @@ function validateTelegramInitData(initData) {
     const keys = Array.from(urlParams.keys()).sort();
     const dataCheckString = keys.map(key => `${key}=${urlParams.get(key)}`).join("\n");
 
-    const secretKey = crypto.createHmac("sha256", "WebAppData").update(BOT_TOKEN || "").digest();
+    const secretKey = crypto.createHmac("sha256", "WebAppData").update(BOT_TOKEN).digest();
     const hex = crypto.createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
 
-    return hex === hash;
+    if (hex.length !== hash.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(hex, 'hex'), Buffer.from(hash, 'hex'));
   } catch {
     return false;
   }
@@ -35,8 +36,12 @@ const socketAuthMiddleware = (socket, next) => {
     const initData = socket.handshake.auth?.initData;
     const isMockAuthEnabled = process.env.ALLOW_MOCK_AUTH === "true";
 
-    // 1. Local Bypass
+    // 1. Local Bypass (strictly forbidden in production)
     if (isMockAuthEnabled) {
+      if (process.env.NODE_ENV === "production") {
+        logger.error("SECURITY ALERT: ALLOW_MOCK_AUTH attempted in production environment!");
+        return next(new Error("Authentication error: Mock auth forbidden in production"));
+      }
       let userObj = { id: "mock_user_" + Math.floor(Math.random() * 10000), first_name: "MockUser" };
       if (initData) {
         const params = new URLSearchParams(initData);
