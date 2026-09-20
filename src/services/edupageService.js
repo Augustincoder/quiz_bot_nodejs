@@ -67,13 +67,150 @@ function getRedisClient() {
   }
 }
 
+const CYRILLIC_LOOKALIKES = {
+  '\u0410': 'A', '\u0430': 'A', // А, а
+  '\u0412': 'B', '\u0432': 'B', // В, в
+  '\u0421': 'C', '\u0441': 'C', // С, с
+  '\u0415': 'E', '\u0435': 'E', // Е, е
+  '\u041D': 'H', '\u043D': 'H', // Н, н
+  '\u041A': 'K', '\u043A': 'K', // К, к
+  '\u041C': 'M', '\u043C': 'M', // М, м
+  '\u041E': 'O', '\u043E': 'O', // О, о
+  '\u0420': 'P', '\u0440': 'P', // Р, р
+  '\u0422': 'T', '\u0442': 'T', // Т, т
+  '\u0425': 'X', '\u0445': 'X', // Х, х
+  '\u0423': 'U', '\u0443': 'U', // У, у
+  '\u0406': 'I', '\u0456': 'I', // І, і
+};
+
+/**
+ * Transliterates Cyrillic lookalikes into Latin equivalents
+ */
+function transliterateCyrillic(str) {
+  if (!str) return '';
+  return String(str).replace(/[\u0400-\u04FF]/g, (ch) => CYRILLIC_LOOKALIKES[ch] || ch);
+}
+
 /**
  * Normalizes a class/group string for fast O(1) hash lookups.
- * e.g. "MO-900/26" -> "MO90026", " mi-21 " -> "MI21"
+ * Transliterates Cyrillic lookalikes, trims whitespace, strips punctuation/dashes/slashes.
+ * e.g. "BHA-51k/24" -> "BHA51K24", "MMТ-20/23" -> "MMT2023", "BHA_51K" -> "BHA51K"
  */
 function normalizeGroupName(str) {
   if (!str) return '';
-  return str.toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const transliterated = transliterateCyrillic(String(str));
+  return transliterated.toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/**
+ * Extracts base group name without graduation year suffix
+ * e.g. "BHA-56/24i" -> "BHA-56i", "BHA-51k/24" -> "BHA-51k", "BHA-51/24" -> "BHA-51"
+ */
+function extractGroupBase(str) {
+  if (!str) return '';
+  return String(str).replace(/\/(\d{2})([a-z]?)$/i, (m, yr, track) => track || '');
+}
+
+// Global Canonical Group Registry: maps normalized & base variants to official canonical names
+const canonicalExact = new Map(); // norm -> canonical (e.g. "BHA51K24" -> "BHA-51k/24")
+const canonicalBase = new Map();  // baseNorm -> canonical (e.g. "BHA51K" -> "BHA-51k/24")
+
+function registerCanonicalGroup(groupName) {
+  if (!groupName || typeof groupName !== 'string') return;
+  const clean = groupName.trim();
+  if (!clean || clean === '-' || clean === '--' || clean.includes('FAKULTET') || clean.includes('KURS')) return;
+
+  const norm = normalizeGroupName(clean);
+  if (norm) {
+    if (!canonicalExact.has(norm)) canonicalExact.set(norm, clean);
+
+    const base = extractGroupBase(clean);
+    const baseNorm = normalizeGroupName(base);
+    if (baseNorm && !canonicalBase.has(baseNorm)) {
+      canonicalBase.set(baseNorm, clean);
+    }
+  }
+}
+
+// Pre-seed canonical registry from groups.json if available
+try {
+  const groupsJsonPath = path.join(__dirname, '../data/groups.json');
+  if (fs.existsSync(groupsJsonPath)) {
+    const rawArr = JSON.parse(fs.readFileSync(groupsJsonPath, 'utf8'));
+    for (const g of rawArr) {
+      registerCanonicalGroup(g);
+    }
+  }
+} catch (e) {
+  logger.debug('Failed to pre-seed groups from groups.json:', { error: e.message });
+}
+
+function getLevenshteinDistance(a, b) {
+  const matrix = [];
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      matrix[i][j] = b[i - 1] === a[j - 1] ? matrix[i - 1][j - 1] : Math.min(matrix[i - 1][j - 1], matrix[i][j - 1], matrix[i - 1][j]) + 1;
+    }
+  }
+  return matrix[b.length][a.length];
+}
+
+/**
+ * Resolves ANY group input (e.g. "BHA_51K", "bha-51k", "bha 51k", "BHA-51k/24", "MMT-20")
+ * to its exact official CANONICAL original appearance ("asli ko'rinishi", e.g. "BHA-51k/24").
+ * Returns null if not recognized.
+ */
+function getCanonicalGroupName(input) {
+  if (!input) return null;
+  const clean = input.toString().trim().replace(/^[*#]/, '');
+  const norm = normalizeGroupName(clean);
+  if (!norm) return null;
+
+  // 1. Exact normalized match (e.g. "BHA51K24", "BHA-51k/24")
+  if (canonicalExact.has(norm)) {
+    return canonicalExact.get(norm);
+  }
+
+  // 2. Base match without year suffix (e.g. "BHA_51K", "BHA-51k", "bha 51k")
+  if (canonicalBase.has(norm)) {
+    return canonicalBase.get(norm);
+  }
+
+  // 3. Fallback: prefix match among valid groups (only if norm is at least 4 chars)
+  if (norm.length >= 4) {
+    for (const [n, canonical] of canonicalExact.entries()) {
+      if (n.startsWith(norm)) {
+        return canonical;
+      }
+    }
+  }
+
+  // 4. Fallback: fuzzy typo match (Levenshtein distance <= 2, prioritize exact length)
+  let best = null;
+  let minDist = Infinity;
+  for (const [n, canonical] of canonicalExact.entries()) {
+    if (n.length !== norm.length) continue;
+    const d = getLevenshteinDistance(norm, n);
+    if (d < minDist) {
+      minDist = d;
+      best = canonical;
+    }
+  }
+  if (minDist <= 2) return best;
+
+  for (const [n, canonical] of canonicalExact.entries()) {
+    if (Math.abs(n.length - norm.length) !== 1) continue;
+    const d = getLevenshteinDistance(norm, n);
+    if (d < minDist) {
+      minDist = d;
+      best = canonical;
+    }
+  }
+  if (minDist <= 2) return best;
+
+  return null;
 }
 
 /**
@@ -278,12 +415,24 @@ function buildIndexedDatabase(raw, defaultNum) {
     const cShort = (c.short || '').trim();
 
     if (cName) {
+      registerCanonicalGroup(cName);
       classesByName.set(normalizeGroupName(cName), c.id);
       classesByName.set(cName.toUpperCase(), c.id);
+      classesByName.set(cName, c.id);
+      const base = extractGroupBase(cName);
+      if (base) {
+        classesByName.set(normalizeGroupName(base), c.id);
+      }
     }
     if (cShort) {
+      registerCanonicalGroup(cShort);
       classesByName.set(normalizeGroupName(cShort), c.id);
       classesByName.set(cShort.toUpperCase(), c.id);
+      classesByName.set(cShort, c.id);
+      const base = extractGroupBase(cShort);
+      if (base) {
+        classesByName.set(normalizeGroupName(base), c.id);
+      }
     }
     classesByName.set(c.id, c.id);
   });
@@ -494,15 +643,26 @@ async function getOrFetchIndexedData(forceRefresh = false) {
 function findClassId(db, className) {
   if (!className || !db) return null;
   const clean = className.toString().trim();
-  const normalized = normalizeGroupName(clean);
+  const canonical = getCanonicalGroupName(clean);
+  const normalized = normalizeGroupName(canonical || clean);
 
+  // 1. Exact canonical & clean checks
+  if (canonical && db.classesByName.has(canonical)) return db.classesByName.get(canonical);
   if (db.classesByName.has(clean)) return db.classesByName.get(clean);
   if (db.classesByName.has(normalized)) return db.classesByName.get(normalized);
 
-  // Partial / case-insensitive search
+  const rawNorm = normalizeGroupName(clean);
+  if (db.classesByName.has(rawNorm)) return db.classesByName.get(rawNorm);
+
+  // 2. Base match check
+  const base = extractGroupBase(canonical || clean);
+  const baseNorm = normalizeGroupName(base);
+  if (baseNorm && db.classesByName.has(baseNorm)) return db.classesByName.get(baseNorm);
+
+  // 3. Fallback: exact uppercase search
   const cleanUpper = clean.toUpperCase();
   for (const [key, id] of db.classesByName.entries()) {
-    if (key.includes(cleanUpper) || key.includes(normalized)) {
+    if (key === cleanUpper || key === normalized) {
       return id;
     }
   }
@@ -729,4 +889,6 @@ module.exports = {
   getAllClassNames,
   warmUpCache,
   normalizeGroupName,
+  getCanonicalGroupName,
+  extractGroupBase,
 };

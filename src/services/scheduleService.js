@@ -6,6 +6,7 @@ const {
   getEmptyRoomsText,
   warmUpCache,
   normalizeGroupName,
+  getCanonicalGroupName,
 } = require('./edupageService');
 const { generateScheduleImage } = require('./imageService');
 const { TTLMap } = require('../core/utils');
@@ -35,6 +36,7 @@ function getRedisClient() {
  */
 async function fetchTodaySchedule(className, specificDayIdx = null) {
   if (!className) return '⚠️ Guruh tanlanmagan.';
+  const canonical = getCanonicalGroupName(className) || className;
 
   let dayOfWeek;
   if (specificDayIdx !== null && specificDayIdx !== undefined) {
@@ -46,7 +48,7 @@ async function fetchTodaySchedule(className, specificDayIdx = null) {
 
   // Sunday (6) defaults to Monday (0)
   const targetDay = dayOfWeek < 6 ? dayOfWeek : 0;
-  return getFormattedSchedule(className, targetDay);
+  return getFormattedSchedule(canonical, targetDay);
 }
 
 /**
@@ -58,7 +60,8 @@ async function fetchTodaySchedule(className, specificDayIdx = null) {
  */
 async function fetchWeeklyScheduleImage(className, theme = 'dark') {
   if (!className) return null;
-  const normalized = normalizeGroupName(className);
+  const canonical = getCanonicalGroupName(className) || className;
+  const normalized = normalizeGroupName(canonical);
   if (!normalized) return null;
 
   const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
@@ -91,10 +94,10 @@ async function fetchWeeklyScheduleImage(className, theme = 'dark') {
         }
       }
 
-      const schedule = await getRawSchedule(className);
+      const schedule = await getRawSchedule(canonical);
       if (!schedule || Object.keys(schedule).length === 0) return null;
 
-      const imageBuffer = await generateScheduleImage(className, schedule, validTheme);
+      const imageBuffer = await generateScheduleImage(canonical, schedule, validTheme);
       if (!imageBuffer) return null;
 
       // Save to L1 Memory
@@ -126,21 +129,22 @@ async function fetchWeeklyScheduleImage(className, theme = 'dark') {
  */
 async function fetchWeeklySchedulePhoto(className, theme = 'dark', telegram = null) {
   if (!className) return null;
-  const normalized = normalizeGroupName(className);
+  const canonical = getCanonicalGroupName(className) || className.trim();
+  const normalized = normalizeGroupName(canonical);
   if (!normalized) return null;
 
   const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
 
   try {
     const timetableCdnService = require('./timetableCdnService');
-    const res = await timetableCdnService.getOrGenerateTimetablePhoto(telegram, className, validTheme);
+    const res = await timetableCdnService.getOrGenerateTimetablePhoto(telegram, canonical, validTheme);
     if (res) return res;
   } catch (err) {
     logger.warn('timetableCdnService lookup failed, falling back to local generator', { error: err.message });
   }
 
   // Fallback to local image generator
-  const buffer = await fetchWeeklyScheduleImage(className, validTheme);
+  const buffer = await fetchWeeklyScheduleImage(canonical, validTheme);
   return buffer ? { buffer, isHit: false } : null;
 }
 
@@ -148,7 +152,8 @@ async function fetchWeeklySchedulePhoto(className, theme = 'dark', telegram = nu
  * Fetches paginated empty rooms text
  */
 async function fetchEmptyRooms(className, dayIdx, periodNum, offsetDays = 0, binoFilter = null) {
-  return getEmptyRoomsText(className, dayIdx, periodNum, offsetDays, binoFilter);
+  const canonical = className ? (getCanonicalGroupName(className) || className) : null;
+  return getEmptyRoomsText(canonical, dayIdx, periodNum, offsetDays, binoFilter);
 }
 
 /**
@@ -156,7 +161,8 @@ async function fetchEmptyRooms(className, dayIdx, periodNum, offsetDays = 0, bin
  */
 async function invalidateImageCache(className) {
   if (!className) return;
-  const normalized = normalizeGroupName(className);
+  const canonical = getCanonicalGroupName(className) || className;
+  const normalized = normalizeGroupName(canonical);
   ['dark', 'light', 'vibrant'].forEach(t => imageMemoryCache.delete(`${normalized}:${t}`));
   const redis = getRedisClient();
   if (redis) {
@@ -166,7 +172,7 @@ async function invalidateImageCache(className) {
   }
   try {
     const timetableCdnService = require('./timetableCdnService');
-    await timetableCdnService.invalidateTimetable(className);
+    await timetableCdnService.invalidateTimetable(canonical);
   } catch (e) {
     logger.debug('Timetable CDN cache invalidation error', { error: e.message });
   }

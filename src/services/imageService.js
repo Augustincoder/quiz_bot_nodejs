@@ -144,6 +144,11 @@ try {
 
 function resolveRawGroupName(name) {
   if (!name) return '';
+  try {
+    const edupageService = require('./edupageService');
+    const canonical = edupageService.getCanonicalGroupName(name);
+    if (canonical) return canonical;
+  } catch {}
   const norm = name.toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (rawGroupsMap.has(norm)) {
     return rawGroupsMap.get(norm);

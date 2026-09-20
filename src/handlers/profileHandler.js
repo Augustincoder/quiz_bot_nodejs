@@ -50,6 +50,9 @@ async function getAvailableGroups() {
 }
 
 function findBestMatch(input, groups = VALID_GROUPS) {
+  const canonical = edupageService.getCanonicalGroupName(input);
+  if (canonical) return canonical;
+
   const ni = normalize(input);
   if (!ni) return null;
   let best = null;
@@ -82,19 +85,20 @@ async function cmdSetClass(ctx) {
     return ctx.reply('⚠️ Guruh nomi juda uzun (maksimal 50 ta belgi).', { parse_mode: 'HTML' });
   }
 
+  const cleanInput = userInput.replace(/^[*#]/, '').trim();
   const groups = await getAvailableGroups();
-  const matchedGroup = userInput.startsWith('*') ? userInput : findBestMatch(userInput, groups);
+  const matchedGroup = edupageService.getCanonicalGroupName(cleanInput) || findBestMatch(cleanInput, groups);
 
   if (!matchedGroup) {
     return ctx.reply(`❌ "<b>${escapeHtml(userInput)}</b>" nomli guruh topilmadi.\n\n💡 Guruh nomini to'g'ri yozganingizga ishonch hosil qiling. Masalan: <code>/setclass MNP-900/26</code> yoki <code>/setclass MI-15</code>`, { parse_mode: 'HTML' });
   }
 
-  const isCorrected = !userInput.startsWith('*') && (normalize(userInput) !== normalize(matchedGroup));
+  const isCorrected = (cleanInput.toUpperCase() !== matchedGroup.toUpperCase());
   const success = await dbService.updateUserClass(userId, matchedGroup);
 
   if (success) {
     const cleanGroup = escapeHtml(matchedGroup);
-    const msg = isCorrected ? `✅ Yozuvdagi xatolik to'g'rilandi va saqlandi: <b>${cleanGroup}</b>` : `✅ Guruhingiz saqlandi: <b>${cleanGroup}</b>`;
+    const msg = isCorrected ? `✅ Guruhingiz aniqlandi va saqlandi: <b>${cleanGroup}</b>` : `✅ Guruhingiz saqlandi: <b>${cleanGroup}</b>`;
     await ctx.reply(msg + '\nEndi dars jadvalingizni ko\'rishingiz mumkin. /jadval yoki /hafta ni bosing.', { parse_mode: 'HTML' });
   } else {
     await ctx.reply('⚠️ Saqlashda xatolik yuz berdi. Iltimos, bir ozdan so\'ng qaytadan urinib ko\'ring.');

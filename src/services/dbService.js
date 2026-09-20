@@ -433,11 +433,17 @@ const localUserClasses = new TTLMap(24 * 60 * 60 * 1000, 5000);
 
 async function updateUserClass(telegramId, className) {
   const uid = String(telegramId);
-  localUserClasses.set(uid, className);
+  const edupageService = require('./edupageService');
+  const canonical = className ? (edupageService.getCanonicalGroupName(className) || className.trim()) : null;
+  localUserClasses.set(uid, canonical);
 
   if (redis) {
     try {
-      await redis.set(`user_class:${uid}`, className, 'EX', 86400 * 30);
+      if (canonical) {
+        await redis.set(`user_class:${uid}`, canonical, 'EX', 86400 * 30);
+      } else {
+        await redis.del(`user_class:${uid}`);
+      }
     } catch (e) {
       logger.debug('Redis updateUserClass write skipped', { error: e.message });
     }
@@ -445,7 +451,7 @@ async function updateUserClass(telegramId, className) {
 
   if (supabase) {
     try {
-      const { error } = await supabase.from('users').update({ class_name: className }).eq('telegram_id', uid);
+      const { error } = await supabase.from('users').update({ class_name: canonical }).eq('telegram_id', uid);
       if (error) {
         logger.warn('Supabase updateUserClass returned error', { error: error.message, uid });
       }
@@ -459,10 +465,12 @@ async function updateUserClass(telegramId, className) {
 
 async function getUserClass(telegramId) {
   const uid = String(telegramId);
+  const edupageService = require('./edupageService');
 
   // 1. Check local in-memory store
   if (localUserClasses.has(uid)) {
-    return localUserClasses.get(uid);
+    const raw = localUserClasses.get(uid);
+    return raw ? (edupageService.getCanonicalGroupName(raw) || raw) : null;
   }
 
   // 2. Check Redis cache
@@ -470,8 +478,9 @@ async function getUserClass(telegramId) {
     try {
       const cached = await redis.get(`user_class:${uid}`);
       if (cached) {
-        localUserClasses.set(uid, cached);
-        return cached;
+        const canonical = edupageService.getCanonicalGroupName(cached) || cached;
+        localUserClasses.set(uid, canonical);
+        return canonical;
       }
     } catch (e) {
       logger.debug('Redis getUserClass read skipped', { error: e.message });
@@ -488,18 +497,20 @@ async function getUserClass(telegramId) {
         .maybeSingle();
 
       if (!error && data?.class_name) {
-        localUserClasses.set(uid, data.class_name);
+        const canonical = edupageService.getCanonicalGroupName(data.class_name) || data.class_name;
+        localUserClasses.set(uid, canonical);
         if (redis) {
-          redis.set(`user_class:${uid}`, data.class_name, 'EX', 86400 * 30).catch(() => {});
+          redis.set(`user_class:${uid}`, canonical, 'EX', 86400 * 30).catch(() => {});
         }
-        return data.class_name;
+        return canonical;
       }
     } catch (e) {
       logger.error('getUserClass error:', { telegramId: uid, error: e.message });
     }
   }
 
-  return localUserClasses.get(uid) || null;
+  const fallback = localUserClasses.get(uid);
+  return fallback ? (edupageService.getCanonicalGroupName(fallback) || fallback) : null;
 }
 
 const localUserThemes = new TTLMap(24 * 60 * 60 * 1000, 5000);
@@ -735,11 +746,18 @@ async function getScheduleBroadcastUsers() {
 // 📅 TIMETABLE CDN CACHE (Telegram CDN + Supabase)
 // ==========================================
 
-async function getTimetableCache(groupNormalized, theme) {
-  if (!groupNormalized || !theme) return null;
-  const norm = String(groupNormalized).toUpperCase().trim();
+async function getTimetableCache(groupInput, theme) {
+  if (!groupInput || !theme) return null;
+  const edupageService = require('./edupageService');
   const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
-  const cacheKey = `cache:timetable_cdn:${norm}:${validTheme}`;
+
+  // 1. Resolve canonical and compute primary normalized
+  const canonical = edupageService.getCanonicalGroupName(groupInput);
+  const primaryNorm = canonical
+    ? edupageService.normalizeGroupName(canonical)
+    : edupageService.normalizeGroupName(groupInput);
+
+  const cacheKey = `cache:timetable_cdn:${primaryNorm}:${validTheme}`;
 
   if (redis) {
     try {
@@ -755,14 +773,37 @@ async function getTimetableCache(groupNormalized, theme) {
   if (!supabase) return null;
 
   try {
-    const { data, error } = await supabase
+    // 2. Direct query by primaryNorm
+    let { data, error } = await supabase
       .from('timetable_cache')
       .select('id, group_name, group_normalized, theme, file_id, channel_message_id, schedule_hash, updated_at')
-      .eq('group_normalized', norm)
+      .eq('group_normalized', primaryNorm)
       .eq('theme', validTheme)
       .maybeSingle();
 
-    if (error) throw error;
+    // 3. Fallback: if primaryNorm was derived from canonical, also check raw normalized if different
+    const rawNorm = edupageService.normalizeGroupName(groupInput);
+    if (!data && rawNorm && rawNorm !== primaryNorm) {
+      const res = await supabase
+        .from('timetable_cache')
+        .select('id, group_name, group_normalized, theme, file_id, channel_message_id, schedule_hash, updated_at')
+        .eq('group_normalized', rawNorm)
+        .eq('theme', validTheme)
+        .maybeSingle();
+      if (res?.data) data = res.data;
+    }
+
+    // 4. Fallback: match by group_name directly
+    if (!data && canonical) {
+      const res = await supabase
+        .from('timetable_cache')
+        .select('id, group_name, group_normalized, theme, file_id, channel_message_id, schedule_hash, updated_at')
+        .ilike('group_name', canonical)
+        .eq('theme', validTheme)
+        .maybeSingle();
+      if (res?.data) data = res.data;
+    }
+
     if (data) {
       if (redis) {
         await redis.set(cacheKey, JSON.stringify(data), 'EX', 86400 * 7).catch(() => {});
@@ -771,17 +812,19 @@ async function getTimetableCache(groupNormalized, theme) {
     }
     return null;
   } catch (err) {
-    logger.error('getTimetableCache error:', { error: err.message, group: norm, theme: validTheme });
+    logger.error('getTimetableCache error:', { error: err.message, group: primaryNorm, theme: validTheme });
     return null;
   }
 }
 
 async function upsertTimetableCache({ groupName, groupNormalized, theme, fileId, channelMessageId, scheduleHash }) {
-  if (!groupNormalized || !theme || !fileId) return false;
-  const norm = String(groupNormalized).toUpperCase().trim();
+  if ((!groupNormalized && !groupName) || !theme || !fileId) return false;
+  const edupageService = require('./edupageService');
+  const canonical = edupageService.getCanonicalGroupName(groupName || groupNormalized) || (groupName || groupNormalized);
+  const norm = edupageService.normalizeGroupName(canonical);
   const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
   const row = {
-    group_name: groupName || norm,
+    group_name: canonical, // ALWAYS STORE CANONICAL "ASLI KO'RINISHI"
     group_normalized: norm,
     theme: validTheme,
     file_id: String(fileId).trim(),

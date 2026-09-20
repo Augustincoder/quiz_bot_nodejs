@@ -104,10 +104,11 @@ function buildRoomPageKb(periodNum, currentBino, currentPage, totalPages) {
 
 async function cmdJadval(ctx) {
   await safeAnswerCb(ctx);
-  const className = await dbService.getUserClass(ctx.from.id);
-  if (!className) {
+  const rawClass = await dbService.getUserClass(ctx.from.id);
+  if (!rawClass) {
     return ctx.reply('⚠️ Avval guruhingizni saqlashingiz kerak!\n\n👉 <code>/setclass MI-15</code>', { parse_mode: 'HTML' });
   }
+  const className = edupageService.getCanonicalGroupName(rawClass) || rawClass;
 
   const tzDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
   let dayOfWeek = (tzDate.getDay() + 6) % 7;
@@ -140,10 +141,11 @@ async function cmdJadval(ctx) {
 
 async function cbScheduleDay(ctx) {
   await safeAnswerCb(ctx);
-  const className = await dbService.getUserClass(ctx.from.id);
-  if (!className) {
+  const rawClass = await dbService.getUserClass(ctx.from.id);
+  if (!rawClass) {
     return ctx.reply('⚠️ Avval guruhingizni saqlashingiz kerak!\n\n👉 <code>/setclass MI-15</code>', { parse_mode: 'HTML' });
   }
+  const className = edupageService.getCanonicalGroupName(rawClass) || rawClass;
 
   const data = ctx.callbackQuery.data;
   let targetDay;
@@ -185,10 +187,13 @@ async function cmdHafta(ctx) {
   const userId = ctx.from?.id;
   if (!userId) return;
 
-  const className = await dbService.getUserClass(userId);
-  if (!className) {
+  const rawClass = await dbService.getUserClass(userId);
+  if (!rawClass) {
     return ctx.reply('⚠️ Avval <code>/setclass</code> komandasidan foydalaning (Masalan: <code>/setclass MI-15</code>).', { parse_mode: 'HTML' });
   }
+
+  // Ensure canonical original group name ("asli ko'rinishi", e.g. "BHA-51k/24")
+  const className = edupageService.getCanonicalGroupName(rawClass) || rawClass;
 
   // Prevent duplicate concurrent /hafta requests from the same user
   if (activeHaftaRequests.has(userId)) {
@@ -197,11 +202,10 @@ async function cmdHafta(ctx) {
   activeHaftaRequests.add(userId);
 
   const userTheme = await dbService.getUserScheduleTheme(userId);
-  const norm = edupageService.normalizeGroupName(className);
   let msg = null;
 
   // Show loading notification only if not already cached in CDN
-  const cached = await dbService.getTimetableCache(norm, userTheme);
+  const cached = await dbService.getTimetableCache(className, userTheme);
   if (!cached || !cached.file_id) {
     msg = await ctx.reply('⏳ Haftalik dars jadvali rasmga olinmoqda. Iltimos kuting...').catch(() => null);
   }
@@ -272,8 +276,9 @@ async function cbSwitchScheduleTheme(ctx) {
   await safeAnswerCb(ctx, 'Mavzu almashtirilmoqda...');
 
   try {
-    const className = await dbService.getUserClass(userId);
-    if (!className) return;
+    const rawClass = await dbService.getUserClass(userId);
+    if (!rawClass) return;
+    const className = edupageService.getCanonicalGroupName(rawClass) || rawClass;
 
     const photoResult = await scheduleService.fetchWeeklySchedulePhoto(className, theme, ctx.telegram);
     if (!photoResult) return;
@@ -309,8 +314,9 @@ async function cbSwitchScheduleTheme(ctx) {
 
 async function cmdTimetable(ctx) {
   await safeAnswerCb(ctx);
-  const className = await dbService.getUserClass(ctx.from.id);
-  const status = className ? `✅ Sizning guruhingiz: <b>${className}</b>` : '⚠️ <b>Guruh tanlanmagan.</b>';
+  const rawClass = await dbService.getUserClass(ctx.from.id);
+  const className = rawClass ? (edupageService.getCanonicalGroupName(rawClass) || rawClass) : null;
+  const status = className ? `✅ Sizning guruhingiz: <b>${escapeHtml(className)}</b>` : '⚠️ <b>Guruh tanlanmagan.</b>';
   const text = `🎓 <b>Dars jadvali bo'limi</b>\n\n${status}\n\nQuyidagi menyudan kerakli bo'limni tanlang:`;
 
   if (ctx.callbackQuery) {
@@ -366,7 +372,8 @@ async function renderRoomView(ctx, periodNum, binoId, pageIdx) {
     }
   }
 
-  const className = await dbService.getUserClass(ctx.from.id);
+  const rawClass = await dbService.getUserClass(ctx.from.id);
+  const className = rawClass ? (edupageService.getCanonicalGroupName(rawClass) || rawClass) : null;
   const cacheKey = `${ctx.from.id}:${periodNum}:${binoId}`;
   let pages = roomsPaginationCache.get(cacheKey);
 

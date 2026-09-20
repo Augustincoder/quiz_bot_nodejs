@@ -189,7 +189,8 @@ async function main() {
   let skippedCount = 0;
   let emptyCount = 0;
 
-  for (const groupName of finalGroups) {
+  for (const rawName of finalGroups) {
+    const groupName = edupageService.getCanonicalGroupName(rawName) || rawName.trim();
     const norm = edupageService.normalizeGroupName(groupName);
     if (!norm) continue;
 

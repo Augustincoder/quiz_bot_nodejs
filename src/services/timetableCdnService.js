@@ -123,15 +123,16 @@ async function uploadPhotoToChannel(telegram, imageBuffer, caption) {
  * @param {string} theme 'dark' | 'light' | 'vibrant'
  * @returns {Promise<{ fileId?: string, buffer?: Buffer, isHit: boolean } | null>}
  */
-async function getOrGenerateTimetablePhoto(telegram, className, theme = 'dark') {
-  if (!className) return null;
+async function getOrGenerateTimetablePhoto(telegram, rawClassName, theme = 'dark') {
+  if (!rawClassName) return null;
+  const className = edupageService.getCanonicalGroupName(rawClassName) || rawClassName.trim();
   const norm = edupageService.normalizeGroupName(className);
   if (!norm) return null;
 
   const validTheme = ALL_THEMES.includes(theme) ? theme : 'dark';
 
   // 1. Fast Cache Hit check in Supabase / Redis
-  const cached = await dbService.getTimetableCache(norm, validTheme);
+  const cached = await dbService.getTimetableCache(className, validTheme);
   const cachedFileId = cached?.file_id || cached?.fileId;
   if (cached && cachedFileId) {
     return {
@@ -149,7 +150,7 @@ async function getOrGenerateTimetablePhoto(telegram, className, theme = 'dark') 
   const generationPromise = (async () => {
     try {
       // Re-check cache inside singleflight to avoid redundant work
-      const recheck = await dbService.getTimetableCache(norm, validTheme);
+      const recheck = await dbService.getTimetableCache(className, validTheme);
       const recheckFileId = recheck?.file_id || recheck?.fileId;
       if (recheck && recheckFileId) {
         return { fileId: recheckFileId, isHit: true };
@@ -459,7 +460,8 @@ function getWorkerStatus() {
  */
 async function invalidateTimetable(className) {
   if (!className) return;
-  const norm = edupageService.normalizeGroupName(className);
+  const canonical = edupageService.getCanonicalGroupName(className) || className;
+  const norm = edupageService.normalizeGroupName(canonical);
   await dbService.deleteTimetableCache(norm);
 }
 
