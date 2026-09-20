@@ -166,9 +166,9 @@ async function cbScheduleDay(ctx) {
 function buildThemeSwitcherKeyboard(currentTheme = 'dark') {
   return Markup.inlineKeyboard([
     [
-      Markup.button.callback(currentTheme === 'dark' ? '• 🌙 Tungi (6A) •' : '🌙 Tungi', 'sched_theme_dark'),
-      Markup.button.callback(currentTheme === 'light' ? '• ☀️ Kunduzgi (6B) •' : '☀️ Kunduzgi', 'sched_theme_light'),
-      Markup.button.callback(currentTheme === 'vibrant' ? '• ⚡ Neon (6C) •' : '⚡ Neon', 'sched_theme_vibrant'),
+      Markup.button.callback(currentTheme === 'dark' ? '• 🌙 Tungi •' : '🌙 Tungi', 'sched_theme_dark'),
+      Markup.button.callback(currentTheme === 'light' ? '• ☀️ Kunduzgi •' : '☀️ Kunduzgi', 'sched_theme_light'),
+      Markup.button.callback(currentTheme === 'vibrant' ? '• ⚡ Neon •' : '⚡ Neon', 'sched_theme_vibrant'),
     ],
     [Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')],
   ]);
@@ -189,7 +189,7 @@ async function cmdHafta(ctx) {
       return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, `📭 "<b>${escapeHtml(className)}</b>" guruhi uchun haftalik jadval topilmadi.`, { parse_mode: 'HTML' });
     }
     const kb = buildThemeSwitcherKeyboard(userTheme);
-    const themeLabel = userTheme === 'light' ? '☀️ Kunduzgi (6B)' : userTheme === 'vibrant' ? '⚡ Neon (6C)' : '🌙 Tungi (6A)';
+    const themeLabel = userTheme === 'light' ? '☀️ Kunduzgi' : userTheme === 'vibrant' ? '⚡ Neon' : '🌙 Tungi';
     await ctx.replyWithPhoto(
       { source: imageBuffer },
       {
@@ -229,7 +229,7 @@ async function cbSwitchScheduleTheme(ctx) {
   if (!imageBuffer) return;
 
   const kb = buildThemeSwitcherKeyboard(theme);
-  const themeLabel = theme === 'light' ? '☀️ Kunduzgi (6B)' : theme === 'vibrant' ? '⚡ Neon (6C)' : '🌙 Tungi (6A)';
+  const themeLabel = theme === 'light' ? '☀️ Kunduzgi' : theme === 'vibrant' ? '⚡ Neon' : '🌙 Tungi';
   const caption = `🎓 <b>Haftalik Jadval: ${escapeHtml(className)}</b>\n<i>🎨 Mavzu: ${themeLabel}</i>`;
 
   try {
