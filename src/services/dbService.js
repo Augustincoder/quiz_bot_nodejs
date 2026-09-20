@@ -719,13 +719,12 @@ async function getScheduleBroadcastUsers() {
   try {
     const { data, error } = await supabase
       .from('users')
-      .select('telegram_id, class_name, is_banned, is_blocked')
+      .select('telegram_id, class_name, is_banned')
       .not('class_name', 'is', null)
-      .or('is_banned.is.null,is_banned.eq.false')
-      .or('is_blocked.is.null,is_blocked.eq.false');
+      .or('is_banned.is.null,is_banned.eq.false');
 
     if (error) throw error;
-    return (data || []).filter(u => u.class_name && u.class_name.trim() && !u.is_banned && !u.is_blocked);
+    return (data || []).filter(u => u.class_name && u.class_name.trim() && !u.is_banned);
   } catch (err) {
     logger.error('getScheduleBroadcastUsers error:', { error: err.message });
     return [];
@@ -853,6 +852,29 @@ async function getAllCachedTimetables() {
   }
 }
 
+async function clearAllTimetableCache() {
+  if (redis) {
+    try {
+      const keys = await redis.keys('cache:timetable_cdn:*');
+      if (keys && keys.length > 0) {
+        await redis.del(keys);
+        logger.info(`Cleared ${keys.length} timetable CDN keys from Redis.`);
+      }
+    } catch (e) {
+      logger.error('Error clearing Redis timetable cache:', { error: e.message });
+    }
+  }
+  if (supabase) {
+    try {
+      const { error } = await supabase.from('timetable_cache').delete().neq('group_normalized', '__NONE__');
+      if (error) throw error;
+      logger.info('Cleared Supabase timetable_cache table.');
+    } catch (e) {
+      logger.error('Error clearing Supabase timetable cache:', { error: e.message });
+    }
+  }
+}
+
 module.exports = {
   loadAllOfficialTests,
   saveOfficialTest,
@@ -894,4 +916,5 @@ module.exports = {
   upsertTimetableCache,
   deleteTimetableCache,
   getAllCachedTimetables,
+  clearAllTimetableCache,
 };
