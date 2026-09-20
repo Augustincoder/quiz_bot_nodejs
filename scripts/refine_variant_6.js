@@ -1,13 +1,16 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const sharp = require('sharp');
+const edupageService = require('../src/services/edupageService');
 
-// ─── Dimensions & Geometry ───────────────────────────────────────────────────
+// ─── Canvas Constants ────────────────────────────────────────────────────────
 const SVG_W   = 2970;
-const DAY_W   = 230;
+const DAY_W   = 230;   // Slightly wider for prominent day names
 const TITLE_H = 200;
-const HDR_H   = 190;
-const CELL_H  = 340;
+const HDR_H   = 190;   // Taller for larger period badges & times
+const CELL_H  = 340;   // Taller cell for massive room banner & subject
 const MARGIN  = 14;
 
 const TIMES = [
@@ -16,7 +19,7 @@ const TIMES = [
 ];
 const DAY_NAMES = ['Dush', 'Sesh', 'Chor', 'Pay', 'Juma', 'Shan'];
 
-// ─── Text Processing Helpers ─────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 function escapeXml(unsafe) {
   if (!unsafe) return '';
   return unsafe.toString().replace(/[<>&'"]/g, c => {
@@ -87,6 +90,7 @@ function wrapSubjectText(text, cardW) {
 
 function formatRoomBanner(rawRoom) {
   let room = (rawRoom || '?').trim();
+  // Clean redundant lesson type mentions inside room text
   room = room.replace(/\s*\(?(maruza|seminar|amaliy)\)?\s*/gi, '').trim();
 
   let label = `XONA: ${room}`;
@@ -148,9 +152,10 @@ function getActiveDays(schedule) {
   return active;
 }
 
-// ─── PALETTES DEFINITIONS ────────────────────────────────────────────────────
+// ─── PALETTES DEFINITION ─────────────────────────────────────────────────────
 
-// 1. FRESH SLATE DARK (Variant 6A) — Ma'ruza: To'qroq | Seminar: Sezilarli ochroq
+// 1. FRESH SLATE DARK PALETTE (Tetik, jonli, yengil qorong'u rejim)
+// Qoida: Ma'ruza = TO'QROQ, Seminar = SEZILARLI DARAJADA OCHROQ!
 const FRESH_SLATE_PALETTES = [
   // 1. Sky / Azure
   {
@@ -238,7 +243,8 @@ const FRESH_SLATE_PALETTES = [
   },
 ];
 
-// 2. CLEAN AIR LIGHT (Variant 6B) — Ma'ruza: To'yingan pastel | Seminar: Juda och oqish
+// 2. CLEAN AIR LIGHT PALETTE (Yorug', havodor, ko'zni charchatmaydigan yengil rejim)
+// Qoida: Ma'ruza = to'yingan pastel, to'qroq fon. Seminar = deyarli oq, juda och havodor fon!
 const CLEAN_AIR_LIGHT_PALETTES = [
   // 1. Sky Blue
   {
@@ -326,7 +332,7 @@ const CLEAN_AIR_LIGHT_PALETTES = [
   },
 ];
 
-// 3. VIBRANT TINT SLATE (Variant 6C) — Toza Slate bazasi, o'ta kontrastli xona va teglari
+// 3. VIBRANT TINT DARK (Toza Slate foni, xona va teglarda kontrast ajratish)
 const VIBRANT_TINT_PALETTES = [
   // 1. Sky
   {
@@ -414,10 +420,14 @@ const VIBRANT_TINT_PALETTES = [
   },
 ];
 
-// ─── THEME CONFIGURATIONS ────────────────────────────────────────────────────
-const THEMES = {
-  dark: {
-    name: 'Fresh Slate Dark',
+// ─── THEMES DEFINITIONS ──────────────────────────────────────────────────────
+
+const REFINED_VARIANTS = [
+  // ── VARIANT 6-A: Fresh Slate Dark ──────────────────────────────────────────
+  {
+    id: '6a_fresh_slate_dark',
+    title: 'Variant 6A: Fresh Slate Dark (Yengil Dark-Mode)',
+    desc: 'Tetik va jonli ranglar palitrasi. Qoramtir va loyqa ranglar yo‘q. Katta xona banneri va 3 bosqichli ierarxiya.',
     isLight: false,
     canvasBg: '#0B0F19',
     titleBarBg: '#111827',
@@ -433,8 +443,12 @@ const THEMES = {
     borderDivider: '#1E293B',
     palettes: FRESH_SLATE_PALETTES,
   },
-  light: {
-    name: 'Clean Air Light',
+
+  // ── VARIANT 6-B: Clean Air Light ───────────────────────────────────────────
+  {
+    id: '6b_clean_air_light',
+    title: 'Variant 6B: Clean Air Light (Yorug‘ va Havodor)',
+    desc: 'Oq va engil havodor fon. To‘liq enli kontrastli xona banneri. Ko‘zga chaqmoqdek tashlanuvchi xona raqami.',
     isLight: true,
     canvasBg: '#F8FAFC',
     titleBarBg: '#0F172A',
@@ -450,8 +464,12 @@ const THEMES = {
     borderDivider: '#CBD5E1',
     palettes: CLEAN_AIR_LIGHT_PALETTES,
   },
-  vibrant: {
-    name: 'Vibrant Tint Slate',
+
+  // ── VARIANT 6-C: Vibrant Tint Pro ──────────────────────────────────────────
+  {
+    id: '6c_vibrant_tint_pro',
+    title: 'Variant 6C: Vibrant Tint Slate (Zamonaviy Tungi Slate)',
+    desc: 'Barcha kartalar toza Slate fonga ega, faqat hoshiyalar, xona bannerlari va MA‘RUZA/SEMINAR teglari yorqin rangda!',
     isLight: false,
     canvasBg: '#0A0E1A',
     titleBarBg: '#0F172A',
@@ -467,10 +485,10 @@ const THEMES = {
     borderDivider: '#1E293B',
     palettes: VIBRANT_TINT_PALETTES,
   },
-};
+];
 
-// ─── Card Renderer ───────────────────────────────────────────────────────────
-function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
+// ─── Card Renderer for Variant 6 ─────────────────────────────────────────────
+function renderVariant6Card({ lesson, baseX, baseY, span, cellW, colorSet }) {
   const cardW = cellW * span - MARGIN * 2;
   const cardH = CELL_H - MARGIN * 2;
   const cardX = baseX + MARGIN;
@@ -482,32 +500,33 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
   const teacher = escapeXml(formatTeacherName(lesson.teacher));
   const isLecture = colorSet.type === 'lecture';
 
-  // 1. Subject text
+  // 1. SUBJECT NAME (Priority #2)
   const { lines: subjLines, fSize } = wrapSubjectText(subj, cardW);
 
-  // 2. Room banner (Priority #1)
+  // 2. ROOM BANNER (Priority #1: Student scans Room first!)
   const rawRoom = (lesson.room || '?').trim();
   const { label: roomLabel, fontSize: roomFontSize } = formatRoomBanner(rawRoom);
-  const bannerH = 70;
+  const bannerH = 70; // High, bold, glanceable
   const bannerY = cardY + cardH - bannerH;
 
-  // 3. Format badge (Priority #3)
+  // 3. FORMAT PILL BADGE (Priority #3: Lecture vs Seminar)
   const tagW = isLecture ? 134 : 124;
   const tagH = 38;
   const tagLabel = isLecture ? "MA'RUZA" : "SEMINAR";
 
-  const topZoneY = cardY + 16 + tagH;
+  // Center vertical placement for subject lines
+  const topZoneY = cardY + 16 + tagH; // ~54px
   const availableH = bannerY - topZoneY - 14;
   const totalTextH = subjLines.length * (fSize * 1.18);
   const textStartY = Math.round(topZoneY + (availableH - totalTextH) / 2 + fSize * 0.85);
 
   return `
     <g filter="url(#shadow-card)">
-      <!-- Card Base -->
+      <!-- Main Card Body -->
       <rect x="${cardX}" y="${cardY}" width="${cardW}" height="${cardH}" rx="22" ry="22"
             fill="${colorSet.bg}" stroke="${colorSet.border}" stroke-width="2.5"></rect>
 
-      <!-- Lesson Format Badge (Priority #3) -->
+      <!-- Top Row: Lesson Format Badge (Priority #3) -->
       <rect x="${cardX + 20}" y="${cardY + 16}" width="${tagW}" height="${tagH}" rx="10" fill="${colorSet.tagBg}"></rect>
       <text x="${cardX + 20 + tagW / 2}" y="${cardY + 16 + tagH / 2 + 1}"
             font-size="21" font-weight="900" letter-spacing="1px"
@@ -520,7 +539,7 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
             fill="${colorSet.accent}">${teacher}</text>
       ` : ''}
 
-      <!-- Subject Title (Priority #2) -->
+      <!-- Center: Subject Name (Priority #2) -->
       <g transform="translate(${cardX + 24}, 0)">
         ${subjLines.map((l, idx) => `
           <text x="0" y="${textStartY + idx * Math.round(fSize * 1.18)}"
@@ -530,6 +549,7 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
       </g>
 
       <!-- Signature Full-Width Bottom Banner: ROOM NUMBER (Priority #1) -->
+      <!-- STRICT CONSTRAINT: Exact path shape preserved, expanded to 70px height -->
       <path d="M ${cardX} ${bannerY}
                L ${cardX + cardW} ${bannerY}
                L ${cardX + cardW} ${cardY + cardH - 22}
@@ -539,7 +559,7 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
                Z"
             fill="${colorSet.roomBg}"></path>
 
-      <!-- Room Text -->
+      <!-- Room Number Label (Massive, high-contrast, glanceable) -->
       <text x="${cardX + cardW / 2}" y="${bannerY + bannerH / 2 + 1}"
             font-size="${roomFontSize}" font-weight="900" letter-spacing="1.5px"
             text-anchor="middle" dominant-baseline="central"
@@ -548,10 +568,8 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
   `;
 }
 
-// ─── Main Generator ──────────────────────────────────────────────────────────
-async function generateScheduleImage(className, schedule, themeName = 'dark') {
-  const themeConfig = THEMES[themeName] || THEMES.dark;
-
+// ─── Full SVG Builder ────────────────────────────────────────────────────────
+function renderScheduleSvg(className, schedule, themeConfig) {
   const maxPeriod  = getMaxActivePeriod(schedule);
   const activeDays = getActiveDays(schedule);
   const numRows    = activeDays.length;
@@ -579,7 +597,7 @@ async function generateScheduleImage(className, schedule, themeName = 'dark') {
     return { ...colorSet, type };
   }
 
-  // Header periods
+  // 1. Header periods (Enlarged fonts!)
   let headerHtml = '';
   for (let i = 0; i < maxPeriod; i++) {
     const bx = DAY_W + i * cellW;
@@ -589,13 +607,16 @@ async function generateScheduleImage(className, schedule, themeName = 'dark') {
       headerHtml += `<line x1="${bx}" y1="${TITLE_H}" x2="${bx}" y2="${gridY}" stroke="${themeConfig.borderDivider}" stroke-width="2"></line>`;
     }
 
+    // Number Badge (Larger circle & font)
     const cy = TITLE_H + 70;
     headerHtml += `<circle cx="${midX}" cy="${cy}" r="44" fill="${themeConfig.badgeBg}"></circle>`;
     headerHtml += `<text font-size="52" font-weight="900" text-anchor="middle" dominant-baseline="central" x="${midX}" y="${cy + 1}" fill="${themeConfig.badgeText}">${i + 1}</text>`;
+
+    // Time text (Larger & clearer)
     headerHtml += `<text font-size="38" font-weight="700" text-anchor="middle" dominant-baseline="auto" x="${midX}" y="${TITLE_H + HDR_H - 26}" fill="${themeConfig.timeColor}">${TIMES[i]}</text>`;
   }
 
-  // Day labels
+  // 2. Day labels (Larger fonts!)
   let dayLabelsHtml = '';
   activeDays.forEach((dayIdx, rowIdx) => {
     const by = gridY + rowIdx * CELL_H;
@@ -610,7 +631,7 @@ async function generateScheduleImage(className, schedule, themeName = 'dark') {
     dayLabelsHtml += `<text font-size="58" font-weight="900" text-anchor="middle" dominant-baseline="central" x="${DAY_W / 2 + 16}" y="${midY}" fill="${themeConfig.dayTextColor}">${DAY_NAMES[dayIdx]}</text>`;
   });
 
-  // Zebra column stripes
+  // 3. Zebra column backgrounds
   let zebraHtml = '';
   for (let i = 0; i < maxPeriod; i++) {
     const bx = DAY_W + i * cellW;
@@ -618,7 +639,7 @@ async function generateScheduleImage(className, schedule, themeName = 'dark') {
     zebraHtml += `<rect x="${bx}" y="${TITLE_H}" width="${cellW}" height="${HDR_H + numRows * CELL_H}" fill="${bg}"></rect>`;
   }
 
-  // Cards layout
+  // 4. Cards
   let cardsHtml = '';
   for (const [rowIdx, dayIdx] of activeDays.entries()) {
     if (!schedule[dayIdx]) continue;
@@ -650,12 +671,20 @@ async function generateScheduleImage(className, schedule, themeName = 'dark') {
       const baseX = DAY_W + (pNum - 1) * cellW;
       const c = resolveColors(lesson);
 
-      cardsHtml += buildCardSvg(lesson, baseX, baseY, span, cellW, c);
+      cardsHtml += renderVariant6Card({
+        lesson,
+        baseX,
+        baseY,
+        span,
+        cellW,
+        colorSet: c,
+      });
+
       pNum += span;
     }
   }
 
-  const svgString = `
+  return `
 <svg width="${SVG_W}" height="${svgH}" viewBox="0 0 ${SVG_W} ${svgH}"
      xmlns="http://www.w3.org/2000/svg"
      style="background-color: ${themeConfig.canvasBg}; font-family: 'Segoe UI', -apple-system, Roboto, Helvetica, Arial, sans-serif;">
@@ -668,13 +697,20 @@ async function generateScheduleImage(className, schedule, themeName = 'dark') {
     </filter>
   </defs>
 
+  <!-- Canvas Background -->
   <rect x="0" y="0" width="${SVG_W}" height="${svgH}" fill="${themeConfig.canvasBg}"></rect>
+
+  <!-- Zebra Column Stripes -->
   ${zebraHtml}
+
+  <!-- Side Day Column Base -->
   <rect x="0" y="${TITLE_H}" width="${DAY_W}" height="${HDR_H + numRows * CELL_H}" fill="${themeConfig.isLight ? '#FFFFFF' : '#0B0F19'}"></rect>
 
+  <!-- Top Title Header -->
   <rect x="0" y="0" width="${SVG_W}" height="${TITLE_H}" fill="${themeConfig.titleBarBg}" filter="url(#shadow-title)"></rect>
   <rect x="0" y="0" width="14" height="${TITLE_H}" fill="${themeConfig.titleAccentBar}"></rect>
 
+  <!-- Header Main Title -->
   <text font-size="88" font-weight="900" letter-spacing="3px"
         text-anchor="middle" dominant-baseline="central"
         x="${SVG_W / 2}" y="${TITLE_H / 2 - 18}" fill="${themeConfig.titleTextColor}">${escapeXml(className)} — HAFTALIK DARS JADVALI</text>
@@ -682,29 +718,194 @@ async function generateScheduleImage(className, schedule, themeName = 'dark') {
         text-anchor="middle" dominant-baseline="central"
         x="${SVG_W / 2}" y="${TITLE_H / 2 + 42}" fill="${themeConfig.titleSubtitleColor}">TOSHKENT DAVLAT IQTISODIYOT UNIVERSITETI • RASMIY DARS JADVALI</text>
 
+  <!-- Periods Header -->
   ${headerHtml}
+
+  <!-- Day Labels -->
   ${dayLabelsHtml}
 
+  <!-- Outer & Inner Grid Separators -->
   <line x1="${DAY_W}" y1="${TITLE_H}" x2="${DAY_W}" y2="${svgH}" stroke="${themeConfig.borderDivider}" stroke-width="3"></line>
   <line x1="0" y1="${gridY}" x2="${SVG_W}" y2="${gridY}" stroke="${themeConfig.borderDivider}" stroke-width="3"></line>
 
+  <!-- Cards -->
   ${cardsHtml}
 
+  <!-- Outer Border Frame -->
   <rect x="0" y="0" width="${SVG_W}" height="${svgH}" fill="none" stroke="${themeConfig.borderDivider}" stroke-width="4"></rect>
 </svg>
   `;
-
-  return sharp(Buffer.from(svgString))
-    .png({
-      palette: true,
-      quality: 90,
-      compressionLevel: 7,
-      effort: 3,
-    })
-    .toBuffer();
 }
 
-module.exports = {
-  generateScheduleImage,
-  THEMES,
-};
+// ─── Main Execution ──────────────────────────────────────────────────────────
+async function main() {
+  console.log('🚀 Generating Refined Variant 6 Prototypes...');
+  await edupageService.warmUpCache();
+
+  const testGroup = 'BHA_51K';
+  const schedule = await edupageService.getRawSchedule(testGroup);
+  if (!schedule) {
+    throw new Error(`Schedule for ${testGroup} not found!`);
+  }
+
+  const previewsDir = path.join(__dirname, '../previews');
+  if (!fs.existsSync(previewsDir)) fs.mkdirSync(previewsDir, { recursive: true });
+
+  const generatedList = [];
+
+  for (const variant of REFINED_VARIANTS) {
+    const filename = `refined_${variant.id}.png`;
+    const outPath = path.join(previewsDir, filename);
+
+    console.log(`🎨 Rendering ${variant.title}...`);
+    const svgStr = renderScheduleSvg(testGroup, schedule, variant);
+
+    const buf = await sharp(Buffer.from(svgStr))
+      .png({ palette: true, quality: 90, compressionLevel: 7, effort: 3 })
+      .toBuffer();
+
+    fs.writeFileSync(outPath, buf);
+    console.log(`✅ Saved: ${filename} (${Math.round(buf.length / 1024)} KB)`);
+
+    generatedList.push({
+      id: variant.id,
+      title: variant.title,
+      desc: variant.desc,
+      filename,
+      isLight: variant.isLight,
+      sizeKb: Math.round(buf.length / 1024),
+    });
+  }
+
+  // HTML Gallery
+  const htmlGallery = `<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dars Jadvali — Variant 6 Takomillashgan Versiyalari</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090D16;
+      --card-bg: #111827;
+      --border: #1F2937;
+      --text: #F9FAFB;
+      --subtext: #9CA3AF;
+      --accent: #38BDF8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 40px 24px 80px;
+      line-height: 1.5;
+    }
+    .header {
+      max-width: 1300px;
+      margin: 0 auto 40px;
+      text-align: center;
+    }
+    .header h1 {
+      font-size: 38px;
+      font-weight: 900;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #38BDF8 0%, #818CF8 50%, #C084FC 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 12px;
+    }
+    .header p {
+      color: var(--subtext);
+      font-size: 17px;
+      max-width: 780px;
+      margin: 0 auto;
+    }
+    .grid {
+      max-width: 1500px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 50px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    }
+    .card-header {
+      padding: 24px 30px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(255,255,255,0.02);
+      border-bottom: 1px solid var(--border);
+    }
+    .card-title {
+      font-size: 22px;
+      font-weight: 800;
+    }
+    .card-desc {
+      font-size: 14px;
+      color: var(--subtext);
+      margin-top: 4px;
+    }
+    .card-badge {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .img-wrap {
+      padding: 16px;
+      background: #030712;
+      overflow-x: auto;
+    }
+    .img-wrap img {
+      width: 100%;
+      height: auto;
+      border-radius: 12px;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Variant 6: Takomillashtirilgan Versiyalar</h1>
+    <p>1-o‘rinda: XONA (katta va yorqin) • 2-o‘rinda: FAN NOMI • 3-o‘rinda: MA‘RUZA/SEMINAR • Yengil va toza ranglar</p>
+  </div>
+  <div class="grid">
+    ${generatedList.map((g) => `
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">${g.title}</div>
+            <div class="card-desc">${g.desc}</div>
+          </div>
+          <div class="card-badge">${g.sizeKb} KB • PNG</div>
+        </div>
+        <div class="img-wrap">
+          <a href="${g.filename}" target="_blank">
+            <img src="${g.filename}" alt="${g.title}" loading="lazy"/>
+          </a>
+        </div>
+      </div>
+    `).join('')}
+  </div>
+</body>
+</html>`;
+
+  fs.writeFileSync(path.join(previewsDir, 'refined_index.html'), htmlGallery, 'utf8');
+  console.log('🎉 All refined prototypes & refined_index.html generated successfully!');
+}
+
+main().catch(err => {
+  console.error('❌ Error generating refined variants:', err);
+  process.exit(1);
+});

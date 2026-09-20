@@ -500,6 +500,44 @@ async function getUserClass(telegramId) {
   return localUserClasses.get(uid) || null;
 }
 
+const localUserThemes = new Map();
+
+async function getUserScheduleTheme(telegramId) {
+  const uid = String(telegramId);
+  if (localUserThemes.has(uid)) {
+    return localUserThemes.get(uid);
+  }
+
+  if (redis) {
+    try {
+      const cached = await redis.get(`user_theme:${uid}`);
+      if (cached && ['dark', 'light', 'vibrant'].includes(cached)) {
+        localUserThemes.set(uid, cached);
+        return cached;
+      }
+    } catch (e) {
+      logger.debug('Redis getUserScheduleTheme read skipped', { error: e.message });
+    }
+  }
+
+  return 'dark'; // Default: Variant 6A (Fresh Slate Dark)
+}
+
+async function setUserScheduleTheme(telegramId, theme) {
+  const uid = String(telegramId);
+  const valid = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
+  localUserThemes.set(uid, valid);
+
+  if (redis) {
+    try {
+      await redis.set(`user_theme:${uid}`, valid, 'EX', 86400 * 90);
+    } catch (e) {
+      logger.debug('Redis setUserScheduleTheme write skipped', { error: e.message });
+    }
+  }
+  return true;
+}
+
 // ==========================================
 // 🗄 USER SHELF (JAVON)
 // ==========================================
@@ -717,6 +755,8 @@ module.exports = {
   updateUserTestQuestions,
   updateUserClass,
   getUserClass,
+  getUserScheduleTheme,
+  setUserScheduleTheme,
   getUserShelf,
   saveTestToShelf,
   saveToShelf,

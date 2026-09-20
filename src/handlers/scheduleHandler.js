@@ -163,6 +163,17 @@ async function cbScheduleDay(ctx) {
   }
 }
 
+function buildThemeSwitcherKeyboard(currentTheme = 'dark') {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback(currentTheme === 'dark' ? '• 🌙 Tungi (6A) •' : '🌙 Tungi', 'sched_theme_dark'),
+      Markup.button.callback(currentTheme === 'light' ? '• ☀️ Kunduzgi (6B) •' : '☀️ Kunduzgi', 'sched_theme_light'),
+      Markup.button.callback(currentTheme === 'vibrant' ? '• ⚡ Neon (6C) •' : '⚡ Neon', 'sched_theme_vibrant'),
+    ],
+    [Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')],
+  ]);
+}
+
 async function cmdHafta(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const className = await dbService.getUserClass(ctx.from.id);
@@ -170,13 +181,23 @@ async function cmdHafta(ctx) {
     return ctx.reply('⚠️ Avval <code>/setclass</code> komandasidan foydalaning (Masalan: <code>/setclass MI-15</code>).', { parse_mode: 'HTML' });
   }
 
+  const userTheme = await dbService.getUserScheduleTheme(ctx.from.id);
   const msg = await ctx.reply('⏳ Haftalik dars jadvali rasmga olinmoqda. Iltimos kuting...');
   try {
-    const imageBuffer = await scheduleService.fetchWeeklyScheduleImage(className);
+    const imageBuffer = await scheduleService.fetchWeeklyScheduleImage(className, userTheme);
     if (!imageBuffer) {
       return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, `📭 "<b>${escapeHtml(className)}</b>" guruhi uchun haftalik jadval topilmadi.`, { parse_mode: 'HTML' });
     }
-    await ctx.replyWithPhoto({ source: imageBuffer }, { caption: `🎓 <b>Haftalik Jadval: ${escapeHtml(className)}</b>`, parse_mode: 'HTML' });
+    const kb = buildThemeSwitcherKeyboard(userTheme);
+    const themeLabel = userTheme === 'light' ? '☀️ Kunduzgi (6B)' : userTheme === 'vibrant' ? '⚡ Neon (6C)' : '🌙 Tungi (6A)';
+    await ctx.replyWithPhoto(
+      { source: imageBuffer },
+      {
+        caption: `🎓 <b>Haftalik Jadval: ${escapeHtml(className)}</b>\n<i>🎨 Mavzu: ${themeLabel}</i>`,
+        parse_mode: 'HTML',
+        ...kb,
+      }
+    );
     await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(() => {});
   } catch (err) {
     logger.error('cmdHafta error', { error: err.message, className });
@@ -191,6 +212,40 @@ async function cmdHafta(ctx) {
     } else {
       await ctx.reply('⚠️ Jadval yuklanmadi. Iltimos birozdan so\'ng qayta urinib ko\'ring.').catch(() => {});
     }
+  }
+}
+
+async function cbSwitchScheduleTheme(ctx) {
+  await ctx.answerCbQuery('Mavzu yangilanmoqda...').catch(() => {});
+  const data = ctx.callbackQuery?.data;
+  const theme = data ? data.replace('sched_theme_', '') : 'dark';
+  if (!['dark', 'light', 'vibrant'].includes(theme)) return;
+
+  const className = await dbService.getUserClass(ctx.from.id);
+  if (!className) return;
+
+  await dbService.setUserScheduleTheme(ctx.from.id, theme);
+  const imageBuffer = await scheduleService.fetchWeeklyScheduleImage(className, theme);
+  if (!imageBuffer) return;
+
+  const kb = buildThemeSwitcherKeyboard(theme);
+  const themeLabel = theme === 'light' ? '☀️ Kunduzgi (6B)' : theme === 'vibrant' ? '⚡ Neon (6C)' : '🌙 Tungi (6A)';
+  const caption = `🎓 <b>Haftalik Jadval: ${escapeHtml(className)}</b>\n<i>🎨 Mavzu: ${themeLabel}</i>`;
+
+  try {
+    await ctx.editMessageMedia(
+      {
+        type: 'photo',
+        media: { source: imageBuffer },
+        caption,
+        parse_mode: 'HTML',
+      },
+      kb
+    );
+  } catch {
+    // If in-place edit fails, delete and send new photo with keyboard
+    await ctx.deleteMessage().catch(() => {});
+    await ctx.replyWithPhoto({ source: imageBuffer }, { caption, parse_mode: 'HTML', ...kb });
   }
 }
 
@@ -316,6 +371,7 @@ function register(bot) {
 
   // Interactive Timetable Pager actions
   bot.action(/^sched_day_/, cbScheduleDay);
+  bot.action(/^sched_theme_/, cbSwitchScheduleTheme);
 
   // Empty rooms building & pagination actions
   bot.action(/^bosh_/, cbBoshXona);

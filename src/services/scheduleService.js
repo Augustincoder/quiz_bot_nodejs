@@ -51,36 +51,40 @@ async function fetchTodaySchedule(className, specificDayIdx = null) {
  * High-performance weekly schedule image generator with multi-tier caching
  * (L1 Memory -> L2 Redis -> Singleflight Sharp generation)
  * @param {string} className Group name (e.g. "MO-900/26")
+ * @param {string} theme Theme name: 'dark' | 'light' | 'vibrant' (defaults to 'dark')
  * @returns {Promise<Buffer|null>} PNG image Buffer
  */
-async function fetchWeeklyScheduleImage(className) {
+async function fetchWeeklyScheduleImage(className, theme = 'dark') {
   if (!className) return null;
   const normalized = normalizeGroupName(className);
   if (!normalized) return null;
 
+  const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
+  const memKey = `${normalized}:${validTheme}`;
+
   // 1. L1 In-Memory Cache Hit
-  if (imageMemoryCache.has(normalized)) {
-    return imageMemoryCache.get(normalized);
+  if (imageMemoryCache.has(memKey)) {
+    return imageMemoryCache.get(memKey);
   }
 
   // 2. L2 Redis Cache Hit
   const redis = getRedisClient();
-  const redisKey = `cache:schedule:img:${normalized}`;
+  const redisKey = `cache:schedule:img:${normalized}:${validTheme}`;
   if (redis) {
     try {
       const cachedBuf = await redis.getBuffer(redisKey);
       if (cachedBuf && cachedBuf.length > 0) {
-        imageMemoryCache.set(normalized, cachedBuf);
+        imageMemoryCache.set(memKey, cachedBuf);
         return cachedBuf;
       }
     } catch (redisErr) {
-      logger.warn('Redis image cache read failed', { error: redisErr.message, group: normalized });
+      logger.warn('Redis image cache read failed', { error: redisErr.message, group: normalized, theme: validTheme });
     }
   }
 
-  // 3. Singleflight: coalesce concurrent image renders for the same group
-  if (imageGenerationInflight.has(normalized)) {
-    return imageGenerationInflight.get(normalized);
+  // 3. Singleflight: coalesce concurrent image renders for the same group and theme
+  if (imageGenerationInflight.has(memKey)) {
+    return imageGenerationInflight.get(memKey);
   }
 
   const generationPromise = (async () => {
@@ -88,26 +92,26 @@ async function fetchWeeklyScheduleImage(className) {
       const schedule = await getRawSchedule(className);
       if (!schedule || Object.keys(schedule).length === 0) return null;
 
-      const imageBuffer = await generateScheduleImage(className, schedule);
+      const imageBuffer = await generateScheduleImage(className, schedule, validTheme);
       if (!imageBuffer) return null;
 
       // Save to L1 Memory
-      imageMemoryCache.set(normalized, imageBuffer);
+      imageMemoryCache.set(memKey, imageBuffer);
 
       // Async save to L2 Redis
       if (redis) {
         redis.set(redisKey, imageBuffer, 'EX', REDIS_IMAGE_TTL_SEC).catch(err => {
-          logger.warn('Redis image cache write failed', { error: err.message, group: normalized });
+          logger.warn('Redis image cache write failed', { error: err.message, group: normalized, theme: validTheme });
         });
       }
 
       return imageBuffer;
     } finally {
-      imageGenerationInflight.delete(normalized);
+      imageGenerationInflight.delete(memKey);
     }
   })();
 
-  imageGenerationInflight.set(normalized, generationPromise);
+  imageGenerationInflight.set(memKey, generationPromise);
   return generationPromise;
 }
 
@@ -119,15 +123,17 @@ async function fetchEmptyRooms(className, dayIdx, periodNum, offsetDays = 0, bin
 }
 
 /**
- * Invalidates cached weekly schedule image for a group
+ * Invalidates cached weekly schedule image for a group (all themes)
  */
 function invalidateImageCache(className) {
   if (!className) return;
   const normalized = normalizeGroupName(className);
-  imageMemoryCache.delete(normalized);
+  ['dark', 'light', 'vibrant'].forEach(t => imageMemoryCache.delete(`${normalized}:${t}`));
   const redis = getRedisClient();
   if (redis) {
-    redis.del(`cache:schedule:img:${normalized}`).catch(() => {});
+    ['dark', 'light', 'vibrant'].forEach(t => {
+      redis.del(`cache:schedule:img:${normalized}:${t}`).catch(() => {});
+    });
   }
 }
 
@@ -135,6 +141,6 @@ module.exports = {
   fetchTodaySchedule,
   fetchWeeklyScheduleImage,
   fetchEmptyRooms,
-  warmUpCache,
   invalidateImageCache,
+  warmUpCache,
 };
