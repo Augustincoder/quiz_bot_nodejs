@@ -5,7 +5,7 @@ const dbService = require('../services/dbService');
 const scheduleService = require('../services/scheduleService');
 const edupageService = require('../services/edupageService');
 const { getTimetableKeyboard, getTimetableInlineKeyboard } = require('../keyboards/keyboards');
-const { TTLMap, escapeHtml, safeAnswerCb } = require('../core/utils');
+const { TTLMap, escapeHtml, safeAnswerCb, safeEdit } = require('../core/utils');
 const logger = require('../core/logger');
 
 const roomsPaginationCache = new TTLMap(5 * 60 * 1000, 200); // 5-minute TTL, max 200 slots
@@ -25,7 +25,10 @@ const PARA_KB = Markup.inlineKeyboard([
   [Markup.button.callback('3-para  11:00–12:20', 'bosh_3'), Markup.button.callback('4-para  13:00–14:20', 'bosh_4')],
   [Markup.button.callback('5-para  14:30–15:50', 'bosh_5'), Markup.button.callback('6-para  16:00–17:20', 'bosh_6')],
   [Markup.button.callback('7-para  17:30–18:50', 'bosh_7'), Markup.button.callback('8-para  19:00–20:20', 'bosh_8')],
-  [Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')],
+  [
+    Markup.button.callback('🎓 Jadval Markazi', 'schedule_menu'),
+    Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main'),
+  ],
 ]);
 
 function toBinoId(binoName) {
@@ -122,8 +125,11 @@ function buildSchedulePagerKeyboard(dayIdx) {
     Markup.button.callback('🏢 Bo\'sh xonalar', 'schedule_rooms'),
   ];
 
-  // Row 4: Back to menu
-  const menuRow = [Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')];
+  // Row 4: Back navigation
+  const menuRow = [
+    Markup.button.callback('🎓 Jadval Markazi', 'schedule_menu'),
+    Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main'),
+  ];
 
   return Markup.inlineKeyboard([navRow, daysRow, actionRow, menuRow]);
 }
@@ -198,6 +204,9 @@ function buildRoomPageKb(periodNum, currentBino, currentPage, totalPages, studen
   // Row 5: Controls
   rows.push([
     Markup.button.callback('🔄 Boshqa para', 'back_to_rooms_menu'),
+    Markup.button.callback('🎓 Jadval Markazi', 'schedule_menu'),
+  ]);
+  rows.push([
     Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main'),
   ]);
 
@@ -281,6 +290,10 @@ function buildThemeSwitcherKeyboard(currentTheme = 'dark') {
       Markup.button.callback(currentTheme === 'dark' ? '• 🌙 Tungi •' : '🌙 Tungi', 'sched_theme_dark'),
       Markup.button.callback(currentTheme === 'light' ? '• ☀️ Kunduzgi •' : '☀️ Kunduzgi', 'sched_theme_light'),
       Markup.button.callback(currentTheme === 'vibrant' ? '• ⚡ Neon •' : '⚡ Neon', 'sched_theme_vibrant'),
+    ],
+    [
+      Markup.button.callback('📅 Bugungi matn', 'schedule_today'),
+      Markup.button.callback('🎓 Jadval Markazi', 'schedule_menu'),
     ],
     [Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')],
   ]);
@@ -421,18 +434,36 @@ async function cmdTimetable(ctx) {
   await safeAnswerCb(ctx);
   const rawClass = await dbService.getUserClass(ctx.from.id);
   const className = rawClass ? (edupageService.getCanonicalGroupName(rawClass) || rawClass) : null;
-  const status = className ? `✅ Sizning guruhingiz: <b>${escapeHtml(className)}</b>` : '⚠️ <b>Guruh tanlanmagan.</b>';
-  const text = `🎓 <b>Dars jadvali bo'limi</b>\n\n${status}\n\nQuyidagi menyudan kerakli bo'limni tanlang:`;
+  
+  const tzDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
+  const dayOfWeek = (tzDate.getDay() + 6) % 7;
+  const timeStr = `${String(tzDate.getHours()).padStart(2, '0')}:${String(tzDate.getMinutes()).padStart(2, '0')}`;
+  
+  let header = `🎓 <b>Dars Jadvali Markazi</b>\n━━━━━━━━━━━━━━━━━━━━\n`;
+  if (className) {
+    header += `👤 Guruhingiz: <b>${escapeHtml(className)}</b>\n`;
+  } else {
+    header += `⚠️ Guruhingiz belgilanmagan!\n💡 <i>Jadvalingizni avtomatik olish uchun guruhingizni bir marta kiriting.</i>\n`;
+  }
+  header += `🕐 Toshkent vaqti: <b>${timeStr}</b>\n━━━━━━━━━━━━━━━━━━━━\n\n` +
+    `⚡️ <b>Tezkor imkoniyatlar:</b>\n` +
+    `• <b>Bugungi jadval:</b> Bugungi barcha darslar, xonalar va o'qituvchilar\n` +
+    `• <b>Haftalik jadval:</b> HD sifatli to'liq haftalik rasm (3 xil mavzuda)\n` +
+    `• <b>Bo'sh xonalar:</b> Hozirgi yoki keyingi parada bo'sh turgan xonalar ro'yxati\n\n` +
+    `👇 <i>Kerakli bo'limni tanlang:</i>`;
+
+  const inlineKb = getTimetableInlineKeyboard(className);
 
   if (ctx.callbackQuery) {
-    await ctx.reply(text, {
+    await safeEdit(ctx, header, {
       parse_mode: 'HTML',
-      ...getTimetableInlineKeyboard(),
+      ...inlineKb,
     });
   } else {
-    await ctx.reply(text, {
+    // Agar /timetable buyrug'i yozilgan bo'lsa, ham reply tugmalar, ham inline tugmalar beriladi (maksimal qulaylik)
+    await ctx.reply(header, {
       parse_mode: 'HTML',
-      ...getTimetableKeyboard(),
+      ...inlineKb,
     });
   }
 }

@@ -127,23 +127,28 @@ function getTimetableKeyboard() {
         ["🔙 Asosiy menyu"],
       ],
       resize_keyboard: true,
-      is_persistent: true,
+      one_time_keyboard: false,
     },
   };
 }
 
-function getTimetableInlineKeyboard() {
-  return Markup.inlineKeyboard([
+function getTimetableInlineKeyboard(className = null) {
+  const rows = [
     [
       Markup.button.callback("📅 Bugungi jadval", "schedule_today"),
       Markup.button.callback("🖼 Haftalik jadval", "schedule_week"),
     ],
     [
       Markup.button.callback("🏢 Bo'sh xonalar", "schedule_rooms"),
-      Markup.button.callback("⚙️ Guruhni sozlash", "schedule_settings"),
+      Markup.button.callback("⚡️ Hozirgi para", "bosh_now"),
     ],
-    [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
-  ]);
+    [
+      Markup.button.callback(className ? "✏️ Guruhni o'zgartirish" : "⚙️ Guruhni kiritish", "schedule_settings"),
+      Markup.button.callback("🏠 Asosiy Menyu", "back_to_main"),
+    ],
+  ];
+
+  return Markup.inlineKeyboard(rows);
 }
 
 module.exports = {
