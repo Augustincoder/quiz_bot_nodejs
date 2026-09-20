@@ -419,7 +419,14 @@ async function generateScheduleImage(className, schedule) {
     fill="none" stroke="#1E293B" stroke-width="4"></rect>
 </svg>`;
 
-  return sharp(Buffer.from(svgString)).png().toBuffer();
+  return sharp(Buffer.from(svgString))
+    .png({
+      palette: true,
+      quality: 85,
+      compressionLevel: 9,
+      effort: 7,
+    })
+    .toBuffer();
 }
 
 module.exports = { generateScheduleImage };

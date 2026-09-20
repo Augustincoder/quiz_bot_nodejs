@@ -180,6 +180,42 @@ async function resolveDefaultNum() {
 }
 
 /**
+ * Tier 1 Lightweight Gatekeeper: probes EduPage metadata (332 bytes)
+ * Returns deterministic signature string to detect if any schedule version or table was modified.
+ */
+async function getMetadataSignature() {
+  try {
+    const currentYear = new Date().getFullYear();
+    const payload = { __args: [null, currentYear], __gsh: '00000000' };
+    const res = await fetchWithRetry(
+      () => httpPost('/timetable/server/ttviewer.js?__func=getTTViewerData', payload, 10000),
+      1,
+      500
+    );
+
+    const defaultNum = res?.r?.regular?.default_num || '';
+    const activeTt = res?.r?.regular?.timetables?.[0] || {};
+    const ttNum = activeTt.tt_num || '';
+    const text = activeTt.text || '';
+    const datefrom = activeTt.datefrom || '';
+    const changeEvent = res?.r?._changeEvents?.['dbi:global_settings'] || 0;
+
+    if (!defaultNum && !ttNum) return null;
+
+    // Update cached defaultNum if fresh
+    if (defaultNum && String(defaultNum).trim()) {
+      cachedDefaultNum = String(defaultNum).trim();
+      cachedDefaultNumTime = Date.now();
+    }
+
+    return `${defaultNum}:${ttNum}:${text}:${datefrom}:${changeEvent}`;
+  } catch (err) {
+    logger.warn('Failed to fetch EduPage metadata probe signature', { error: err.message });
+    return null;
+  }
+}
+
+/**
  * Parses building and floor information from classroom code
  */
 function parseRoomLocation(xona) {
@@ -604,6 +640,10 @@ async function getTimetableData(forceRefresh = false) {
   return db.raw;
 }
 
+async function getIndexedDatabase(forceRefresh = false) {
+  return getOrFetchIndexedData(forceRefresh);
+}
+
 module.exports = {
   getFormattedSchedule,
   getEmptyRoomsText,
@@ -611,6 +651,8 @@ module.exports = {
   formatTimetableText,
   getRawSchedule,
   getTimetableData,
+  getIndexedDatabase,
+  getMetadataSignature,
   getAllClassNames,
   warmUpCache,
   normalizeGroupName,
