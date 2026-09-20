@@ -5,14 +5,19 @@ const { SUPABASE_URL, SUPABASE_KEY } = require('../config/config');
 const redis = require('./redisService');
 const logger = require('../core/logger');
 
-let supabase;
+let supabase = null;
 try {
-  supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  } else {
+    logger.warn('SUPABASE_URL or SUPABASE_KEY is missing. Operating in fallback mode.');
+  }
 } catch (e) {
   logger.error('Supabase ulanish xatosi:', { error: e.message });
 }
 
 async function loadAllOfficialTests() {
+  if (!supabase) return {};
   try {
     const { data, error } = await supabase.from('official_tests').select('*');
     if (error) throw error;
@@ -31,6 +36,7 @@ async function loadAllOfficialTests() {
 }
 
 async function saveOfficialTest(subject, testId, questions) {
+  if (!supabase) return false;
   try {
     const { error } = await supabase.from('official_tests').upsert(
       { subject, test_id: testId, questions },
@@ -289,6 +295,7 @@ async function getBroadcastRecipients() {
 }
 
 async function getAllUserNames() {
+  if (!supabase) return [];
   try {
     const { data, error } = await supabase
       .from('users')
@@ -302,6 +309,7 @@ async function getAllUserNames() {
 }
 
 async function getAllUsers() {
+  if (!supabase) return [];
   try {
     const { data, error } = await supabase.from('users').select('*');
     if (error) throw error;
@@ -313,7 +321,7 @@ async function getAllUsers() {
 }
 
 async function getUsersByClassName(className) {
-  if (!className) return [];
+  if (!className || !supabase) return [];
   try {
     const { data, error } = await supabase
       .from('users')
@@ -419,38 +427,77 @@ async function updateUserTestQuestions(testId, creatorId, newQuestions) {
   }
 }
 
+const localUserClasses = new Map();
+
 async function updateUserClass(telegramId, className) {
-  try {
-    const { error } = await supabase.from('users').update({ class_name: className }).eq('telegram_id', String(telegramId));
-    if (error) return false;
-    await redis.set(`user_class:${telegramId}`, className, 'EX', 86400).catch(() => {});
-    return true;
-  } catch (e) {
-    logger.error('updateUserClass error:', { telegramId, error: e.message });
-    return false;
+  const uid = String(telegramId);
+  localUserClasses.set(uid, className);
+
+  if (redis) {
+    try {
+      await redis.set(`user_class:${uid}`, className, 'EX', 86400 * 30);
+    } catch (e) {
+      logger.debug('Redis updateUserClass write skipped', { error: e.message });
+    }
   }
+
+  if (supabase) {
+    try {
+      const { error } = await supabase.from('users').update({ class_name: className }).eq('telegram_id', uid);
+      if (error) {
+        logger.warn('Supabase updateUserClass returned error', { error: error.message, uid });
+      }
+    } catch (e) {
+      logger.error('updateUserClass error:', { telegramId: uid, error: e.message });
+    }
+  }
+
+  return true;
 }
 
 async function getUserClass(telegramId) {
-  try {
-    const cached = await redis.get(`user_class:${telegramId}`);
-    if (cached) return cached;
+  const uid = String(telegramId);
 
-    const { data, error } = await supabase
-      .from('users')
-      .select('class_name')
-      .eq('telegram_id', String(telegramId))
-      .maybeSingle();
-
-    if (error) return null;
-    if (data?.class_name) {
-      await redis.set(`user_class:${telegramId}`, data.class_name, 'EX', 86400).catch(() => {});
-    }
-    return data?.class_name || null;
-  } catch (e) {
-    logger.error('getUserClass error:', { telegramId, error: e.message });
-    return null;
+  // 1. Check local in-memory store
+  if (localUserClasses.has(uid)) {
+    return localUserClasses.get(uid);
   }
+
+  // 2. Check Redis cache
+  if (redis) {
+    try {
+      const cached = await redis.get(`user_class:${uid}`);
+      if (cached) {
+        localUserClasses.set(uid, cached);
+        return cached;
+      }
+    } catch (e) {
+      logger.debug('Redis getUserClass read skipped', { error: e.message });
+    }
+  }
+
+  // 3. Check Supabase database
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('class_name')
+        .eq('telegram_id', uid)
+        .maybeSingle();
+
+      if (!error && data?.class_name) {
+        localUserClasses.set(uid, data.class_name);
+        if (redis) {
+          redis.set(`user_class:${uid}`, data.class_name, 'EX', 86400 * 30).catch(() => {});
+        }
+        return data.class_name;
+      }
+    } catch (e) {
+      logger.error('getUserClass error:', { telegramId: uid, error: e.message });
+    }
+  }
+
+  return localUserClasses.get(uid) || null;
 }
 
 // ==========================================

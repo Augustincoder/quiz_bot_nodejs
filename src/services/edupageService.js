@@ -1,7 +1,11 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const https = require('https');
 const logger = require('../core/logger');
+
+const DISK_CACHE_PATH = path.join(__dirname, '../../data/timetable_cache.json');
 
 const DAY_NAMES = ['Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba'];
 const PERIOD_TIMES = {
@@ -29,7 +33,7 @@ const httpsAgent = new https.Agent({
   keepAlive: true,
   maxSockets: 10,
   keepAliveMsecs: 30000,
-  timeout: 25000,
+  timeout: 45000,
 });
 
 const DEFAULT_HEADERS = {
@@ -70,6 +74,18 @@ function getRedisClient() {
 function normalizeGroupName(str) {
   if (!str) return '';
   return str.toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/**
+ * Escapes characters for Telegram HTML parse_mode
+ */
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 /**
@@ -411,11 +427,27 @@ async function getOrFetchIndexedData(forceRefresh = false) {
       try {
         raw = await fetchRawTimetable(defaultNum);
       } catch (networkErr) {
-        // Stale-While-Revalidate Fallback: Serve stale data if EduPage server is down
+        // Fallback 1: Stale-While-Revalidate Memory Cache
         if (l1IndexedDatabase && (now - l1CacheTime < L1_STALE_TTL)) {
-          logger.warn('EduPage network request failed; serving stale cache', { error: networkErr.message });
+          logger.warn('EduPage network request failed; serving stale memory cache', { error: networkErr.message });
           return l1IndexedDatabase;
         }
+
+        // Fallback 2: L3 Disk Cache (guarantees survival through process restarts & server downtime)
+        try {
+          if (fs.existsSync(DISK_CACHE_PATH)) {
+            const diskRaw = JSON.parse(await fs.promises.readFile(DISK_CACHE_PATH, 'utf8'));
+            if (diskRaw?.r?.dbiAccessorRes?.tables) {
+              logger.warn('EduPage network request failed; restored from L3 Disk Cache', { error: networkErr.message });
+              l1IndexedDatabase = buildIndexedDatabase(diskRaw, defaultNum);
+              l1CacheTime = Date.now();
+              return l1IndexedDatabase;
+            }
+          }
+        } catch (diskErr) {
+          logger.error('Failed to read L3 Disk Cache', { error: diskErr.message });
+        }
+
         throw networkErr;
       }
 
@@ -426,6 +458,11 @@ async function getOrFetchIndexedData(forceRefresh = false) {
       // Index and cache in L1
       l1IndexedDatabase = buildIndexedDatabase(raw, defaultNum);
       l1CacheTime = Date.now();
+
+      // Async write to L3 Disk Cache (guarantees survival across reboots)
+      fs.promises.writeFile(DISK_CACHE_PATH, JSON.stringify(raw), 'utf8').catch(err => {
+        logger.warn('Failed to write EduPage L3 Disk Cache', { error: err.message });
+      });
 
       // Async write to L2 Redis
       if (redis) {
@@ -475,7 +512,7 @@ function formatTimetableText(schedule, dayIdx) {
 
   for (const d of days) {
     const dayLessons = schedule[d];
-    if (dayIdx === null) parts.push(`\n📅 <b>${DAY_NAMES[d]}:</b>`);
+    if (dayIdx === null) parts.push(`\n📅 <b>${DAY_NAMES[d] || 'Noma\'lum kun'}:</b>`);
     if (!dayLessons || Object.keys(dayLessons).length === 0) {
       parts.push(dayIdx === null ? '  — Dars yo\'q' : '📭 Bugun dars yo\'q.');
       continue;
@@ -487,7 +524,10 @@ function formatTimetableText(schedule, dayIdx) {
       const timeStr = t ? ` <i>(${t.start}–${t.end})</i>` : '';
       parts.push(`\n<b>${pNum}-para</b>${timeStr}`);
       for (const l of dayLessons[pNum]) {
-        parts.push(`  📖 ${l.subject}\n  👨‍🏫 ${l.teacher}\n  🚪 ${l.room}`);
+        const cleanSubj = escapeHtml(l.subject || 'Noma\'lum fan');
+        const cleanTeacher = escapeHtml(l.teacher || '?');
+        const cleanRoom = escapeHtml(l.room || '?');
+        parts.push(`  📖 ${cleanSubj}\n  👨‍🏫 ${cleanTeacher}\n  🚪 ${cleanRoom}`);
       }
     }
   }
@@ -518,7 +558,8 @@ async function getFormattedSchedule(className, dayIdx) {
     const db = await getOrFetchIndexedData();
     const classId = findClassId(db, className);
     if (!classId) {
-      return `❌ "<b>${className}</b>" guruhi bo'yicha jadval topilmadi.\n\n💡 Iltimos, /setclass orqali guruhingiz nomini tekshirib qayta kiriting (Masalan: <code>/setclass MI-21</code>).`;
+      const safeClass = escapeHtml(className);
+      return `❌ "<b>${safeClass}</b>" guruhi bo'yicha jadval topilmadi.\n\n💡 Iltimos, /setclass orqali guruhingiz nomini tekshirib qayta kiriting (Masalan: <code>/setclass MI-15</code>).`;
     }
 
     const schedule = db.schedulesByClassId.get(classId);
@@ -527,11 +568,12 @@ async function getFormattedSchedule(className, dayIdx) {
     }
 
     if (dayIdx !== null && dayIdx !== undefined) {
-      return `📅 <b>${DAY_NAMES[dayIdx]} — dars jadvali:</b>\n${formatTimetableText(schedule, dayIdx)}`;
+      const safeDay = Math.max(0, Math.min(5, Number(dayIdx) || 0));
+      return `📅 <b>${DAY_NAMES[safeDay]} — dars jadvali:</b>\n${formatTimetableText(schedule, safeDay)}`;
     }
     return formatTimetableText(schedule, null);
   } catch (err) {
-    logger.error('Error in getFormattedSchedule', { className, dayIdx, error: err.message });
+    logger.error('Error in getFormattedSchedule', { className, dayIdx, error: err.message, stack: err.stack });
     return '❌ Jadval ma\'lumotlarini olishda texnik xatolik yuz berdi. Birozdan so\'ng qayta urinib ko\'ring.';
   }
 }
@@ -633,6 +675,23 @@ async function getAllClassNames() {
  */
 async function warmUpCache() {
   try {
+    // 1. Instant 0ms boot from L3 Disk Cache if available
+    if (!l1IndexedDatabase && fs.existsSync(DISK_CACHE_PATH)) {
+      try {
+        const diskRaw = JSON.parse(await fs.promises.readFile(DISK_CACHE_PATH, 'utf8'));
+        if (diskRaw?.r?.dbiAccessorRes?.tables) {
+          l1IndexedDatabase = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || FALLBACK_DEFAULT_NUM);
+          l1CacheTime = Date.now();
+          logger.info('EduPage schedule cache instantly restored from L3 Disk Cache', {
+            classesCount: l1IndexedDatabase.schedulesByClassId.size,
+          });
+        }
+      } catch (diskErr) {
+        logger.warn('Failed to read initial L3 Disk Cache', { error: diskErr.message });
+      }
+    }
+
+    // 2. Fetch fresh from network / Redis in background
     logger.info('Pre-warming EduPage schedule cache in background...');
     await getOrFetchIndexedData();
     logger.info('EduPage schedule cache successfully pre-warmed');

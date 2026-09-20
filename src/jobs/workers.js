@@ -7,6 +7,11 @@ const logger = require('../core/logger');
 const dbService = require('../services/dbService');
 
 function initWorkers(bot, scheduleService) {
+  if (!process.env.REDIS_URL || redisConnection.isDummy) {
+    logger.info('REDIS_URL not configured. Background BullMQ queue workers will not run in standalone mode.');
+    return { broadcastWorker: null, quizTimerWorker: null };
+  }
+
   const broadcastWorker = new Worker('broadcastQueue', async (job) => {
     if (job.name === 'schedule-change-alert') {
       const { userId, message } = job.data;

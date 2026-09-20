@@ -423,8 +423,8 @@ async function generateScheduleImage(className, schedule) {
     .png({
       palette: true,
       quality: 85,
-      compressionLevel: 9,
-      effort: 7,
+      compressionLevel: 7,
+      effort: 3,
     })
     .toBuffer();
 }

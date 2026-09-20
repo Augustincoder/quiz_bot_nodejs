@@ -86,7 +86,7 @@ async function cmdSetClass(ctx) {
   const matchedGroup = userInput.startsWith('*') ? userInput : findBestMatch(userInput, groups);
 
   if (!matchedGroup) {
-    return ctx.reply(`❌ "<b>${escapeHtml(userInput)}</b>" nomli guruh topilmadi.\n\n💡 Guruh nomini to'g'ri yozganingizga ishonch hosil qiling. Masalan: <code>/setclass MI-21</code>`, { parse_mode: 'HTML' });
+    return ctx.reply(`❌ "<b>${escapeHtml(userInput)}</b>" nomli guruh topilmadi.\n\n💡 Guruh nomini to'g'ri yozganingizga ishonch hosil qiling. Masalan: <code>/setclass MNP-900/26</code> yoki <code>/setclass MI-15</code>`, { parse_mode: 'HTML' });
   }
 
   const isCorrected = !userInput.startsWith('*') && (normalize(userInput) !== normalize(matchedGroup));

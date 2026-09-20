@@ -8,13 +8,14 @@ let redisConnection;
 if (!process.env.REDIS_URL) {
   const EventEmitter = require('events');
   const dummy = new EventEmitter();
+  dummy.isDummy = true;
   dummy.get = async () => null;
   dummy.getBuffer = async () => null;
   dummy.set = async () => 'OK';
   dummy.del = async () => 1;
   dummy.quit = async () => 'OK';
   dummy.ping = async () => 'PONG';
-  dummy.createWorkerConnection = () => dummy;
+  dummy.createWorkerConnection = () => null;
   redisConnection = dummy;
 } else {
   const isSecureRedis = process.env.REDIS_URL.startsWith('rediss://');

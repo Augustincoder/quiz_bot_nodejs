@@ -4,7 +4,7 @@ const { Markup } = require('telegraf');
 const dbService = require('../services/dbService');
 const scheduleService = require('../services/scheduleService');
 const { getTimetableKeyboard, getTimetableInlineKeyboard } = require('../keyboards/keyboards');
-const { TTLMap } = require('../core/utils');
+const { TTLMap, escapeHtml } = require('../core/utils');
 const logger = require('../core/logger');
 
 const roomsPaginationCache = new TTLMap(5 * 60 * 1000); // 5-minute TTL
@@ -100,25 +100,34 @@ async function cmdJadval(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const className = await dbService.getUserClass(ctx.from.id);
   if (!className) {
-    return ctx.reply('⚠️ Avval guruhingizni saqlashingiz kerak!\n\n👉 <code>/setclass MI-21</code>', { parse_mode: 'HTML' });
+    return ctx.reply('⚠️ Avval guruhingizni saqlashingiz kerak!\n\n👉 <code>/setclass MI-15</code>', { parse_mode: 'HTML' });
   }
 
   const tzDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
   let dayOfWeek = (tzDate.getDay() + 6) % 7;
-  if (dayOfWeek === 6) dayOfWeek = 0; // Sunday defaults to Monday
+  let isSunday = false;
+  if (dayOfWeek === 6) {
+    dayOfWeek = 0; // Sunday defaults to Monday
+    isSunday = true;
+  }
 
   try {
     const scheduleText = await scheduleService.fetchTodaySchedule(className, dayOfWeek);
-    const text = `🎓 <b>Guruh: ${className}</b>\n\n${scheduleText}`;
+    const sundayNote = isSunday ? '<i>(Bugun yakshanba — Dushanba jadvali ko\'rsatilmoqda)</i>\n\n' : '';
+    const text = `🎓 <b>Guruh: ${escapeHtml(className)}</b>\n${sundayNote}${scheduleText}`;
     const kb = buildSchedulePagerKeyboard(dayOfWeek);
 
     if (ctx.callbackQuery) {
-      await ctx.editMessageText(text, { parse_mode: 'HTML', ...kb }).catch(() => {});
+      await ctx.editMessageText(text, { parse_mode: 'HTML', ...kb }).catch(async (e) => {
+        if (!e?.message?.includes('message is not modified')) {
+          await ctx.reply(text, { parse_mode: 'HTML', ...kb }).catch(() => {});
+        }
+      });
     } else {
       await ctx.reply(text, { parse_mode: 'HTML', ...kb });
     }
   } catch (err) {
-    logger.error('cmdJadval error', { error: err.message });
+    logger.error('cmdJadval error', { error: err.message, className });
     await ctx.reply('⚠️ Jadval yuklanmadi. Iltimos birozdan so\'ng qayta urinib ko\'ring.');
   }
 }
@@ -127,7 +136,7 @@ async function cbScheduleDay(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const className = await dbService.getUserClass(ctx.from.id);
   if (!className) {
-    return ctx.reply('⚠️ Avval guruhingizni saqlashingiz kerak!\n\n👉 <code>/setclass MI-21</code>', { parse_mode: 'HTML' });
+    return ctx.reply('⚠️ Avval guruhingizni saqlashingiz kerak!\n\n👉 <code>/setclass MI-15</code>', { parse_mode: 'HTML' });
   }
 
   const data = ctx.callbackQuery.data;
@@ -144,12 +153,12 @@ async function cbScheduleDay(ctx) {
 
   try {
     const scheduleText = await scheduleService.fetchTodaySchedule(className, targetDay);
-    const text = `🎓 <b>Guruh: ${className}</b>\n\n${scheduleText}`;
+    const text = `🎓 <b>Guruh: ${escapeHtml(className)}</b>\n\n${scheduleText}`;
     const kb = buildSchedulePagerKeyboard(targetDay);
     await ctx.editMessageText(text, { parse_mode: 'HTML', ...kb });
   } catch (err) {
     if (!err?.message?.includes('message is not modified')) {
-      logger.error('cbScheduleDay error', { error: err?.message });
+      logger.error('cbScheduleDay error', { error: err?.message, className });
     }
   }
 }
@@ -158,18 +167,19 @@ async function cmdHafta(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const className = await dbService.getUserClass(ctx.from.id);
   if (!className) {
-    return ctx.reply('⚠️ Avval <code>/setclass</code> komandasidan foydalaning (Masalan: <code>/setclass MI-21</code>).', { parse_mode: 'HTML' });
+    return ctx.reply('⚠️ Avval <code>/setclass</code> komandasidan foydalaning (Masalan: <code>/setclass MI-15</code>).', { parse_mode: 'HTML' });
   }
 
   const msg = await ctx.reply('⏳ Haftalik dars jadvali rasmga olinmoqda. Iltimos kuting...');
   try {
     const imageBuffer = await scheduleService.fetchWeeklyScheduleImage(className);
     if (!imageBuffer) {
-      return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, '📭 Ushbu guruh uchun jadval topilmadi.');
+      return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, `📭 "<b>${escapeHtml(className)}</b>" guruhi uchun haftalik jadval topilmadi.`, { parse_mode: 'HTML' });
     }
-    await ctx.replyWithPhoto({ source: imageBuffer }, { caption: `🎓 <b>Haftalik Jadval: ${className}</b>`, parse_mode: 'HTML' });
+    await ctx.replyWithPhoto({ source: imageBuffer }, { caption: `🎓 <b>Haftalik Jadval: ${escapeHtml(className)}</b>`, parse_mode: 'HTML' });
     await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(() => {});
-  } catch {
+  } catch (err) {
+    logger.error('cmdHafta error', { error: err.message, className });
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       msg.message_id,
