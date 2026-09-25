@@ -284,12 +284,37 @@ async function warmRemainingThemesInBackground(telegram, className, rawSchedule,
 }
 
 /**
- * Robust, rate-limited background worker that pre-warms timetable images for all groups.
+ * Checks if current time in Asia/Tashkent has reached or passed the stopHour (default 5 AM)
+ * Window is 02:00 - 05:00. Cutoff is reached once hour is >= stopHour and before 23:00.
+ */
+function isTashkentCutoffReached(stopHour = 5) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Tashkent',
+      hour: 'numeric',
+      hourCycle: 'h23',
+    }).formatToParts(new Date());
+    const hourPart = parts.find((p) => p.type === 'hour');
+    const hour = hourPart ? parseInt(hourPart.value, 10) : (new Date().getUTCHours() + 5) % 24;
+    return hour >= stopHour && hour < 23;
+  } catch {
+    const hour = (new Date().getUTCHours() + 5) % 24;
+    return hour >= stopHour && hour < 23;
+  }
+}
+
+/**
+ * Robust, rate-limited background worker that pre-warms timetable images.
  * Concurrency = 1 (Zero server overload on Render starter dynos).
  * Prioritizes active enrolled students first, then remaining groups from groups.json.
+ * Theme completion logic:
+ *   - If 1 theme is already uploaded on-demand, generates the missing 2.
+ *   - If 2 themes are already uploaded, completes the 3rd.
+ *   - If all 3 are fresh, skips immediately (0ms cost).
+ *   - Reclaims memory with global.gc() and stops gracefully at stopHourTashkent (05:00).
  *
  * @param {object} telegram Telegraf telegram client
- * @param {object} options { activeOnly: false, delayMs: 2500 }
+ * @param {object} options { activeOnly: false, delayMs: 2500, stopHourTashkent: null }
  */
 async function prewarmAllTimetables(telegram, options = {}) {
   if (workerState.isRunning) {
@@ -304,11 +329,13 @@ async function prewarmAllTimetables(telegram, options = {}) {
 
   const delayMs = options.delayMs || DEFAULT_DELAY_MS;
   const activeOnly = options.activeOnly === true;
+  const stopHourTashkent = options.stopHourTashkent != null ? Number(options.stopHourTashkent) : null;
 
   workerState = {
     isRunning: true,
     shouldStop: false,
     startTime: Date.now(),
+    mode: activeOnly ? 'active_only' : 'all_groups',
     total: 0,
     processed: 0,
     generated: 0,
@@ -318,7 +345,7 @@ async function prewarmAllTimetables(telegram, options = {}) {
     currentTheme: null,
   };
 
-  logger.info('🚀 Starting Timetable CDN Background Pre-warm Worker...');
+  logger.info(`🚀 Starting Timetable CDN Pre-warm Worker (mode: ${workerState.mode}, stopHour: ${stopHourTashkent ?? 'none'})...`);
 
   (async () => {
     try {
@@ -375,6 +402,11 @@ async function prewarmAllTimetables(telegram, options = {}) {
           break;
         }
 
+        if (stopHourTashkent != null && isTashkentCutoffReached(stopHourTashkent)) {
+          logger.info(`⏰ Nightly pre-warm cutoff reached (${stopHourTashkent}:00 Asia/Tashkent). Stopping gracefully.`);
+          break;
+        }
+
         const norm = edupageService.normalizeGroupName(groupName);
         if (!norm) continue;
 
@@ -385,14 +417,15 @@ async function prewarmAllTimetables(telegram, options = {}) {
 
         for (const theme of ALL_THEMES) {
           if (workerState.shouldStop) break;
+          if (stopHourTashkent != null && isTashkentCutoffReached(stopHourTashkent)) {
+            logger.info(`⏰ Nightly pre-warm cutoff reached during theme processing (${stopHourTashkent}:00 Asia/Tashkent). Stopping.`);
+            break;
+          }
 
           workerState.currentTheme = theme;
           workerState.processed++;
 
           try {
-            // Check if already in Supabase cache with valid file_id
-            const existing = await dbService.getTimetableCache(norm, theme);
-
             // Lazy fetch schedule only when needed
             if (!rawSchedule) {
               rawSchedule = await edupageService.getRawSchedule(groupName);
@@ -405,24 +438,34 @@ async function prewarmAllTimetables(telegram, options = {}) {
               scheduleHash = computeScheduleHash(rawSchedule);
             }
 
-            // If already cached and schedule hasn't changed -> SKIP! (0ms cost)
+            // Check if already in Supabase/Redis cache with valid file_id
+            const existing = await dbService.getTimetableCache(norm, theme);
+
+            // If already cached and schedule hasn't changed -> SKIP! (0ms cost, theme already present)
             const existingFileId = existing?.file_id || existing?.fileId;
             if (existing && existingFileId && existing.schedule_hash === scheduleHash) {
               workerState.skipped++;
               continue;
             }
 
-            // Generate image
-            const imageBuffer = await imageService.generateScheduleImage(groupName, rawSchedule, theme);
+            // Generate missing or outdated theme
+            logger.info(`🎨 Pre-warming missing theme '${theme}' for ${groupName} (hash: ${scheduleHash.slice(0, 8)})...`);
+            let imageBuffer = await imageService.generateScheduleImage(groupName, rawSchedule, theme);
             if (!imageBuffer) {
               workerState.failed++;
               continue;
             }
 
-            // Upload to Telegram Storage Channel
+            // Upload to Telegram Storage Channel CDN
             const themeLabel = theme === 'light' ? 'Kunduzgi' : theme === 'vibrant' ? 'Neon' : 'Tungi';
             const caption = `🎓 <b>${escapeHtml(groupName)}</b> | 🎨 <i>${themeLabel}</i>\n<code>#hash_${scheduleHash.slice(0, 10)}</code>`;
             const uploadRes = await uploadPhotoToChannel(telegram, imageBuffer, caption);
+
+            // Immediately dereference buffer and reclaim memory
+            imageBuffer = null;
+            if (global.gc) {
+              try { global.gc(); } catch (_) {}
+            }
 
             if (uploadRes?.fileId) {
               await dbService.upsertTimetableCache({
@@ -452,9 +495,16 @@ async function prewarmAllTimetables(telegram, options = {}) {
             await sleep(2000);
           }
         }
+
+        // Release schedule reference and trigger gc between groups
+        rawSchedule = null;
+        if (global.gc) {
+          try { global.gc(); } catch (_) {}
+        }
       }
 
       logger.info('🎉 Timetable CDN Background Pre-warm finished!', {
+        mode: workerState.mode,
         total: workerState.total,
         processed: workerState.processed,
         generated: workerState.generated,

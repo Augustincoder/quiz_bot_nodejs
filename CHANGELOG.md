@@ -4,6 +4,27 @@ Barcha muhim o'zgarishlar, yangilanishlar va xavfsizlik yaxshilanishlari ushbu h
 
 ---
 
+## [1.1.4] — 2026-09-26
+
+### 🚀 Asosiy Yutuqlar (Highlights)
+* **Tungi 02:00 dan 05:00 gacha dars jadvali rasmlarini to'ldirish tizimi (Nightly Theme Completion Worker):**
+  - **Faqat faol talabalar guruhlari (`activeOnly`):** Tizim server resurslarini bekor sarflamaslik uchun faqat botda ro'yxatdan o'tgan talabalari bor guruhlarni oladi.
+  - **Ketma-ket va xavfsiz ishlash (Concurrency = 1, 2.5s pacing):** Render 512 MB bepul tarifida xotira to'lib qolmasligi uchun guruhlar va ularning mavzulari bittalab ishlanadi.
+  - **Yetishmagan mavzularni to'ldirish (Smart Theme Completion):**
+    - Kunduzi talaba tomonidan so'ralgan on-demand 1 ta mavzu (masalan, `dark`) keshda bo'lsa, qolgan 2 ta mavzu (`light`, `vibrant`) tungi vaqtda chizilib kanalga yuklanadi.
+    - Agar 2 ta mavzu yuklangan bo'lsa, yetishmayotgan 3-mavzu to'ldiriladi.
+    - Agar barcha 3 ta mavzu keshda va xeshi EduPage bilan bir xil bo'lsa, qayta chizilmasdan darhol o'tkazib yuboriladi (0ms vaqt va 0 MB RAM).
+    - Agar jadval yangi o'zgargan bo'lsa, barcha mavzular yangi xesh bilan qayta chizilib, kanaldagi eski xabarlar tozalab boriladi.
+  - **Xotira va Vaqt chegarasi (Render RAM Safety & 05:00 Cutoff):**
+    - Har bir rasm Telegram kanaliga yuklangach, `imageBuffer = null` qilinib, `global.gc()` orqali V8 va libvips pixel buferlari darhol tozalanadi.
+    - Toshkent vaqti bilan 05:00 bo'lishi bilanoq worker ishini xavfsiz to'xtatadi (`stopHourTashkent: 5` chegarasi va `00 05 * * *` cron).
+  - **Admin boshqaruv buyruqlari:**
+    - `/prewarm_active` — Faol guruhlar rasmlarini to'ldirishni istalgan vaqtda qo'lda ishga tushirish.
+    - `/prewarm_status` — Worker holati, jarayon (processed/total), yuklangan, o'tkazib yuborilgan, xatoliklar, joriy guruh va sarflangan vaqt monitoringi.
+    - `/prewarm_stop` — Ishlayotgan worker jarayonini to'xtatish.
+
+---
+
 ## [1.1.3] — 2026-09-26
 
 ### 🚀 Asosiy Yutuqlar (Highlights)

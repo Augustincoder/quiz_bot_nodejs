@@ -220,6 +220,76 @@ bot.command(["send_schedule_alert", "alert_group"], async (ctx) => {
   }
 });
 
+bot.command(["prewarm_active", "prewarm_start"], async (ctx) => {
+  if (!isAdmin(ctx.from.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
+  const timetableCdnService = require("./src/services/timetableCdnService");
+  const status = timetableCdnService.getWorkerStatus();
+
+  if (status.isRunning) {
+    return ctx.reply(
+      `⚠️ Pre-warm jarayoni ayni paytda allaqachon ishlamoqda!\n\n` +
+      `• Hozirgi guruh: <code>${status.currentGroup || "Noma'lum"}</code> [${status.currentTheme || ""}]\n` +
+      `• Holat: ${status.processed} / ${status.total}\n` +
+      `Batafsil ko'rish uchun: /prewarm_status`,
+      { parse_mode: "HTML" }
+    );
+  }
+
+  const res = await timetableCdnService.prewarmAllTimetables(bot.telegram, {
+    activeOnly: true,
+    delayMs: 2500,
+  });
+
+  if (res.status === "started") {
+    return ctx.reply(
+      "🚀 <b>Faol guruhlar dars jadvali rasmlarini kanalga to'ldirish boshlandi!</b>\n\n" +
+      "• Rejim: Faol talabalar guruhlari (ketma-ket, concurrency=1)\n" +
+      "• Mavzular: 1 yoki 2 ta mavzu yuklangan bo'lsa, qolganlari to'ldiriladi; agar barchasi tayyor bo'lsa o'tkazib yuboriladi.\n" +
+      "• Holatni kuzatish: /prewarm_status\n" +
+      "• To'xtatish: /prewarm_stop",
+      { parse_mode: "HTML" }
+    );
+  } else {
+    return ctx.reply(`⚠️ Prewarm boshlanmadi: ${res.status}`);
+  }
+});
+
+bot.command("prewarm_status", async (ctx) => {
+  if (!isAdmin(ctx.from.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
+  const timetableCdnService = require("./src/services/timetableCdnService");
+  const st = timetableCdnService.getWorkerStatus();
+
+  const isRunning = st.isRunning;
+  const elapsedSec = st.startTime ? Math.round((Date.now() - st.startTime) / 1000) : 0;
+  const elapsedMin = (elapsedSec / 60).toFixed(1);
+  const percent = st.total > 0 ? ((st.processed / st.total) * 100).toFixed(1) : "0";
+
+  const msg =
+    "📊 <b>Timetable CDN Pre-warm Worker holati:</b>\n\n" +
+    `• Holat: <b>${isRunning ? "Ishlamoqda 🟢" : "To'xtatilgan / Kutilmoqda ⚪"}</b>\n` +
+    (st.mode ? `• Rejim: <code>${st.mode}</code>\n` : "") +
+    `• Jarayon: <b>${st.processed || 0} / ${st.total || 0}</b> (${percent}%)\n` +
+    `• Yangi yuklangan: <b>${st.generated || 0} ta</b>\n` +
+    `• O'tkazib yuborilgan (tayyor): <b>${st.skipped || 0} ta</b>\n` +
+    `• Xatolik: <b>${st.failed || 0} ta</b>\n` +
+    (isRunning && st.currentGroup ? `• Hozirgi guruh: <code>${st.currentGroup}</code> [${st.currentTheme || ""}]\n` : "") +
+    (st.startTime ? `• Sarflangan vaqt: <b>${elapsedMin} daqiqa</b>\n` : "") +
+    `\n💡 <i>Har kuni tungi 02:00 dan 05:00 gacha faol guruhlar jadval rasmlari avtomatik to'ldirib boriladi.</i>`;
+
+  return ctx.reply(msg, { parse_mode: "HTML" });
+});
+
+bot.command("prewarm_stop", async (ctx) => {
+  if (!isAdmin(ctx.from.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
+  const timetableCdnService = require("./src/services/timetableCdnService");
+  const stopped = timetableCdnService.stopPrewarmWorker();
+  if (stopped) {
+    return ctx.reply("🛑 <b>Pre-warm jarayonini to'xtatish signali yuborildi.</b>\nJoriy rasm yuklanishi bilan to'xtaydi.", { parse_mode: "HTML" });
+  } else {
+    return ctx.reply("ℹ️ Pre-warm jarayoni ayni paytda ishlamayapti.");
+  }
+});
+
 // ═══ GLOBAL TEXT STATE ROUTER ════════════════════════════════
 bot.on("message", async (ctx, next) => {
   const state = getState(ctx);
@@ -428,8 +498,41 @@ async function main() {
     timezone: "Asia/Tashkent",
   });
 
-  _cronJobs = [morningCron, eveningCron, watcherDayCron, watcherNightCron, watcherSundayCron];
-  logger.info("⏰ Dars jadvali avtomatik tarqatish va Realtime Watcher faollashtirildi");
+  // 6. Tungi 02:00 dan 05:00 gacha faol guruhlar jadval rasmlarini kanalga to'ldirish (Nightly Theme Completion Worker)
+  // Har kuni 02:00 da boshlanadi va 05:00 gacha yetishmagan mavzularni (light/dark/vibrant) bittalab to'ldiradi
+  const nightPrewarmStartCron = cron.schedule("00 02 * * *", () => {
+    logger.info("🌙 Nightly timetable theme completion worker started (02:00 Asia/Tashkent)...");
+    const timetableCdnService = require("./src/services/timetableCdnService");
+    timetableCdnService.prewarmAllTimetables(bot.telegram, {
+      activeOnly: true,
+      stopHourTashkent: 5,
+      delayMs: 2500,
+    }).catch((err) => {
+      logger.error("Nightly timetable prewarm error:", { error: err.message });
+    });
+  }, {
+    timezone: "Asia/Tashkent",
+  });
+
+  // 7. Tungi 05:00 da worker to'xtatiladi (Fail-safe hard cutoff)
+  const nightPrewarmStopCron = cron.schedule("00 05 * * *", () => {
+    logger.info("🛑 Nightly timetable theme completion worker stopping (05:00 Asia/Tashkent cutoff)...");
+    const timetableCdnService = require("./src/services/timetableCdnService");
+    timetableCdnService.stopPrewarmWorker();
+  }, {
+    timezone: "Asia/Tashkent",
+  });
+
+  _cronJobs = [
+    morningCron,
+    eveningCron,
+    watcherDayCron,
+    watcherNightCron,
+    watcherSundayCron,
+    nightPrewarmStartCron,
+    nightPrewarmStopCron,
+  ];
+  logger.info("⏰ Dars jadvali avtomatik tarqatish, Realtime Watcher va Tungi CDN Worker faollashtirildi");
 
   // Initial watcher snapshot baseline in background
   scheduleWatcher.checkScheduleChanges(false).catch((err) => {

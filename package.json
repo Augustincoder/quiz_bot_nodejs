@@ -7,8 +7,8 @@
     "start": "node --expose-gc --max-old-space-size=350 index.js",
     "dev": "nodemon index.js",
     "upload:cdn": "node --expose-gc scripts/upload_all_to_channel.js",
-    "prewarm:cdn": "node scripts/prewarm_timetable_cdn.js",
-    "prewarm:cdn:active": "node scripts/prewarm_timetable_cdn.js --active-only",
+    "prewarm:cdn": "node --expose-gc --max-old-space-size=350 scripts/prewarm_timetable_cdn.js",
+    "prewarm:cdn:active": "node --expose-gc --max-old-space-size=350 scripts/prewarm_timetable_cdn.js --active-only",
     "test": "node scripts/test_group_normalization.js"
   },
   "dependencies": {
