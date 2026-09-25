@@ -20,6 +20,7 @@ const testCases = [
   { input: 'bha56i24', expected: 'BHA-56/24i' },
   { input: 'BHA-56/24', expected: 'BHA-56/24' },
   { input: 'BHA-56', expected: 'BHA-56/24' },
+  { input: '56i', expected: 'BHA-56/24i' },
   { input: 'AT-11r/24', expected: 'AT-11/24r' },
   { input: 'AT-11/24r', expected: 'AT-11/24r' },
   { input: 'at-11r/24', expected: 'AT-11/24r' },

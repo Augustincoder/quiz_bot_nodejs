@@ -1,5 +1,11 @@
 "use strict";
 require("dotenv").config();
+
+// Enforce libvips/sharp limits to stay safely within Render 512MB RAM
+const sharp = require("sharp");
+sharp.cache(false);
+sharp.concurrency(1);
+
 const { Telegraf } = require("telegraf");
 const express = require("express");
 const http = require("http");
@@ -179,8 +185,11 @@ bot.command("testcron_ertaga", async (ctx) => {
 
 bot.command("check_schedule", async (ctx) => {
   if (!isAdmin(ctx.from.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
+  const text = (ctx.message?.text || "").trim();
+  const arg = text.replace(/^\/check_schedule\s*/i, "").trim();
+
   await ctx.reply("🔍 Dars jadvalidagi o'zgarishlar tekshirilmoqda...");
-  const res = await scheduleWatcher.checkScheduleChanges(true);
+  const res = await scheduleWatcher.checkScheduleChanges(arg || true);
   const status = scheduleWatcher.getWatcherStatus();
   const msg =
     "📊 <b>Dars jadvali kuzatuvchisi (Watcher) holati:</b>\n\n" +
@@ -191,6 +200,24 @@ bot.command("check_schedule", async (ctx) => {
     `• Tekshiruv vaqti: <b>${res.durationMs || 0} ms</b>\n` +
     `• Baza tayyor: <b>${status.isBaselineReady ? "Ha ✅" : "Yo'q ⏳"}</b>`;
   return ctx.reply(msg, { parse_mode: "HTML" });
+});
+
+bot.command(["send_schedule_alert", "alert_group"], async (ctx) => {
+  if (!isAdmin(ctx.from.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
+  const text = (ctx.message?.text || "").trim();
+  const groupArg = text.replace(/^\/(send_schedule_alert|alert_group)\s*/i, "").trim();
+
+  if (!groupArg) {
+    return ctx.reply("⚠️ Guruh nomini ko'rsating.\nMasalan: <code>/send_schedule_alert 56i</code> yoki <code>/send_schedule_alert BHA-56/24i</code>", { parse_mode: "HTML" });
+  }
+
+  await ctx.reply(`⏳ "<b>${groupArg}</b>" guruhi uchun dars jadvali yangilanishi tekshirilmoqda va xabar yuborilmoqda...`, { parse_mode: "HTML" });
+  const res = await scheduleWatcher.forceAlertGroup(groupArg);
+  if (res.success) {
+    return ctx.reply(`✅ <b>${res.groupName}</b> guruhining <b>${res.usersCount} nafar</b> talabasiga dars jadvali yangilanishi haqida xabar muvaffaqiyatli yuborildi!`, { parse_mode: "HTML" });
+  } else {
+    return ctx.reply(`⚠️ Xabar yuborilmadi: ${res.error || "Guruhda ro'yxatdan o'tgan talabalar topilmadi"}.`);
+  }
 });
 
 // ═══ GLOBAL TEXT STATE ROUTER ════════════════════════════════
@@ -357,10 +384,6 @@ async function main() {
   await broadcastQueue.resume();
   await quizTimerQueue.resume();
 
-  // Pre-warm schedule cache in background
-  scheduleService.warmUpCache().catch((err) => {
-    logger.warn('Initial cache warm-up deferred', { error: err.message });
-  });
 
   // Timetable CDN background prewarm (Opt-in only via AUTO_PREWARM_CDN=true to prevent OOM on Render)
   const { TIMETABLE_STORAGE_CHANNEL_ID } = require('./src/config/config');

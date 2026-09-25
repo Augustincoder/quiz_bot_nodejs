@@ -195,6 +195,19 @@ function getCanonicalGroupName(input) {
     }
   }
 
+  // 3b. Suffix match on base names: e.g. "56i" -> matches "BHA56I" -> "BHA-56/24i"
+  if (norm.length >= 2 && /\d/.test(norm)) {
+    const suffixMatches = [];
+    for (const [baseNorm, canonical] of canonicalBase.entries()) {
+      if (baseNorm.endsWith(norm)) {
+        suffixMatches.push(canonical);
+      }
+    }
+    if (suffixMatches.length === 1) {
+      return suffixMatches[0];
+    }
+  }
+
   const normDigits = (norm.match(/\d+/g) || []).join('');
 
   // 4. Fallback: fuzzy typo match (Levenshtein distance <= 2)
@@ -567,10 +580,13 @@ function buildIndexedDatabase(raw, defaultNum) {
     indexingTimeMs: Date.now() - t0,
   });
 
+  if (global.gc) {
+    try { global.gc(); } catch {}
+  }
+
   return {
     defaultNum,
     fetchedAt: Date.now(),
-    raw,
     classesById,
     classesByName,
     classNamesList,

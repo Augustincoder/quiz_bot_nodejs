@@ -203,9 +203,6 @@ async function getOrGenerateTimetablePhoto(telegram, rawClassName, theme = 'dark
               telegram.deleteMessage(TIMETABLE_STORAGE_CHANNEL_ID, cached.channel_message_id).catch(() => {});
             }
 
-            // Asynchronously warm the other 2 themes for this group in background
-            warmRemainingThemesInBackground(telegram, className, rawSchedule, currentScheduleHash, validTheme).catch(() => {});
-
             // Proactively notify enrolled group students if an outdated timetable was refreshed
             if (wasStale) {
               try {
@@ -237,6 +234,9 @@ async function getOrGenerateTimetablePhoto(telegram, rawClassName, theme = 'dark
       };
     } finally {
       inflightRequests.delete(inflightKey);
+      if (global.gc) {
+        try { global.gc(); } catch {}
+      }
     }
   })();
 

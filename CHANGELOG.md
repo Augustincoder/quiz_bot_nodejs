@@ -4,6 +4,26 @@ Barcha muhim o'zgarishlar, yangilanishlar va xavfsizlik yaxshilanishlari ushbu h
 
 ---
 
+## [1.1.2] — 2026-09-25
+
+### 🚀 Asosiy Yutuqlar (Highlights)
+* **Render 512 MB RAM xotirasini optimallashtirish va Crash (OOM) oldini olish:**
+  - `package.json` dagi start buyrug'iga `--expose-gc --max-old-space-size=350` qo'shildi. V8 xotirasi 350 MB dan oshmaydi va operatsion tizim (OOM Killer) botni o'chirib qo'yishi butunlay bartaraf etildi.
+  - Ishga tushishdagi (startup) ortiqcha ikkinchi `scheduleService.warmUpCache()` chaqiruvi olib tashlandi, natijada bir vaqtning o'zida ikkita katta jadval obyektini xotiraga yuklash yo'qotildi (~100 MB heap tejaldi).
+  - `buildIndexedDatabase` dan ortiqcha 5 MB xom JSON jadvallar (`raw`) olib tashlandi va majburiy `global.gc()` chaqiruvi ulandi. Natijada 1,337 ta guruh indekslangandan so'ng umumiy xotira atigi **30 MB Heap / 120 MB RSS** ga tushirildi!
+  - 1,300 dan ortiq talabasi bo'lmagan guruhlar uchun xotirada haftalik to'liq darslar massivini saqlash to'xtatildi, faqat xesh saqlanadi (xotira 90% ga qisqartirildi).
+  - Dars o'zgarganda bir vaqtning o'zida Sharp orqali 15 ta rasmni parallel chizish to'xtatildi. Rasmlar talaba `/hafta` yoki `/jadval` tugmasini bosganida Just-In-Time (JIT) 1 soniyada tayyorlanadi.
+  - `timetableCdnService` dagi foydalanilmaydigan mavzularni (`warmRemainingThemesInBackground`) fonda avtomatik chizish o'chirildi.
+
+* **`56i` (`BHA-56/24i`) uchun dars jadvali xabarnomalarini kafolatli yetkazish:**
+  - `edupageService.getCanonicalGroupName` ga suffiks tekshiruvi qo'shildi: endi `56i`, `bha-56i`, `BHA-56i/24`, `BHA-56/24i` kabi barcha variantlar 100% aniqlik bilan rasmiy `BHA-56/24i` ga yo'naltiriladi.
+  - Xabarnoma yuborilganlik holati rasm keshidan ajratildi (`cache:schedule:last_alerted_hash:*`). Agar talaba `/hafta` orqali yangi rasmni ko'rgan bo'lsa ham, uning guruhiga dars o'zgarishi haqida xabar yuborilmagan bo'lsa (Unalerted schedule version), tizim xabarni albatta yuboradi.
+  - Maxsus admin buyruqlari qo'shildi:
+    - `/send_schedule_alert 56i` yoki `/alert_group BHA-56/24i` — istalgan guruh talabalariga zudlik bilan dars o'zgarishi xabarini majburiy yuborish.
+    - `/check_schedule force` yoki `/check_schedule 56i` — butun bazani yoki aniq guruhni to'liq tekshirish va xabarlarni chiqarish.
+
+---
+
 ## [1.1.1] — 2026-09-25
 
 ### 🚀 Asosiy Yutuqlar (Highlights)
