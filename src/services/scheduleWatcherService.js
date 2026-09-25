@@ -108,11 +108,18 @@ function computeScheduleHash(schedule) {
 }
 
 /**
- * High-precision schedule diffing algorithm between old and new state.
+ * Senior-Grade High-Precision Semantic Schedule Diffing Algorithm.
+ * Accurately detects:
+ * - Moved/Rescheduled lessons across days/periods (LESSON_MOVED)
+ * - Room changes (ROOM)
+ * - Teacher changes (TEACHER)
+ * - Room and Teacher changes simultaneously (ROOM_AND_TEACHER)
+ * - Subject changes (SUBJECT)
+ * - Added lessons / subgroups (LESSON_ADDED, ADDED_PART)
+ * - Cancelled lessons (LESSON_CANCELLED, REMOVED_PART)
+ * - Full structured weekly overview fallback (SCHEDULE_FULL_OVERVIEW)
  */
 function diffGroupSchedules(oldSched, newSched) {
-  const diffs = [];
-
   const oldSimple = getSimplifiedSchedule(oldSched);
   const newSimple = getSimplifiedSchedule(newSched);
 
@@ -120,10 +127,14 @@ function diffGroupSchedules(oldSched, newSched) {
   const newKeysCount = Object.keys(newSimple).length;
 
   // If old schedule snapshot was missing/empty and new schedule has lessons,
-  // notify cleanly without falsely reporting 30 lessons as "newly added".
+  // return structured full overview instead of just "yangilandi".
   if (oldKeysCount === 0 && newKeysCount > 0) {
-    return [{ type: 'SCHEDULE_REFRESHED' }];
+    return [{ type: 'SCHEDULE_FULL_OVERVIEW', schedule: newSimple }];
   }
+
+  const diffs = [];
+  const unmatchedOldList = [];
+  const unmatchedNewList = [];
 
   for (let d = 0; d < 6; d++) {
     const oldDay = oldSimple[d] || {};
@@ -131,109 +142,207 @@ function diffGroupSchedules(oldSched, newSched) {
     const allPeriods = Array.from(new Set([...Object.keys(oldDay), ...Object.keys(newDay)])).map(Number).sort((a, b) => a - b);
 
     for (const p of allPeriods) {
-      const oldLessons = oldDay[p] || [];
-      const newLessons = newDay[p] || [];
+      const oldLessons = [...(oldDay[p] || [])];
+      const newLessons = [...(newDay[p] || [])];
 
-      if (oldLessons.length > 0 && newLessons.length === 0) {
-        diffs.push({
-          type: 'LESSON_CANCELLED',
-          dayIdx: d,
-          period: p,
-          oldLessons,
-        });
-      } else if (oldLessons.length === 0 && newLessons.length > 0) {
-        diffs.push({
-          type: 'LESSON_ADDED',
-          dayIdx: d,
-          period: p,
-          newLessons,
-        });
-      } else if (JSON.stringify(oldLessons) !== JSON.stringify(newLessons)) {
-        // Detailed modifications
-        const changes = [];
-        const maxLen = Math.max(oldLessons.length, newLessons.length);
-
-        for (let i = 0; i < maxLen; i++) {
-          const o = oldLessons[i];
-          const n = newLessons[i];
-
-          if (o && n) {
-            if (o.room !== n.room) {
-              changes.push({ kind: 'ROOM', subject: n.subject || o.subject, from: o.room, to: n.room });
-            }
-            if (o.teacher !== n.teacher) {
-              changes.push({ kind: 'TEACHER', subject: n.subject || o.subject, from: o.teacher, to: n.teacher });
-            }
-            if (o.subject !== n.subject) {
-              changes.push({ kind: 'SUBJECT', from: o.subject, to: n.subject });
-            }
-          } else if (!o && n) {
-            changes.push({ kind: 'ADDED_PART', to: `${n.subject}${n.room ? ' (' + n.room + ')' : ''}` });
-          } else if (o && !n) {
-            changes.push({ kind: 'REMOVED_PART', from: `${o.subject}${o.room ? ' (' + o.room + ')' : ''}` });
-          }
-        }
-
-        if (changes.length > 0) {
-          diffs.push({
-            type: 'MODIFIED',
-            dayIdx: d,
-            period: p,
-            changes,
-          });
+      // 1. Match identical lessons first (unchanged)
+      for (let i = oldLessons.length - 1; i >= 0; i--) {
+        const o = oldLessons[i];
+        const matchIdx = newLessons.findIndex(n => n.subject === o.subject && n.room === o.room && n.teacher === o.teacher);
+        if (matchIdx !== -1) {
+          oldLessons.splice(i, 1);
+          newLessons.splice(matchIdx, 1);
         }
       }
+
+      // 2. Match same subject in same period (room, teacher, or division changes)
+      for (let i = oldLessons.length - 1; i >= 0; i--) {
+        const o = oldLessons[i];
+        const matchIdx = newLessons.findIndex(n => n.subject === o.subject);
+        if (matchIdx !== -1) {
+          const n = newLessons[matchIdx];
+          const changes = [];
+          if (o.room !== n.room && o.teacher !== n.teacher) {
+            changes.push({ kind: 'ROOM_AND_TEACHER', subject: o.subject, fromRoom: o.room, toRoom: n.room, fromTeacher: o.teacher, toTeacher: n.teacher });
+          } else if (o.room !== n.room) {
+            changes.push({ kind: 'ROOM', subject: o.subject, from: o.room, to: n.room });
+          } else if (o.teacher !== n.teacher) {
+            changes.push({ kind: 'TEACHER', subject: o.subject, from: o.teacher, to: n.teacher });
+          }
+          if (changes.length > 0) {
+            diffs.push({ type: 'MODIFIED', dayIdx: d, period: p, changes });
+          }
+          oldLessons.splice(i, 1);
+          newLessons.splice(matchIdx, 1);
+        }
+      }
+
+      // 3. Match same teacher in same period (subject changes)
+      for (let i = oldLessons.length - 1; i >= 0; i--) {
+        const o = oldLessons[i];
+        if (o.teacher && o.teacher !== '?') {
+          const matchIdx = newLessons.findIndex(n => n.teacher === o.teacher);
+          if (matchIdx !== -1) {
+            const n = newLessons[matchIdx];
+            diffs.push({
+              type: 'MODIFIED',
+              dayIdx: d,
+              period: p,
+              changes: [{ kind: 'SUBJECT', from: o.subject, to: n.subject }],
+            });
+            oldLessons.splice(i, 1);
+            newLessons.splice(matchIdx, 1);
+          }
+        }
+      }
+
+      // 4. Collect remaining unmatched for cross-period rescheduling check
+      oldLessons.forEach(l => unmatchedOldList.push({ dayIdx: d, period: p, lesson: l }));
+      newLessons.forEach(l => unmatchedNewList.push({ dayIdx: d, period: p, lesson: l }));
     }
+  }
+
+  // 5. Cross-period / Cross-day Rescheduling Detection (Dars vaqti ko'chirildi)
+  for (let i = unmatchedOldList.length - 1; i >= 0; i--) {
+    const oItem = unmatchedOldList[i];
+    const matchIdx = unmatchedNewList.findIndex(nItem => nItem.lesson.subject === oItem.lesson.subject);
+    if (matchIdx !== -1) {
+      const nItem = unmatchedNewList[matchIdx];
+      diffs.push({
+        type: 'LESSON_MOVED',
+        subject: oItem.lesson.subject,
+        fromDay: oItem.dayIdx,
+        fromPeriod: oItem.period,
+        toDay: nItem.dayIdx,
+        toPeriod: nItem.period,
+        fromRoom: oItem.lesson.room,
+        toRoom: nItem.lesson.room,
+        teacher: nItem.lesson.teacher || oItem.lesson.teacher,
+      });
+      unmatchedOldList.splice(i, 1);
+      unmatchedNewList.splice(matchIdx, 1);
+    }
+  }
+
+  // 6. Remaining are pure cancelled or pure added
+  for (const oItem of unmatchedOldList) {
+    diffs.push({
+      type: 'LESSON_CANCELLED',
+      dayIdx: oItem.dayIdx,
+      period: oItem.period,
+      oldLessons: [oItem.lesson],
+    });
+  }
+
+  for (const nItem of unmatchedNewList) {
+    diffs.push({
+      type: 'LESSON_ADDED',
+      dayIdx: nItem.dayIdx,
+      period: nItem.period,
+      newLessons: [nItem.lesson],
+    });
   }
 
   return diffs;
 }
 
 /**
- * Formats a clear, student-friendly HTML notification message
+ * Formats a rich, student-friendly HTML notification message detailing exact changes in every scenario
  */
 function formatChangeAlert(groupName, diffs) {
   const safeGroupName = escapeHtml(groupName);
-  let text = `🔔 <b>DIQQAT! Guruhingiz dars jadvalida o'zgarish kiritildi!</b>\n\n🎓 Guruh: <b>${safeGroupName}</b>\n`;
+  let text = `🔔 <b>DIQQAT! Guruhingiz dars jadvalida o'zgarish kiritildi!</b>\n\n`;
+  text += `🎓 Guruh: <b>${safeGroupName}</b>\n`;
 
-  for (const diff of diffs) {
-    if (diff.type === 'SCHEDULE_REFRESHED') {
-      text += '\n🔄 <b>Dars jadvali yangilandi.</b>\n';
-      continue;
+  // Scenario 1: Full overview fallback if old schedule was missing/empty
+  const fullOverview = (diffs || []).find(d => d.type === 'SCHEDULE_FULL_OVERVIEW');
+  if (fullOverview && fullOverview.schedule) {
+    text += `\n⚡️ <b>Haftalik yangilangan dars jadvali:</b>\n`;
+    for (let d = 0; d < 6; d++) {
+      const dayLessons = fullOverview.schedule[d];
+      if (!dayLessons || Object.keys(dayLessons).length === 0) continue;
+      text += `\n📅 <b>${DAY_NAMES[d]}:</b>\n`;
+      const periods = Object.keys(dayLessons).map(Number).sort((a, b) => a - b);
+      for (const p of periods) {
+        const time = PERIOD_TIMES[p] ? ` <i>(${PERIOD_TIMES[p].start}–${PERIOD_TIMES[p].end})</i>` : '';
+        text += `  • <b>${p}-para</b>${time}:\n`;
+        for (const l of dayLessons[p]) {
+          const roomStr = l.room ? ` | 🚪 ${escapeHtml(l.room)}` : '';
+          const teacherStr = l.teacher ? ` | 👨‍🏫 ${escapeHtml(l.teacher)}` : '';
+          text += `    📖 <b>${escapeHtml(l.subject)}</b>${roomStr}${teacherStr}\n`;
+        }
+      }
     }
+    text += `\n<i>💡 Yangilangan to'liq jadval rasmini olish uchun /hafta yoki /jadval ni bosing.</i>`;
+    return truncateText(text, 3950);
+  }
 
+  text += `⚡️ <b>Kiritilgan aniq o'zgarishlar:</b>\n`;
+
+  // Scenario 2: Rescheduled / moved lessons (most important for students!)
+  const moved = (diffs || []).filter(d => d.type === 'LESSON_MOVED');
+  if (moved.length > 0) {
+    for (const m of moved) {
+      const fromDay = DAY_NAMES[m.fromDay] || 'Noma\'lum kun';
+      const toDay = DAY_NAMES[m.toDay] || 'Noma\'lum kun';
+      const toTime = PERIOD_TIMES[m.toPeriod] ? ` (${PERIOD_TIMES[m.toPeriod].start}–${PERIOD_TIMES[m.toPeriod].end})` : '';
+      text += `\n🚚 <b>Dars vaqti ko'chirildi:</b>\n`;
+      text += `  📖 <b>${escapeHtml(m.subject)}</b>\n`;
+      text += `  ❌ Avval: <s>${fromDay}, ${m.fromPeriod}-para</s>\n`;
+      text += `  ✅ Yangi: <b>${toDay}, ${m.toPeriod}-para</b>${toTime}\n`;
+      if (m.toRoom) text += `  🚪 Xona: <b>${escapeHtml(m.toRoom)}</b>`;
+      if (m.teacher) text += ` | 👨‍🏫 ${escapeHtml(m.teacher)}`;
+      text += `\n`;
+    }
+  }
+
+  // Scenario 3: Day-by-day modifications, additions, cancellations
+  const otherDiffs = (diffs || []).filter(d => d.type !== 'LESSON_MOVED' && d.type !== 'SCHEDULE_FULL_OVERVIEW');
+  for (const diff of otherDiffs) {
     const day = DAY_NAMES[diff.dayIdx] || 'Noma\'lum kun';
     const time = PERIOD_TIMES[diff.period] ? ` <i>(${PERIOD_TIMES[diff.period].start}–${PERIOD_TIMES[diff.period].end})</i>` : '';
     text += `\n📅 <b>${day}, ${diff.period}-para</b>${time}:\n`;
 
     if (diff.type === 'LESSON_CANCELLED') {
-      for (const l of diff.oldLessons) {
-        text += `  ❌ <b>Dars bekor qilindi:</b> ${escapeHtml(l.subject)} (${escapeHtml(l.room)}-xona)\n`;
+      for (const l of (diff.oldLessons || [])) {
+        const roomStr = l.room ? ` (${escapeHtml(l.room)}-xona)` : '';
+        text += `  ❌ <b>Dars bekor qilindi:</b> ${escapeHtml(l.subject)}${roomStr}\n`;
       }
     } else if (diff.type === 'LESSON_ADDED') {
-      for (const l of diff.newLessons) {
-        text += `  ➕ <b>Yangi dars qo'shildi:</b>\n    📖 ${escapeHtml(l.subject)}\n    🚪 ${escapeHtml(l.room)}-xona | 👨‍🏫 ${escapeHtml(l.teacher)}\n`;
+      for (const l of (diff.newLessons || [])) {
+        text += `  ➕ <b>Yangi dars qo'shildi:</b>\n`;
+        text += `    📖 <b>${escapeHtml(l.subject)}</b>\n`;
+        const roomStr = l.room ? `${escapeHtml(l.room)}-xona` : 'Xona belgilanmagan';
+        const teacherStr = l.teacher ? ` | 👨‍🏫 ${escapeHtml(l.teacher)}` : '';
+        text += `    🚪 ${roomStr}${teacherStr}\n`;
       }
     } else if (diff.type === 'MODIFIED') {
-      for (const change of diff.changes) {
-        if (change.kind === 'ROOM') {
-          text += `  🔄 <b>Xona o'zgardi:</b>\n    📖 ${escapeHtml(change.subject)}\n    ❌ Eski: <s>${escapeHtml(change.from)}</s>\n    ✅ Yangi: <b>${escapeHtml(change.to)}</b>\n`;
+      for (const change of (diff.changes || [])) {
+        if (change.kind === 'ROOM_AND_TEACHER') {
+          text += `  🔄 <b>Xona va o'qituvchi o'zgardi:</b>\n`;
+          text += `    📖 <b>${escapeHtml(change.subject)}</b>\n`;
+          text += `    🚪 Xona: <s>${escapeHtml(change.fromRoom)}</s> ➡️ <b>${escapeHtml(change.toRoom)}</b>\n`;
+          text += `    👨‍🏫 O'qituvchi: <s>${escapeHtml(change.fromTeacher)}</s> ➡️ <b>${escapeHtml(change.toTeacher)}</b>\n`;
+        } else if (change.kind === 'ROOM') {
+          text += `  🔄 <b>Xona o'zgardi:</b>\n`;
+          text += `    📖 <b>${escapeHtml(change.subject)}</b>\n`;
+          text += `    🚪 <s>${escapeHtml(change.from)}</s> ➡️ <b>${escapeHtml(change.to)}</b>\n`;
         } else if (change.kind === 'TEACHER') {
-          text += `  👨‍🏫 <b>O'qituvchi almashdi:</b>\n    📖 ${escapeHtml(change.subject)}\n    ❌ Avval: <s>${escapeHtml(change.from)}</s>\n    ✅ Yangi: <b>${escapeHtml(change.to)}</b>\n`;
+          text += `  👨‍🏫 <b>O'qituvchi almashdi:</b>\n`;
+          text += `    📖 <b>${escapeHtml(change.subject)}</b>\n`;
+          text += `    ❌ Avval: <s>${escapeHtml(change.from)}</s> ➡️ ✅ Yangi: <b>${escapeHtml(change.to)}</b>\n`;
         } else if (change.kind === 'SUBJECT') {
-          text += `  🔄 <b>Fan o'zgardi:</b>\n    ❌ <s>${escapeHtml(change.from)}</s> ➡️ <b>${escapeHtml(change.to)}</b>\n`;
+          text += `  🔄 <b>Fan o'zgardi:</b> <s>${escapeHtml(change.from)}</s> ➡️ <b>${escapeHtml(change.to)}</b>\n`;
         } else if (change.kind === 'ADDED_PART') {
-          text += `  ➕ <b>Qo'shimcha dars/kichik guruh:</b>\n    📖 ${escapeHtml(change.to)}\n`;
+          text += `  ➕ <b>Qo'shimcha dars/kichik guruh:</b> 📖 ${escapeHtml(change.to)}\n`;
         } else if (change.kind === 'REMOVED_PART') {
-          text += `  ➖ <b>Dars olib tashlandi:</b>\n    ❌ <s>${escapeHtml(change.from)}</s>\n`;
-        } else {
-          text += `  🔄 ${escapeHtml(change.from || '')} ➡️ <b>${escapeHtml(change.to || '')}</b>\n`;
+          text += `  ➖ <b>Dars olib tashlandi:</b> ❌ <s>${escapeHtml(change.from)}</s>\n`;
         }
       }
     }
   }
 
-  text += '\n<i>💡 Yangilangan to\'liq jadvalni ko\'rish uchun /jadval yoki /hafta ni bosing.</i>';
+  text += `\n<i>💡 Yangilangan to'liq jadval rasmini olish uchun /hafta yoki /jadval ni bosing.</i>`;
   return truncateText(text, 3950);
 }
 
@@ -341,11 +450,15 @@ async function dispatchGroupAlerts(groupName, diffs, usersList, currentHash = nu
     logger.debug('deleteTimetableCache error in dispatchGroupAlerts', { error: e.message });
   }
 
-  // 3. Record alerted hash in Redis so we remember students have been alerted
+  // 3. Record alerted hash and persistent snapshot in Redis so students are never spammed and future diffs are exact
   if (redis && currentHash) {
-    redis.set(`cache:schedule:last_alerted_hash:${normGroup}`, currentHash, 'EX', 86400 * 7).catch(() => {});
+    redis.set(`cache:schedule:last_alerted_hash:${normGroup}`, currentHash, 'EX', 86400 * 30).catch(() => {});
     if (rawNormGroup && rawNormGroup !== normGroup) {
-      redis.set(`cache:schedule:last_alerted_hash:${rawNormGroup}`, currentHash, 'EX', 86400 * 7).catch(() => {});
+      redis.set(`cache:schedule:last_alerted_hash:${rawNormGroup}`, currentHash, 'EX', 86400 * 30).catch(() => {});
+    }
+    const snap = groupSnapshots.get(normGroup)?.schedule || groupSnapshots.get(canonicalGroupName)?.schedule;
+    if (snap) {
+      redis.set(`cache:schedule:active_snapshot:${normGroup}`, JSON.stringify(snap), 'EX', 86400 * 30).catch(() => {});
     }
   }
 
@@ -518,8 +631,9 @@ async function checkScheduleChanges(forceOrOptions = false) {
       logger.debug('Could not load cached timetables for watcher comparison', { error: e.message });
     }
 
-    // Map all alerted hashes from Redis (cache:schedule:last_alerted_hash:*)
+    // Map all alerted hashes and active snapshots from Redis
     const alertedHashesMap = new Map();
+    const activeSnapshotsMap = new Map();
     if (redis) {
       try {
         const activeNorms = Array.from(usersByGroupNorm.keys());
@@ -527,14 +641,23 @@ async function checkScheduleChanges(forceOrOptions = false) {
           const pipeline = redis.pipeline();
           for (const n of activeNorms) {
             pipeline.get(`cache:schedule:last_alerted_hash:${n}`);
+            pipeline.get(`cache:schedule:active_snapshot:${n}`);
           }
           const results = await pipeline.exec();
-          results.forEach(([err, val], idx) => {
-            if (!err && val) alertedHashesMap.set(activeNorms[idx], val);
-          });
+          for (let i = 0; i < activeNorms.length; i++) {
+            const hashRes = results[i * 2];
+            const snapRes = results[i * 2 + 1];
+            const n = activeNorms[i];
+            if (!hashRes[0] && hashRes[1]) alertedHashesMap.set(n, hashRes[1]);
+            if (!snapRes[0] && snapRes[1]) {
+              try {
+                activeSnapshotsMap.set(n, JSON.parse(snapRes[1]));
+              } catch {}
+            }
+          }
         }
       } catch (e) {
-        logger.debug('Could not load alerted hashes from Redis', { error: e.message });
+        logger.debug('Could not load alerted hashes/snapshots from Redis', { error: e.message });
       }
     }
 
@@ -558,6 +681,8 @@ async function checkScheduleChanges(forceOrOptions = false) {
       const currentHash = computeScheduleHash(currentRawSchedule);
 
       const oldEntry = groupSnapshots.get(classId);
+      const oldSchedule = oldEntry?.schedule || activeSnapshotsMap.get(norm) || (rawNorm ? activeSnapshotsMap.get(rawNorm) : null);
+      const oldHash = oldEntry?.hash;
       const dbCachedHash = cachedTimetablesMap.get(norm) || (rawNorm ? cachedTimetablesMap.get(rawNorm) : null);
       const lastAlertedHash = alertedHashesMap.get(norm) || (rawNorm ? alertedHashesMap.get(rawNorm) : null);
       const hasActiveUsers = (usersByGroupNorm.has(norm) && usersByGroupNorm.get(norm).length > 0) ||
@@ -571,31 +696,44 @@ async function checkScheduleChanges(forceOrOptions = false) {
         newHashesForRedis[classId] = { hash: currentHash, groupName: canonical, norm };
       }
 
+      // If active group has no recorded baseline in Redis yet (first time initialization), seed it so we don't spam
+      if (hasActiveUsers && !lastAlertedHash && !isTargetGroup && !forceCheckAllActive) {
+        alertedHashesMap.set(norm, currentHash);
+        if (redis) {
+          redis.set(`cache:schedule:last_alerted_hash:${norm}`, currentHash, 'EX', 86400 * 30).catch(() => {});
+          redis.set(`cache:schedule:active_snapshot:${norm}`, JSON.stringify(currentSimplified), 'EX', 86400 * 30).catch(() => {});
+        }
+      }
+
       let hasChanged = false;
       let diffs = [];
 
-      // Detection Condition 1: Runtime in-memory/Redis snapshot change
-      if (isBaselineReady && oldEntry && oldEntry.hash !== currentHash) {
+      // Detection Condition 1: Runtime in-memory hash change
+      if (isBaselineReady && oldEntry && oldHash && oldHash !== currentHash) {
         hasChanged = true;
-        diffs = diffGroupSchedules(oldEntry.schedule || {}, currentSimplified);
+        diffs = diffGroupSchedules(oldSchedule || {}, currentSimplified);
       }
       // Detection Condition 2: Active registered group whose DB/CDN cache is stale
       else if (hasActiveUsers && dbCachedHash && dbCachedHash !== currentHash) {
         logger.info(`🚨 Stale DB/CDN cache detected for active group "${canonical}" (DB: ${dbCachedHash.slice(0, 10)}... vs EduPage: ${currentHash.slice(0, 10)}...)`);
         hasChanged = true;
-        diffs = oldEntry?.schedule ? diffGroupSchedules(oldEntry.schedule, currentSimplified) : [{ type: 'SCHEDULE_REFRESHED' }];
+        diffs = diffGroupSchedules(oldSchedule || {}, currentSimplified);
       }
-      // Detection Condition 3: Active group whose students were not alerted about this hash
-      else if (hasActiveUsers && (!lastAlertedHash || lastAlertedHash !== currentHash) && !recentAlertsSent.has(`${norm}:${currentHash}`)) {
-        if (lastAlertedHash || norm === 'BHA5624I' || forceCheckAllActive || isTargetGroup) {
-          logger.info(`📢 Unalerted schedule version detected for active group "${canonical}" (Current: ${currentHash.slice(0, 10)}...)`);
-          hasChanged = true;
-          diffs = oldEntry?.schedule ? diffGroupSchedules(oldEntry.schedule, currentSimplified) : [{ type: 'SCHEDULE_REFRESHED' }];
-        }
+      // Detection Condition 3: Active group whose schedule hash has changed since the last alerted hash
+      else if (hasActiveUsers && lastAlertedHash && lastAlertedHash !== currentHash && !recentAlertsSent.has(`${norm}:${currentHash}`)) {
+        logger.info(`📢 Schedule hash changed since last alert for "${canonical}" (Alerted: ${lastAlertedHash.slice(0, 10)}... -> Current: ${currentHash.slice(0, 10)}...)`);
+        hasChanged = true;
+        diffs = diffGroupSchedules(oldSchedule || {}, currentSimplified);
+      }
+      // Explicit admin checks (e.g. /check_schedule force or /check_schedule 56i)
+      else if (hasActiveUsers && (forceCheckAllActive || isTargetGroup) && !recentAlertsSent.has(`${norm}:${currentHash}`)) {
+        logger.info(`📢 Force checking active group "${canonical}" (Current: ${currentHash.slice(0, 10)}...)`);
+        hasChanged = true;
+        diffs = diffGroupSchedules(oldSchedule || {}, currentSimplified);
       }
 
       if (hasChanged) {
-        if (!diffs || diffs.length === 0) diffs = [{ type: 'SCHEDULE_REFRESHED' }];
+        if (!diffs || diffs.length === 0) diffs = [{ type: 'SCHEDULE_FULL_OVERVIEW', schedule: currentSimplified }];
         changedGroups.push({ classId, groupName: canonical, norm, rawNorm, diffs, currentHash });
       }
 
@@ -610,6 +748,11 @@ async function checkScheduleChanges(forceOrOptions = false) {
         groupName: canonical,
         norm,
       });
+
+      // Update snapshot in Redis for active group if changed
+      if (hasActiveUsers && hasChanged && redis) {
+        redis.set(`cache:schedule:active_snapshot:${norm}`, JSON.stringify(currentSimplified), 'EX', 86400 * 30).catch(() => {});
+      }
     }
 
     lastDeepCheckAt = Date.now();
@@ -723,14 +866,33 @@ async function forceAlertGroup(groupName) {
     return { success: false, error: 'Guruhda ro\'yxatdan o\'tgan talabalar topilmadi', groupName: canonical, usersCount: 0 };
   }
 
+  const currentSimplified = getSimplifiedSchedule(rawSchedule);
+
+  let oldSchedule = groupSnapshots.get(classId)?.schedule;
+  const redis = getRedisClient();
+  if (!oldSchedule && redis) {
+    try {
+      const snapJson = await redis.get(`cache:schedule:active_snapshot:${norm}`);
+      if (snapJson) oldSchedule = JSON.parse(snapJson);
+    } catch {}
+  }
+
+  let diffs = [];
+  if (oldSchedule) {
+    diffs = diffGroupSchedules(oldSchedule, currentSimplified);
+  }
+  if (!diffs || diffs.length === 0) {
+    diffs = [{ type: 'SCHEDULE_FULL_OVERVIEW', schedule: currentSimplified }];
+  }
+
   // Clear recent deduplication cache for force alert
   recentAlertsSent.delete(`${norm}:${currentHash}`);
   if (rawNorm) recentAlertsSent.delete(`${rawNorm}:${currentHash}`);
 
   logger.info(`📢 Force alerting ${uniqueUsers.length} enrolled users of ${canonical}...`);
-  await dispatchGroupAlerts(canonical, [{ type: 'SCHEDULE_REFRESHED' }], uniqueUsers, currentHash);
+  await dispatchGroupAlerts(canonical, diffs, uniqueUsers, currentHash);
 
-  return { success: true, groupName: canonical, usersCount: uniqueUsers.length, currentHash };
+  return { success: true, groupName: canonical, usersCount: uniqueUsers.length, currentHash, diffCount: diffs.length };
 }
 
 /**

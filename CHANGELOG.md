@@ -4,6 +4,24 @@ Barcha muhim o'zgarishlar, yangilanishlar va xavfsizlik yaxshilanishlari ushbu h
 
 ---
 
+## [1.1.3] — 2026-09-26
+
+### 🚀 Asosiy Yutuqlar (Highlights)
+* **Kengaytirilgan Semantik Dars Jadvali Diff Algoritmi (`diffGroupSchedules`):**
+  - Jadvaldagi o'zgarishlar faqat "Dars jadvali yangilandi" deb emas, balki barcha senariylar bo'yicha eng mayda tafsilotlarigacha ajratib ko'rsatiladi:
+    - 🚚 **Dars ko'chirilishi (`LESSON_MOVED`):** Dars bir kundan yoki paradan boshqa kunga ko'chirilganda (masalan, Dushanba 6-paradan Seshanba 2-paraga) avtomatik aniqlanadi va chiroyli formatda ko'rsatiladi.
+    - 🔄 **Xona va o'qituvchi o'zgarishi (`ROOM`, `TEACHER`, `ROOM_AND_TEACHER`):** Eski va yangi xona / o'qituvchilar ustidan chizilgan formatda aniq ko'rsatiladi.
+    - 🔄 **Fan o'zgarishi (`SUBJECT`):** Bir vaqtda o'qituvchi yoki para doirasida fan almashishi aniqlanadi.
+    - ➕ **Yangi darslar qo'shilishi (`LESSON_ADDED`):** Kun, para va xonasi bilan to'liq bayon etiladi.
+    - ❌ **Bekor qilingan darslar (`LESSON_CANCELLED`):** Aniq qaysi dars bekor bo'lgani xabarda ta'kidlanadi.
+    - 📋 **Haftalik to'liq taqdimot (`SCHEDULE_FULL_OVERVIEW`):** Agar oldingi darslar xotirada bo'lmagan holatda ham, talabaga quruq "yangilandi" emas, balki o'sha guruhning butun haftalik jadvali (kunlar, paralar, xonalar, o'qituvchilar) to'liq ro'yxat qilib beriladi.
+* **Qayta xabar yuborishning oldini olish (Strict Zero-Spam Deduplication):**
+  - Har bir faol guruh uchun Redis'da `cache:schedule:last_alerted_hash:${norm}` va `cache:schedule:active_snapshot:${norm}` 30 kunlik muddat bilan saqlanadi.
+  - Bir marta xabar olgan guruhga qayta bot ishga tushganda yoki navbatdagi tekshiruvlarda aynan o'sha xesh bo'yicha hech qachon takroriy xabar bormaydi.
+  - Faqat va faqat EduPage'da jadval qaytadan rasman o'zgargandagina yangi diff chiqarilib, talabalarga xabar beriladi.
+
+---
+
 ## [1.1.2] — 2026-09-25
 
 ### 🚀 Asosiy Yutuqlar (Highlights)
