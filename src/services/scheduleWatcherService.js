@@ -278,11 +278,13 @@ function formatChangeAlert(groupName, diffs) {
   }
 
   text += `⚡️ <b>Kiritilgan aniq o'zgarishlar:</b>\n`;
+  let changesFormatted = 0;
 
   // Scenario 2: Rescheduled / moved lessons (most important for students!)
   const moved = (diffs || []).filter(d => d.type === 'LESSON_MOVED');
   if (moved.length > 0) {
     for (const m of moved) {
+      changesFormatted++;
       const fromDay = DAY_NAMES[m.fromDay] || 'Noma\'lum kun';
       const toDay = DAY_NAMES[m.toDay] || 'Noma\'lum kun';
       const toTime = PERIOD_TIMES[m.toPeriod] ? ` (${PERIOD_TIMES[m.toPeriod].start}–${PERIOD_TIMES[m.toPeriod].end})` : '';
@@ -304,11 +306,13 @@ function formatChangeAlert(groupName, diffs) {
     text += `\n📅 <b>${day}, ${diff.period}-para</b>${time}:\n`;
 
     if (diff.type === 'LESSON_CANCELLED') {
+      changesFormatted++;
       for (const l of (diff.oldLessons || [])) {
         const roomStr = l.room ? ` (${escapeHtml(l.room)}-xona)` : '';
         text += `  ❌ <b>Dars bekor qilindi:</b> ${escapeHtml(l.subject)}${roomStr}\n`;
       }
     } else if (diff.type === 'LESSON_ADDED') {
+      changesFormatted++;
       for (const l of (diff.newLessons || [])) {
         text += `  ➕ <b>Yangi dars qo'shildi:</b>\n`;
         text += `    📖 <b>${escapeHtml(l.subject)}</b>\n`;
@@ -318,6 +322,7 @@ function formatChangeAlert(groupName, diffs) {
       }
     } else if (diff.type === 'MODIFIED') {
       for (const change of (diff.changes || [])) {
+        changesFormatted++;
         if (change.kind === 'ROOM_AND_TEACHER') {
           text += `  🔄 <b>Xona va o'qituvchi o'zgardi:</b>\n`;
           text += `    📖 <b>${escapeHtml(change.subject)}</b>\n`;
@@ -340,6 +345,10 @@ function formatChangeAlert(groupName, diffs) {
         }
       }
     }
+  }
+
+  if (changesFormatted === 0) {
+    text += `  🔄 <b>Dars jadvali yangilandi va qayta tasdiqlandi.</b>\n`;
   }
 
   text += `\n<i>💡 Yangilangan to'liq jadval rasmini olish uchun /hafta yoki /jadval ni bosing.</i>`;
@@ -474,7 +483,9 @@ async function dispatchGroupAlerts(groupName, diffs, usersList, currentHash = nu
 async function notifyGroupScheduleChanged(groupName, newHash) {
   const canonicalGroupName = edupageService.getCanonicalGroupName(groupName) || groupName;
   const normGroup = normalizeGroupName(canonicalGroupName);
-  if (newHash && recentAlertsSent.has(`${normGroup}:${newHash}`)) {
+  const rawNormGroup = normalizeGroupName(groupName);
+
+  if (newHash && (recentAlertsSent.has(`${normGroup}:${newHash}`) || (rawNormGroup && recentAlertsSent.has(`${rawNormGroup}:${newHash}`)))) {
     return;
   }
 
@@ -496,14 +507,34 @@ async function notifyGroupScheduleChanged(groupName, newHash) {
     const uCanonical = edupageService.getCanonicalGroupName(u.class_name) || u.class_name;
     const uNorm = normalizeGroupName(uCanonical);
     const uRawNorm = normalizeGroupName(u.class_name);
-    return uNorm === normGroup || uRawNorm === normGroup;
+    return uNorm === normGroup || uRawNorm === normGroup || (rawNormGroup && (uNorm === rawNormGroup || uRawNorm === rawNormGroup));
   });
 
   const matchingUsers = Array.from(new Map(rawUsers.map(u => [String(u.telegram_id), u])).values());
   if (matchingUsers.length === 0) return;
 
+  let oldSchedule = null;
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      const snapJson = await redis.get(`cache:schedule:active_snapshot:${normGroup}`);
+      if (snapJson) oldSchedule = JSON.parse(snapJson);
+    } catch {}
+  }
+
+  const rawSchedule = await edupageService.getRawSchedule(canonicalGroupName);
+  const currentSimplified = getSimplifiedSchedule(rawSchedule);
+
+  let diffs = [];
+  if (oldSchedule) {
+    diffs = diffGroupSchedules(oldSchedule, currentSimplified);
+  }
+  if (!diffs || diffs.length === 0) {
+    diffs = [{ type: 'SCHEDULE_FULL_OVERVIEW', schedule: currentSimplified }];
+  }
+
   logger.info(`📢 Proactively dispatching alerts to ${matchingUsers.length} enrolled students of ${canonicalGroupName} (triggered by on-demand stale refresh).`);
-  await dispatchGroupAlerts(canonicalGroupName, [{ type: 'SCHEDULE_REFRESHED' }], matchingUsers, newHash);
+  await dispatchGroupAlerts(canonicalGroupName, diffs, matchingUsers, newHash);
 }
 
 /**
@@ -560,7 +591,7 @@ async function checkScheduleChanges(forceOrOptions = false) {
         if (storedHashes) {
           const parsed = JSON.parse(storedHashes);
           for (const [cid, val] of Object.entries(parsed)) {
-            groupSnapshots.set(cid, val);
+            groupSnapshots.set(String(cid), val);
           }
           if (groupSnapshots.size > 0) {
             isBaselineReady = true;
@@ -575,9 +606,9 @@ async function checkScheduleChanges(forceOrOptions = false) {
       }
     }
 
-    // 2. Real-time Database Synchronization from EduPage (Gzip payload ~767KB in ~1.6s)
+    // 2. Real-time Database Synchronization from EduPage (Always fetch live from EduPage on scheduled checks)
     deepChecksCount++;
-    const indexedDb = await edupageService.getIndexedDatabase(forceDeepCheck || !isBaselineReady);
+    const indexedDb = await edupageService.getIndexedDatabase(true);
     if (!indexedDb?.schedulesByClassId || !indexedDb?.classesById) {
       isChecking = false;
       lastCheckStatus = 'error_empty_tables';
@@ -680,7 +711,8 @@ async function checkScheduleChanges(forceOrOptions = false) {
       const currentSimplified = getSimplifiedSchedule(currentRawSchedule);
       const currentHash = computeScheduleHash(currentRawSchedule);
 
-      const oldEntry = groupSnapshots.get(classId);
+      const cidStr = String(classId);
+      const oldEntry = groupSnapshots.get(cidStr);
       const oldSchedule = oldEntry?.schedule || activeSnapshotsMap.get(norm) || (rawNorm ? activeSnapshotsMap.get(rawNorm) : null);
       const oldHash = oldEntry?.hash;
       const dbCachedHash = cachedTimetablesMap.get(norm) || (rawNorm ? cachedTimetablesMap.get(rawNorm) : null);
@@ -691,9 +723,9 @@ async function checkScheduleChanges(forceOrOptions = false) {
 
       // Memory optimization: only save simplified schedule for active groups to save 90% heap
       if (hasActiveUsers) {
-        newHashesForRedis[classId] = { hash: currentHash, schedule: currentSimplified, groupName: canonical, norm };
+        newHashesForRedis[cidStr] = { hash: currentHash, schedule: currentSimplified, groupName: canonical, norm };
       } else {
-        newHashesForRedis[classId] = { hash: currentHash, groupName: canonical, norm };
+        newHashesForRedis[cidStr] = { hash: currentHash, groupName: canonical, norm };
       }
 
       // If active group has no recorded baseline in Redis yet (first time initialization), seed it so we don't spam
@@ -734,11 +766,11 @@ async function checkScheduleChanges(forceOrOptions = false) {
 
       if (hasChanged) {
         if (!diffs || diffs.length === 0) diffs = [{ type: 'SCHEDULE_FULL_OVERVIEW', schedule: currentSimplified }];
-        changedGroups.push({ classId, groupName: canonical, norm, rawNorm, diffs, currentHash });
+        changedGroups.push({ classId: cidStr, groupName: canonical, norm, rawNorm, diffs, currentHash });
       }
 
       // Update in-memory snapshot
-      groupSnapshots.set(classId, hasActiveUsers ? {
+      groupSnapshots.set(cidStr, hasActiveUsers ? {
         hash: currentHash,
         schedule: currentSimplified,
         groupName: canonical,
@@ -868,7 +900,7 @@ async function forceAlertGroup(groupName) {
 
   const currentSimplified = getSimplifiedSchedule(rawSchedule);
 
-  let oldSchedule = groupSnapshots.get(classId)?.schedule;
+  let oldSchedule = groupSnapshots.get(String(classId))?.schedule;
   const redis = getRedisClient();
   if (!oldSchedule && redis) {
     try {

@@ -4,6 +4,23 @@ Barcha muhim o'zgarishlar, yangilanishlar va xavfsizlik yaxshilanishlari ushbu h
 
 ---
 
+## [1.1.5] — 2026-09-26
+
+### 🚀 Senior Audit & Chuqur Nosozliklarni Bartaraf Etish (Deep System Audit)
+* **Realtime Watcher uchun EduPage Jonli Ma'lumotlarni Majburiy Olish (Live Network Fetch):**
+  - Ilgari `checkScheduleChanges` `forceRefresh=false` chaqirganligi sababli, Redis'dagi 10 daqiqalik kesh (`cache:edupage:raw:*`) tufayli EduPage'dagi o'zgarishlar 10 daqiqagacha kechikib aniqlanardi.
+  - Endi Watcher har 3 daqiqada to'g'ridan-to'g'ri TsUE EduPage jonli bazasini so'raydi (`getIndexedDatabase(true)`). Natijada dars jadvalining har qanday o'zgarishi darhol (3 daqiqa ichida) aniqlanadi. Agar EduPage tarmog'ida vaqtinchalik uzilish bo'lsa, avtomatik xotiradagi L1 va diskdagi L3 keshiga tayanadi.
+* **L3 Disk Keshi Yo'li To'g'rilandi (`DISK_CACHE_PATH`):**
+  - Ilgari `DISK_CACHE_PATH` loyiha tashqarisidagi mavjud bo'lmagan papkaga yo'naltirilgan bo'lib, diskka kesh yozishda `ENOENT` xatoligi yuz berardi. Yo'l `src/data/timetable_cache.json` ga to'g'rilandi va avtomatik papka yaratish qo'shildi.
+* **Redis va Map o'rtasidagi String/Number `classId` Muvofiqligi:**
+  - Redis'dan JSON tiklanganda `cid` kalitlari doimo `string` bo'ladi, in-memory Map'da esa ba'zida `number` bo'lib qolishi tufayli taqqoslashda `undefined` qaytish xavfi mavjud edi. Barcha joyda kalitlar `String(classId)` formatiga keltirildi.
+* **On-Demand Kesh Yangilanganda Aniq Diff Yuborish (`notifyGroupScheduleChanged`):**
+  - Talaba `/hafta` orqali jadval olganida kesh eskirganligi aniqlansa, oldingi snapshot bilan yangi jadval o'rtasidagi semantik farqlar (`diffGroupSchedules`) hisoblanib, guruhdoshlariga barcha o'zgarishlar to'liq tafsilotlari bilan (yoki haftalik to'liq ko'rinishda) yuboriladi.
+* **Xabarnomalar uchun Bo'sh Matn Qolishining Oldini Olish:**
+  - `formatChangeAlert` funksiyasida `changesFormatted` tekshiruvi qo'shildi. Har qanday kutilmagan senariyda ham sarlavha tagida bo'sh qator emas, balki aniq xabarnoma chiqishi kafolatlandi.
+
+---
+
 ## [1.1.4] — 2026-09-26
 
 ### 🚀 Asosiy Yutuqlar (Highlights)

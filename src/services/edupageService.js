@@ -6,7 +6,7 @@ const https = require('https');
 const zlib = require('zlib');
 const logger = require('../core/logger');
 
-const DISK_CACHE_PATH = path.join(__dirname, '../../data/timetable_cache.json');
+const DISK_CACHE_PATH = path.join(__dirname, '../data/timetable_cache.json');
 
 const DAY_NAMES = ['Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba'];
 const PERIOD_TIMES = {
@@ -609,6 +609,7 @@ async function fetchRawTimetable(defaultNum) {
 
 async function saveDiskCache(raw) {
   try {
+    await fs.promises.mkdir(path.dirname(DISK_CACHE_PATH), { recursive: true });
     const tmpPath = `${DISK_CACHE_PATH}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
     await fs.promises.writeFile(tmpPath, JSON.stringify(raw), 'utf8');
     await fs.promises.rename(tmpPath, DISK_CACHE_PATH);
