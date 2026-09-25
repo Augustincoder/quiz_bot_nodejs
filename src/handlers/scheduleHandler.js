@@ -341,10 +341,14 @@ async function cmdHafta(ctx) {
     const themeLabel = userTheme === 'light' ? '☀️ Kunduzgi' : userTheme === 'vibrant' ? '⚡ Neon' : '🌙 Tungi';
     const media = photoResult.fileId ? photoResult.fileId : { source: photoResult.buffer };
 
+    const changeNotice = photoResult?.wasStale
+      ? "\n\n🔔 <b>DIQQAT:</b> Guruhingiz dars jadvalida o'zgarishlar aniqlanganligi sababli jadval yangilandi!"
+      : '';
+
     await ctx.replyWithPhoto(
       media,
       {
-        caption: `🎓 <b>Haftalik Jadval: ${escapeHtml(className)}</b>\n<i>🎨 Mavzu: ${themeLabel}</i>`,
+        caption: `🎓 <b>Haftalik Jadval: ${escapeHtml(className)}</b>\n<i>🎨 Mavzu: ${themeLabel}</i>${changeNotice}`,
         parse_mode: 'HTML',
         ...kb,
       }

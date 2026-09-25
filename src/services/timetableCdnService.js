@@ -151,11 +151,13 @@ async function getOrGenerateTimetablePhoto(telegram, rawClassName, theme = 'dark
   }
 
   // Stale cache detected (schedule changed in EduPage) -> delete old cache entry
+  let wasStale = false;
   if (cached && cachedFileId && cachedHash && cachedHash !== currentScheduleHash) {
     logger.info(`Stale timetable cache detected for ${className} [${validTheme}] (hash mismatch). Regenerating...`, {
       cachedHash,
       currentScheduleHash,
     });
+    wasStale = true;
     await dbService.deleteTimetableCache(className, validTheme).catch(() => {});
   }
 
@@ -172,7 +174,7 @@ async function getOrGenerateTimetablePhoto(telegram, rawClassName, theme = 'dark
       const recheckFileId = recheck?.file_id || recheck?.fileId;
       const recheckHash = recheck?.schedule_hash || recheck?.scheduleHash;
       if (recheck && recheckFileId && recheckHash && recheckHash === currentScheduleHash) {
-        return { fileId: recheckFileId, isHit: true };
+        return { fileId: recheckFileId, isHit: true, wasStale: false };
       }
 
       // Cache Miss / Hash Mismatch: JIT Generation
@@ -204,9 +206,22 @@ async function getOrGenerateTimetablePhoto(telegram, rawClassName, theme = 'dark
             // Asynchronously warm the other 2 themes for this group in background
             warmRemainingThemesInBackground(telegram, className, rawSchedule, currentScheduleHash, validTheme).catch(() => {});
 
+            // Proactively notify enrolled group students if an outdated timetable was refreshed
+            if (wasStale) {
+              try {
+                const scheduleWatcher = require('./scheduleWatcherService');
+                if (typeof scheduleWatcher.notifyGroupScheduleChanged === 'function') {
+                  scheduleWatcher.notifyGroupScheduleChanged(className, currentScheduleHash).catch(() => {});
+                }
+              } catch (e) {
+                logger.debug('Failed to trigger notifyGroupScheduleChanged from CDN', { error: e.message });
+              }
+            }
+
             return {
               fileId: uploadRes.fileId,
               isHit: false,
+              wasStale,
             };
           }
         } catch (cdnErr) {
@@ -218,6 +233,7 @@ async function getOrGenerateTimetablePhoto(telegram, rawClassName, theme = 'dark
       return {
         buffer: imageBuffer,
         isHit: false,
+        wasStale,
       };
     } finally {
       inflightRequests.delete(inflightKey);

@@ -5,7 +5,9 @@ const logger = require('../core/logger');
 const edupageService = require('./edupageService');
 const scheduleService = require('./scheduleService');
 const { normalizeGroupName } = require('./edupageService');
-const { escapeHtml, truncateText } = require('../core/utils');
+const { escapeHtml, truncateText, TTLMap } = require('../core/utils');
+
+const recentAlertsSent = new TTLMap(2 * 60 * 60 * 1000, 500); // 2-hour deduplication cache
 
 let _dbService = null;
 function getDbService() {
@@ -239,10 +241,20 @@ function formatChangeAlert(groupName, diffs) {
  * Dispatches targeted alerts to students of affected groups via BullMQ (or direct Telegram delivery fallback),
  * and pre-warms the updated schedule image ONLY for active groups with registered users.
  */
-async function dispatchGroupAlerts(groupName, diffs, usersList) {
+async function dispatchGroupAlerts(groupName, diffs, usersList, currentHash = null) {
   const canonicalGroupName = edupageService.getCanonicalGroupName(groupName) || groupName;
   const normGroup = normalizeGroupName(canonicalGroupName);
   const rawNormGroup = normalizeGroupName(groupName);
+
+  // Prevent duplicate alert spam to the same group for the same schedule hash within 2 hours
+  if (currentHash) {
+    const alertKey = `${normGroup}:${currentHash}`;
+    if (recentAlertsSent.has(alertKey)) {
+      logger.debug(`Alert for group "${canonicalGroupName}" with hash ${currentHash.slice(0, 10)} already sent recently, skipping duplicate.`);
+      return;
+    }
+    recentAlertsSent.set(alertKey, Date.now());
+  }
 
   // If usersList is already filtered, use it; otherwise filter from all users
   const rawUsers = (usersList || []).filter(u => {
@@ -333,9 +345,49 @@ async function dispatchGroupAlerts(groupName, diffs, usersList) {
 }
 
 /**
- * Senior-Level 2-Tier Schedule Watcher:
- * - Tier 1: 332-byte lightweight metadata probe (ttviewer.js). If unchanged, skips heavy sync.
- * - Tier 2: Synchronous O(1) Map iteration over indexedDb.schedulesByClassId (~25ms for 1,342 groups).
+ * Proactively notifies students of an active group when an on-demand request (e.g. /hafta)
+ * detects that the cached timetable was stale and had to be regenerated.
+ */
+async function notifyGroupScheduleChanged(groupName, newHash) {
+  const canonicalGroupName = edupageService.getCanonicalGroupName(groupName) || groupName;
+  const normGroup = normalizeGroupName(canonicalGroupName);
+  if (newHash && recentAlertsSent.has(`${normGroup}:${newHash}`)) {
+    return;
+  }
+
+  const db = getDbService();
+  let users = [];
+  try {
+    if (typeof db.getScheduleBroadcastUsers === 'function') {
+      users = await db.getScheduleBroadcastUsers();
+    }
+    if (!users || users.length === 0) {
+      users = await db.getAllUsers();
+    }
+  } catch (e) {
+    logger.warn('Failed to load users in notifyGroupScheduleChanged', { error: e.message });
+  }
+
+  const rawUsers = (users || []).filter(u => {
+    if (!u || !u.telegram_id || !u.class_name || u.is_banned || u.is_blocked) return false;
+    const uCanonical = edupageService.getCanonicalGroupName(u.class_name) || u.class_name;
+    const uNorm = normalizeGroupName(uCanonical);
+    const uRawNorm = normalizeGroupName(u.class_name);
+    return uNorm === normGroup || uRawNorm === normGroup;
+  });
+
+  const matchingUsers = Array.from(new Map(rawUsers.map(u => [String(u.telegram_id), u])).values());
+  if (matchingUsers.length === 0) return;
+
+  logger.info(`📢 Proactively dispatching alerts to ${matchingUsers.length} enrolled students of ${canonicalGroupName} (triggered by on-demand stale refresh).`);
+  await dispatchGroupAlerts(canonicalGroupName, [{ type: 'SCHEDULE_REFRESHED' }], matchingUsers, newHash);
+}
+
+/**
+ * Senior-Level 2-Tier Schedule Watcher with Dual Change Detection:
+ * 1. Runtime In-Memory / Redis snapshot change detection.
+ * 2. Database CDN Reconciliation: Compares current live EduPage hashes against cached hashes in timetable_cache.
+ *    Guarantees that groups with outdated CDN images (like BHA-56/24i) are ALWAYS detected and notified!
  */
 async function checkScheduleChanges(forceDeepCheck = false) {
   if (isChecking) {
@@ -384,6 +436,53 @@ async function checkScheduleChanges(forceDeepCheck = false) {
       return { checked: false, reason: 'empty_tables' };
     }
 
+    // 3. Pre-load active users and DB cached timetables for dual reconciliation
+    const db = getDbService();
+    let broadcastUsers = [];
+    try {
+      if (typeof db.getScheduleBroadcastUsers === 'function') {
+        broadcastUsers = await db.getScheduleBroadcastUsers();
+      }
+      if (!broadcastUsers || broadcastUsers.length === 0) {
+        broadcastUsers = await db.getAllUsers();
+      }
+    } catch (e) {
+      logger.warn('Failed to load users for schedule change alerts', { error: e.message });
+    }
+
+    // Group active users by normalized group name for fast O(1) matching
+    const usersByGroupNorm = new Map();
+    for (const u of (broadcastUsers || [])) {
+      if (!u.telegram_id || !u.class_name || u.is_banned || u.is_blocked) continue;
+      const uCanonical = edupageService.getCanonicalGroupName(u.class_name) || u.class_name;
+      const uNorm = normalizeGroupName(uCanonical);
+      const uRawNorm = normalizeGroupName(u.class_name);
+
+      if (uNorm) {
+        if (!usersByGroupNorm.has(uNorm)) usersByGroupNorm.set(uNorm, []);
+        usersByGroupNorm.get(uNorm).push(u);
+      }
+      if (uRawNorm && uRawNorm !== uNorm) {
+        if (!usersByGroupNorm.has(uRawNorm)) usersByGroupNorm.set(uRawNorm, []);
+        usersByGroupNorm.get(uRawNorm).push(u);
+      }
+    }
+
+    // Map all cached timetable hashes in DB
+    const cachedTimetablesMap = new Map();
+    try {
+      if (typeof db.getAllCachedTimetables === 'function') {
+        const cachedRows = await db.getAllCachedTimetables();
+        for (const row of (cachedRows || [])) {
+          if (row.group_normalized && row.schedule_hash) {
+            cachedTimetablesMap.set(row.group_normalized, row.schedule_hash);
+          }
+        }
+      }
+    } catch (e) {
+      logger.debug('Could not load cached timetables for watcher comparison', { error: e.message });
+    }
+
     const changedGroups = [];
     const newHashesForRedis = {};
 
@@ -395,87 +494,70 @@ async function checkScheduleChanges(forceDeepCheck = false) {
       const gName = (c.name || c.short || '').trim();
       if (!gName || gName.includes('FAKULTET') || gName.includes('KURS')) continue;
 
-      const norm = normalizeGroupName(gName);
+      const canonical = edupageService.getCanonicalGroupName(gName) || gName;
+      const norm = normalizeGroupName(canonical);
+      const rawNorm = normalizeGroupName(gName);
       if (!norm) continue;
 
       const currentSimplified = getSimplifiedSchedule(currentRawSchedule);
       const currentHash = computeScheduleHash(currentRawSchedule);
-      newHashesForRedis[classId] = { hash: currentHash, schedule: currentSimplified, groupName: gName, norm };
+      newHashesForRedis[classId] = { hash: currentHash, schedule: currentSimplified, groupName: canonical, norm };
 
-      if (isBaselineReady) {
-        const oldEntry = groupSnapshots.get(classId);
-        if (oldEntry && oldEntry.hash !== currentHash) {
-          const diffs = diffGroupSchedules(oldEntry.schedule || {}, currentSimplified);
-          if (diffs.length > 0) {
-            changedGroups.push({ classId, groupName: gName, norm, diffs });
-          }
-        }
+      const oldEntry = groupSnapshots.get(classId);
+      const dbCachedHash = cachedTimetablesMap.get(norm) || (rawNorm ? cachedTimetablesMap.get(rawNorm) : null);
+      const hasActiveUsers = (usersByGroupNorm.has(norm) && usersByGroupNorm.get(norm).length > 0) ||
+                             (rawNorm && usersByGroupNorm.has(rawNorm) && usersByGroupNorm.get(rawNorm).length > 0);
+
+      let hasChanged = false;
+      let diffs = [];
+
+      // Detection Condition 1: Runtime in-memory/Redis snapshot change
+      if (isBaselineReady && oldEntry && oldEntry.hash !== currentHash) {
+        hasChanged = true;
+        diffs = diffGroupSchedules(oldEntry.schedule || {}, currentSimplified);
+      }
+      // Detection Condition 2: Active registered group whose DB/CDN cache is stale
+      else if (hasActiveUsers && dbCachedHash && dbCachedHash !== currentHash) {
+        logger.info(`🚨 Stale DB/CDN cache detected for active group "${canonical}" (DB: ${dbCachedHash.slice(0, 10)}... vs EduPage: ${currentHash.slice(0, 10)}...)`);
+        hasChanged = true;
+        diffs = oldEntry?.schedule ? diffGroupSchedules(oldEntry.schedule, currentSimplified) : [{ type: 'SCHEDULE_REFRESHED' }];
+      }
+
+      if (hasChanged) {
+        if (!diffs || diffs.length === 0) diffs = [{ type: 'SCHEDULE_REFRESHED' }];
+        changedGroups.push({ classId, groupName: canonical, norm, rawNorm, diffs, currentHash });
       }
 
       // Update in-memory snapshot
       groupSnapshots.set(classId, {
         hash: currentHash,
         schedule: currentSimplified,
-        groupName: gName,
+        groupName: canonical,
         norm,
       });
     }
 
     lastDeepCheckAt = Date.now();
 
-    // 3. Baseline vs Change detection dispatch
+    // 4. Baseline vs Change detection dispatch
     if (!isBaselineReady) {
       isBaselineReady = true;
       logger.info('✅ Initial schedule baseline snapshot established', {
         groupsCount: groupSnapshots.size,
         durationMs: Date.now() - t0,
       });
-    } else if (changedGroups.length > 0) {
-      logger.info(`🚨 Detected schedule changes in ${changedGroups.length} groups!`, {
+    }
+
+    if (changedGroups.length > 0) {
+      logger.info(`🚨 Processing schedule changes for ${changedGroups.length} groups...`, {
         groups: changedGroups.map(g => g.groupName),
       });
 
-      // Fetch enrolled active users from DB once
-      const db = getDbService();
-      let broadcastUsers = [];
-      try {
-        if (typeof db.getScheduleBroadcastUsers === 'function') {
-          broadcastUsers = await db.getScheduleBroadcastUsers();
-        }
-        if (!broadcastUsers || broadcastUsers.length === 0) {
-          broadcastUsers = await db.getAllUsers();
-        }
-      } catch (e) {
-        logger.warn('Failed to load users for schedule change alerts', { error: e.message });
-      }
-
-      // Group active users by normalized group name for fast O(1) matching
-      const usersByGroupNorm = new Map();
-      for (const u of (broadcastUsers || [])) {
-        if (!u.telegram_id || !u.class_name || u.is_banned || u.is_blocked) continue;
-        const uCanonical = edupageService.getCanonicalGroupName(u.class_name) || u.class_name;
-        const uNorm = normalizeGroupName(uCanonical);
-        const uRawNorm = normalizeGroupName(u.class_name);
-
-        if (uNorm) {
-          if (!usersByGroupNorm.has(uNorm)) usersByGroupNorm.set(uNorm, []);
-          usersByGroupNorm.get(uNorm).push(u);
-        }
-        if (uRawNorm && uRawNorm !== uNorm) {
-          if (!usersByGroupNorm.has(uRawNorm)) usersByGroupNorm.set(uRawNorm, []);
-          usersByGroupNorm.get(uRawNorm).push(u);
-        }
-      }
-
       let activeChangesCount = 0;
       for (const item of changedGroups) {
-        const canonical = edupageService.getCanonicalGroupName(item.groupName) || item.groupName;
-        const norm = normalizeGroupName(canonical);
-        const rawNorm = normalizeGroupName(item.groupName);
-
         const matchingUsers = [
-          ...(usersByGroupNorm.get(norm) || []),
-          ...(rawNorm && rawNorm !== norm ? (usersByGroupNorm.get(rawNorm) || []) : []),
+          ...(usersByGroupNorm.get(item.norm) || []),
+          ...(item.rawNorm && item.rawNorm !== item.norm ? (usersByGroupNorm.get(item.rawNorm) || []) : []),
         ];
 
         // Deduplicate
@@ -489,7 +571,7 @@ async function checkScheduleChanges(forceDeepCheck = false) {
           // Active group with real students! Invalidate old image, dispatch alerts, and pre-warm image ONLY for this group!
           activeChangesCount++;
           logger.info(`📢 Active group "${item.groupName}" changed! Alerting ${uniqueMatching.length} enrolled users and pre-warming CDN.`);
-          await dispatchGroupAlerts(item.groupName, item.diffs, uniqueMatching);
+          await dispatchGroupAlerts(item.groupName, item.diffs, uniqueMatching, item.currentHash);
         }
       }
       logger.info(`Schedule change processing finished: ${activeChangesCount} active groups alerted, ${changedGroups.length - activeChangesCount} inactive groups skipped.`);
@@ -497,7 +579,7 @@ async function checkScheduleChanges(forceDeepCheck = false) {
       logger.debug('Schedule check completed: no changes detected', { durationMs: Date.now() - t0 });
     }
 
-    // 4. Save updated baseline hashes to Redis
+    // 5. Save updated baseline hashes to Redis
     if (redis) {
       redis.set(REDIS_WATCHER_KEY, JSON.stringify(newHashesForRedis), 'EX', 24 * 60 * 60).catch(err => {
         logger.warn('Failed to save schedule watcher hashes in Redis', { error: err.message });
@@ -542,6 +624,7 @@ function getWatcherStatus() {
 
 module.exports = {
   setBotInstance,
+  notifyGroupScheduleChanged,
   checkScheduleChanges,
   diffGroupSchedules,
   computeScheduleHash,

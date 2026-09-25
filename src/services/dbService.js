@@ -917,16 +917,23 @@ async function deleteTimetableCache(groupInput, theme = null) {
 }
 
 async function getAllCachedTimetables() {
-  if (!supabase) return [];
+  const fallbackList = [];
+  if (fallbackTimetableCache.size > 0) {
+    for (const val of fallbackTimetableCache.values()) {
+      if (val && val.group_normalized) fallbackList.push(val);
+    }
+  }
+
+  if (!supabase) return fallbackList;
   try {
     const { data, error } = await supabase
       .from('timetable_cache')
       .select('group_name, group_normalized, theme, file_id, schedule_hash, channel_message_id, updated_at');
     if (error) throw error;
-    return data || [];
+    return data && data.length > 0 ? data : fallbackList;
   } catch (err) {
     logger.error('getAllCachedTimetables error:', { error: err.message });
-    return [];
+    return fallbackList;
   }
 }
 

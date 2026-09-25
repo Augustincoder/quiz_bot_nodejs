@@ -4,6 +4,15 @@ Barcha muhim o'zgarishlar, yangilanishlar va xavfsizlik yaxshilanishlari ushbu h
 
 ---
 
+## [1.1.1] — 2026-09-25
+
+### 🚀 Asosiy Yutuqlar (Highlights)
+* **Ma'lumotlar bazasi bilan dual tekshiruv (DB Reconciliation):** Watcher faqat Redis snapshotiga tayanib qolmasdan, har bir ro'yxatdan o'tgan guruhning Supabase'dagi amaldagi CDN kesh xeshini (`dbCachedHash`) to'g'ridan-to'g'ri tekshiradi. Agar dars jadvali bot o'chiq vaqtida yoki kesh yaratilgandan so'ng o'zgargan bo'lsa (masalan, `BHA-56/24i`), tizim buni darhol aniqlaydi va talabalarga bildirishnoma yuboradi.
+* **On-Demand o'zgarish xabarnomasi (`/hafta` integratsiyasi):** Talaba haftalik jadval so'raganida kesh eskirganligi aniqlansa, yuborilgan rasm tagida o'zgarish bo'lganligi haqida ogohlantirish ko'rsatiladi (`🔔 DIQQAT: Guruhingiz dars jadvalida o'zgarishlar aniqlanganligi sababli jadval yangilandi!`) va o'sha zahotiyoq guruhdoshlariga ham fon rejimida bildirishnoma tarqatiladi.
+* **Takroriy xabarlarning oldini olish (2-soatlik Deduplication):** Bir xil jadval xeshi uchun talabalarga 2 soat ichida qayta-qayta takroriy xabar yuborilishi to'liq bloklandi.
+
+---
+
 ## [1.1.0] — 2026-09-25
 
 ### 🚀 Asosiy Yutuqlar (Highlights)
