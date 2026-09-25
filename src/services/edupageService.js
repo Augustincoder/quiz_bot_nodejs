@@ -99,7 +99,8 @@ function transliterateCyrillic(str) {
 function normalizeGroupName(str) {
   if (!str) return '';
   const transliterated = transliterateCyrillic(String(str));
-  return transliterated.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const clean = transliterated.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return clean.replace(/^([A-Z0-9]+?)([IRK])(\d{2})$/, '$1$3$2');
 }
 
 /**
@@ -177,6 +178,11 @@ function getCanonicalGroupName(input) {
   if (canonicalBase.has(norm)) {
     return canonicalBase.get(norm);
   }
+  const base = extractGroupBase(clean);
+  const baseNorm = normalizeGroupName(base);
+  if (baseNorm && canonicalBase.has(baseNorm)) {
+    return canonicalBase.get(baseNorm);
+  }
 
   // 3. Fallback: prefix match among valid groups (only if norm is at least 4 chars)
   if (norm.length >= 4) {
@@ -187,21 +193,17 @@ function getCanonicalGroupName(input) {
     }
   }
 
-  // 4. Fallback: fuzzy typo match (Levenshtein distance <= 2, prioritize exact length)
+  const normDigits = (norm.match(/\d+/g) || []).join('');
+
+  // 4. Fallback: fuzzy typo match (Levenshtein distance <= 2)
   let best = null;
   let minDist = Infinity;
   for (const [n, canonical] of canonicalExact.entries()) {
-    if (n.length !== norm.length) continue;
-    const d = getLevenshteinDistance(norm, n);
-    if (d < minDist) {
-      minDist = d;
-      best = canonical;
-    }
-  }
-  if (minDist <= 2) return best;
+    if (Math.abs(n.length - norm.length) > 1) continue;
+    // Guard: digits must match if present to prevent cross-group number matching (e.g., 56 vs 50)
+    const nDigits = (n.match(/\d+/g) || []).join('');
+    if (normDigits && nDigits && normDigits !== nDigits) continue;
 
-  for (const [n, canonical] of canonicalExact.entries()) {
-    if (Math.abs(n.length - norm.length) !== 1) continue;
     const d = getLevenshteinDistance(norm, n);
     if (d < minDist) {
       minDist = d;

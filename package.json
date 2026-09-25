@@ -8,7 +8,8 @@
     "dev": "nodemon index.js",
     "upload:cdn": "node --expose-gc scripts/upload_all_to_channel.js",
     "prewarm:cdn": "node scripts/prewarm_timetable_cdn.js",
-    "prewarm:cdn:active": "node scripts/prewarm_timetable_cdn.js --active-only"
+    "prewarm:cdn:active": "node scripts/prewarm_timetable_cdn.js --active-only",
+    "test": "node scripts/test_group_normalization.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

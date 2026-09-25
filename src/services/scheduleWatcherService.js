@@ -201,10 +201,22 @@ function formatChangeAlert(groupName, diffs) {
  * Dispatches targeted alerts to students of affected groups via BullMQ
  */
 async function dispatchGroupAlerts(groupName, diffs, allUsers) {
-  const normGroup = normalizeGroupName(groupName);
-  const matchingUsers = (allUsers || []).filter(u =>
-    u.telegram_id && normalizeGroupName(u.class_name) === normGroup
-  );
+  const canonicalGroupName = edupageService.getCanonicalGroupName(groupName) || groupName;
+  const normGroup = normalizeGroupName(canonicalGroupName);
+  const rawNormGroup = normalizeGroupName(groupName);
+
+  const matchingUsers = (allUsers || []).filter(u => {
+    if (!u.telegram_id || !u.class_name) return false;
+    const uNorm = normalizeGroupName(u.class_name);
+    if (uNorm === normGroup || uNorm === rawNormGroup) return true;
+
+    const uCanonical = edupageService.getCanonicalGroupName(u.class_name);
+    if (uCanonical) {
+      const uCanonicalNorm = normalizeGroupName(uCanonical);
+      if (uCanonicalNorm === normGroup || uCanonicalNorm === rawNormGroup) return true;
+    }
+    return false;
+  });
 
   if (matchingUsers.length === 0) {
     logger.debug('Schedule changed for group with no registered bot users', { groupName });
