@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const zlib = require('zlib');
 const logger = require('../core/logger');
 
 const DISK_CACHE_PATH = path.join(__dirname, '../../data/timetable_cache.json');
@@ -23,10 +24,10 @@ const PERIOD_TIMES = {
 const FALLBACK_DEFAULT_NUM = '94';
 
 // Cache TTLs
-const L1_CACHE_TTL = 60 * 60 * 1000; // 1 hour fresh
+const L1_CACHE_TTL = 3 * 60 * 1000; // 3 minutes fresh (aligned with 3-minute schedule watcher)
 const L1_STALE_TTL = 24 * 60 * 60 * 1000; // 24 hours stale fallback
 const DEFAULT_NUM_TTL = 12 * 60 * 60 * 1000; // 12 hours
-const REDIS_TTL_SEC = 12 * 60 * 60; // 12 hours in Redis
+const REDIS_TTL_SEC = 10 * 60; // 10 minutes in Redis (prevents stale schedule persistence across syncs)
 
 // Keep-alive agent to reuse TCP/TLS sockets and minimize connection latency
 const httpsAgent = new https.Agent({
@@ -39,6 +40,7 @@ const httpsAgent = new https.Agent({
 const DEFAULT_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   'Accept': 'application/json, text/javascript, */*; q=0.01',
+  'Accept-Encoding': 'gzip, deflate',
   'Accept-Language': 'uz,ru;q=0.9,en-US;q=0.8,en;q=0.7',
   'Origin': 'https://tsue.edupage.org',
   'Referer': 'https://tsue.edupage.org/timetable/',
@@ -246,17 +248,24 @@ function httpPost(path, payload, timeoutMs = 30000) {
         'Content-Length': Buffer.byteLength(postData),
       },
     }, (res) => {
-      let data = '';
-      res.on('data', chunk => { data += chunk; });
+      const chunks = [];
+      res.on('data', chunk => { chunks.push(chunk); });
       res.on('end', () => {
         if (isSettled) return;
         isSettled = true;
         clearTimeout(timer);
         try {
-          const json = JSON.parse(data);
+          let buffer = Buffer.concat(chunks);
+          const encoding = res.headers['content-encoding'];
+          if (encoding === 'gzip') {
+            buffer = zlib.gunzipSync(buffer);
+          } else if (encoding === 'deflate') {
+            buffer = zlib.inflateSync(buffer);
+          }
+          const json = JSON.parse(buffer.toString('utf8'));
           resolve(json);
-        } catch {
-          reject(new Error('JSON parse failed for EduPage response'));
+        } catch (e) {
+          reject(new Error(`JSON parse failed for EduPage response: ${e.message}`));
         }
       });
     });
@@ -982,4 +991,5 @@ module.exports = {
   extractGroupBase,
   getGroupBuildings,
   parseRoomLocation,
+  resolveDefaultNum,
 };

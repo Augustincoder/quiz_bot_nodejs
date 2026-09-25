@@ -131,17 +131,35 @@ async function getOrGenerateTimetablePhoto(telegram, rawClassName, theme = 'dark
 
   const validTheme = ALL_THEMES.includes(theme) ? theme : 'dark';
 
-  // 1. Fast Cache Hit check in Supabase / Redis
+  // 1. Resolve current raw schedule from EduPage to verify hash
+  const rawSchedule = await edupageService.getRawSchedule(className);
+  if (!rawSchedule || Object.keys(rawSchedule).length === 0) {
+    return null;
+  }
+  const currentScheduleHash = computeScheduleHash(rawSchedule);
+
+  // 2. Fast Cache Hit check in Supabase / Redis with strict schedule_hash verification
   const cached = await dbService.getTimetableCache(className, validTheme);
   const cachedFileId = cached?.file_id || cached?.fileId;
-  if (cached && cachedFileId) {
+  const cachedHash = cached?.schedule_hash || cached?.scheduleHash;
+
+  if (cached && cachedFileId && cachedHash && cachedHash === currentScheduleHash) {
     return {
       fileId: cachedFileId,
       isHit: true,
     };
   }
 
-  // 2. Coalesce concurrent requests via Singleflight
+  // Stale cache detected (schedule changed in EduPage) -> delete old cache entry
+  if (cached && cachedFileId && cachedHash && cachedHash !== currentScheduleHash) {
+    logger.info(`Stale timetable cache detected for ${className} [${validTheme}] (hash mismatch). Regenerating...`, {
+      cachedHash,
+      currentScheduleHash,
+    });
+    await dbService.deleteTimetableCache(className, validTheme).catch(() => {});
+  }
+
+  // 3. Coalesce concurrent requests via Singleflight
   const inflightKey = `${norm}:${validTheme}`;
   if (inflightRequests.has(inflightKey)) {
     return inflightRequests.get(inflightKey);
@@ -152,25 +170,20 @@ async function getOrGenerateTimetablePhoto(telegram, rawClassName, theme = 'dark
       // Re-check cache inside singleflight to avoid redundant work
       const recheck = await dbService.getTimetableCache(className, validTheme);
       const recheckFileId = recheck?.file_id || recheck?.fileId;
-      if (recheck && recheckFileId) {
+      const recheckHash = recheck?.schedule_hash || recheck?.scheduleHash;
+      if (recheck && recheckFileId && recheckHash && recheckHash === currentScheduleHash) {
         return { fileId: recheckFileId, isHit: true };
       }
 
-      // Cache Miss: JIT Generation
-      const rawSchedule = await edupageService.getRawSchedule(className);
-      if (!rawSchedule || Object.keys(rawSchedule).length === 0) {
-        return null;
-      }
-
-      const scheduleHash = computeScheduleHash(rawSchedule);
+      // Cache Miss / Hash Mismatch: JIT Generation
       const imageBuffer = await imageService.generateScheduleImage(className, rawSchedule, validTheme);
       if (!imageBuffer) return null;
 
-      // 3. Upload to Channel CDN if available
+      // 4. Upload to Channel CDN if available
       if (TIMETABLE_STORAGE_CHANNEL_ID && telegram) {
         try {
           const themeLabel = validTheme === 'light' ? 'Kunduzgi' : validTheme === 'vibrant' ? 'Neon' : 'Tungi';
-          const caption = `🎓 <b>${escapeHtml(className)}</b> | 🎨 <i>${themeLabel}</i>\n<code>#hash_${scheduleHash.slice(0, 10)}</code>`;
+          const caption = `🎓 <b>${escapeHtml(className)}</b> | 🎨 <i>${themeLabel}</i>\n<code>#hash_${currentScheduleHash.slice(0, 10)}</code>`;
           const uploadRes = await uploadPhotoToChannel(telegram, imageBuffer, caption);
 
           if (uploadRes?.fileId) {
@@ -180,11 +193,16 @@ async function getOrGenerateTimetablePhoto(telegram, rawClassName, theme = 'dark
               theme: validTheme,
               fileId: uploadRes.fileId,
               channelMessageId: uploadRes.messageId,
-              scheduleHash,
+              scheduleHash: currentScheduleHash,
             });
 
+            // If old message exists in channel, clean up to avoid outdated posts in storage
+            if (cached?.channel_message_id && cached.channel_message_id !== uploadRes.messageId) {
+              telegram.deleteMessage(TIMETABLE_STORAGE_CHANNEL_ID, cached.channel_message_id).catch(() => {});
+            }
+
             // Asynchronously warm the other 2 themes for this group in background
-            warmRemainingThemesInBackground(telegram, className, rawSchedule, scheduleHash, validTheme).catch(() => {});
+            warmRemainingThemesInBackground(telegram, className, rawSchedule, currentScheduleHash, validTheme).catch(() => {});
 
             return {
               fileId: uploadRes.fileId,
@@ -461,8 +479,7 @@ function getWorkerStatus() {
 async function invalidateTimetable(className) {
   if (!className) return;
   const canonical = edupageService.getCanonicalGroupName(className) || className;
-  const norm = edupageService.normalizeGroupName(canonical);
-  await dbService.deleteTimetableCache(norm);
+  await dbService.deleteTimetableCache(canonical);
 }
 
 module.exports = {

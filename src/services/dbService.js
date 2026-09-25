@@ -17,6 +17,9 @@ try {
   logger.error('Supabase ulanish xatosi:', { error: e.message });
 }
 
+// In-memory fallback cache for timetable CDN metadata
+const fallbackTimetableCache = new Map();
+
 async function loadAllOfficialTests() {
   if (!supabase) return {};
   try {
@@ -770,7 +773,7 @@ async function getTimetableCache(groupInput, theme) {
     }
   }
 
-  if (!supabase) return null;
+  if (!supabase) return fallbackTimetableCache.get(cacheKey) || null;
 
   try {
     // 2. Direct query by primaryNorm
@@ -835,6 +838,9 @@ async function upsertTimetableCache({ groupName, groupNormalized, theme, fileId,
 
   const cacheKey = `cache:timetable_cdn:${norm}:${validTheme}`;
 
+  // Update memory fallback cache
+  fallbackTimetableCache.set(cacheKey, row);
+
   // Update Redis immediately
   if (redis) {
     try {
@@ -859,24 +865,53 @@ async function upsertTimetableCache({ groupName, groupNormalized, theme, fileId,
   }
 }
 
-async function deleteTimetableCache(groupNormalized, theme = null) {
-  if (!groupNormalized) return;
-  const norm = String(groupNormalized).toUpperCase().trim();
+async function deleteTimetableCache(groupInput, theme = null) {
+  if (!groupInput) return;
+  const edupageService = require('./edupageService');
+  const canonical = edupageService.getCanonicalGroupName(groupInput) || groupInput;
+  const primaryNorm = edupageService.normalizeGroupName(canonical);
+  const rawNorm = edupageService.normalizeGroupName(groupInput);
+  const rawClean = String(groupInput).toUpperCase().trim();
 
-  if (theme) {
-    const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
-    if (redis) await redis.del(`cache:timetable_cdn:${norm}:${validTheme}`).catch(() => {});
-    if (supabase) {
-      await supabase.from('timetable_cache').delete().eq('group_normalized', norm).eq('theme', validTheme).catch(() => {});
-    }
-  } else {
-    if (redis) {
+  const keysToDelete = new Set([primaryNorm, rawNorm, rawClean].filter(Boolean));
+
+  for (const n of keysToDelete) {
+    if (theme) {
+      const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
+      fallbackTimetableCache.delete(`cache:timetable_cdn:${n}:${validTheme}`);
+      if (redis) await redis.del(`cache:timetable_cdn:${n}:${validTheme}`).catch(() => {});
+    } else {
       ['dark', 'light', 'vibrant'].forEach(t => {
-        redis.del(`cache:timetable_cdn:${norm}:${t}`).catch(() => {});
+        fallbackTimetableCache.delete(`cache:timetable_cdn:${n}:${t}`);
       });
+      if (redis) {
+        ['dark', 'light', 'vibrant'].forEach(t => {
+          redis.del(`cache:timetable_cdn:${n}:${t}`).catch(() => {});
+        });
+      }
     }
-    if (supabase) {
-      await supabase.from('timetable_cache').delete().eq('group_normalized', norm).catch(() => {});
+  }
+
+  if (supabase) {
+    try {
+      for (const n of keysToDelete) {
+        let q = supabase.from('timetable_cache').delete().eq('group_normalized', n);
+        if (theme) {
+          const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
+          q = q.eq('theme', validTheme);
+        }
+        await q;
+      }
+      if (canonical) {
+        let q = supabase.from('timetable_cache').delete().ilike('group_name', canonical);
+        if (theme) {
+          const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
+          q = q.eq('theme', validTheme);
+        }
+        await q;
+      }
+    } catch (err) {
+      logger.warn('deleteTimetableCache supabase error:', { error: err.message });
     }
   }
 }

@@ -5,6 +5,7 @@ const logger = require('../core/logger');
 const edupageService = require('./edupageService');
 const scheduleService = require('./scheduleService');
 const { normalizeGroupName } = require('./edupageService');
+const { escapeHtml, truncateText } = require('../core/utils');
 
 let _dbService = null;
 function getDbService() {
@@ -56,6 +57,11 @@ let isBaselineReady = false;
 let tier1SkipsCount = 0;
 let deepChecksCount = 0;
 
+let _botTelegram = null;
+function setBotInstance(botOrTelegram) {
+  _botTelegram = botOrTelegram?.telegram || botOrTelegram;
+}
+
 function getRedisClient() {
   if (!process.env.REDIS_URL) return null;
   try {
@@ -66,26 +72,36 @@ function getRedisClient() {
 }
 
 /**
- * Computes deterministic SHA-256 hash of a group's weekly schedule.
- * Ignores non-essential attributes to prevent false positives.
+ * Extracts a normalized, deterministic representation of a weekly schedule.
+ * Normalizes subject, teacher, and room, and sorts lessons deterministically
+ * to eliminate order jitter across syncs.
  */
-function computeScheduleHash(schedule) {
-  if (!schedule || typeof schedule !== 'object') return 'empty';
-
+function getSimplifiedSchedule(schedule) {
+  if (!schedule || typeof schedule !== 'object') return {};
   const simplified = {};
   for (let d = 0; d < 6; d++) {
     if (!schedule[d]) continue;
-    simplified[d] = {};
     const periods = Object.keys(schedule[d]).map(Number).sort((a, b) => a - b);
+    if (periods.length === 0) continue;
+    simplified[d] = {};
     for (const p of periods) {
       simplified[d][p] = (schedule[d][p] || []).map(l => ({
         subject: (l.subject || '').trim(),
         teacher: (l.teacher || '').trim(),
         room: (l.room || '').trim(),
-      }));
+      })).sort((a, b) => (a.subject + a.room).localeCompare(b.subject + b.room));
     }
   }
+  return simplified;
+}
 
+/**
+ * Computes deterministic SHA-256 hash of a group's weekly schedule.
+ * Ignores non-essential attributes to prevent false positives.
+ */
+function computeScheduleHash(schedule) {
+  if (!schedule || typeof schedule !== 'object') return 'empty';
+  const simplified = getSimplifiedSchedule(schedule);
   return crypto.createHash('sha256').update(JSON.stringify(simplified)).digest('hex');
 }
 
@@ -95,9 +111,21 @@ function computeScheduleHash(schedule) {
 function diffGroupSchedules(oldSched, newSched) {
   const diffs = [];
 
+  const oldSimple = getSimplifiedSchedule(oldSched);
+  const newSimple = getSimplifiedSchedule(newSched);
+
+  const oldKeysCount = Object.keys(oldSimple).length;
+  const newKeysCount = Object.keys(newSimple).length;
+
+  // If old schedule snapshot was missing/empty and new schedule has lessons,
+  // notify cleanly without falsely reporting 30 lessons as "newly added".
+  if (oldKeysCount === 0 && newKeysCount > 0) {
+    return [{ type: 'SCHEDULE_REFRESHED' }];
+  }
+
   for (let d = 0; d < 6; d++) {
-    const oldDay = oldSched?.[d] || {};
-    const newDay = newSched?.[d] || {};
+    const oldDay = oldSimple[d] || {};
+    const newDay = newSimple[d] || {};
     const allPeriods = Array.from(new Set([...Object.keys(oldDay), ...Object.keys(newDay)])).map(Number).sort((a, b) => a - b);
 
     for (const p of allPeriods) {
@@ -138,9 +166,9 @@ function diffGroupSchedules(oldSched, newSched) {
               changes.push({ kind: 'SUBJECT', from: o.subject, to: n.subject });
             }
           } else if (!o && n) {
-            changes.push({ kind: 'ADDED_PART', to: `${n.subject} (${n.room})` });
+            changes.push({ kind: 'ADDED_PART', to: `${n.subject}${n.room ? ' (' + n.room + ')' : ''}` });
           } else if (o && !n) {
-            changes.push({ kind: 'REMOVED_PART', from: `${o.subject} (${o.room})` });
+            changes.push({ kind: 'REMOVED_PART', from: `${o.subject}${o.room ? ' (' + o.room + ')' : ''}` });
           }
         }
 
@@ -163,50 +191,62 @@ function diffGroupSchedules(oldSched, newSched) {
  * Formats a clear, student-friendly HTML notification message
  */
 function formatChangeAlert(groupName, diffs) {
-  let text = `🔔 <b>DIQQAT! Guruhingiz dars jadvalida o'zgarish kiritildi!</b>\n\n🎓 Guruh: <b>${groupName}</b>\n`;
+  const safeGroupName = escapeHtml(groupName);
+  let text = `🔔 <b>DIQQAT! Guruhingiz dars jadvalida o'zgarish kiritildi!</b>\n\n🎓 Guruh: <b>${safeGroupName}</b>\n`;
 
   for (const diff of diffs) {
+    if (diff.type === 'SCHEDULE_REFRESHED') {
+      text += '\n🔄 <b>Dars jadvali yangilandi.</b>\n';
+      continue;
+    }
+
     const day = DAY_NAMES[diff.dayIdx] || 'Noma\'lum kun';
     const time = PERIOD_TIMES[diff.period] ? ` <i>(${PERIOD_TIMES[diff.period].start}–${PERIOD_TIMES[diff.period].end})</i>` : '';
     text += `\n📅 <b>${day}, ${diff.period}-para</b>${time}:\n`;
 
     if (diff.type === 'LESSON_CANCELLED') {
       for (const l of diff.oldLessons) {
-        text += `  ❌ <b>Dars bekor qilindi:</b> ${l.subject} (${l.room}-xona)\n`;
+        text += `  ❌ <b>Dars bekor qilindi:</b> ${escapeHtml(l.subject)} (${escapeHtml(l.room)}-xona)\n`;
       }
     } else if (diff.type === 'LESSON_ADDED') {
       for (const l of diff.newLessons) {
-        text += `  ➕ <b>Yangi dars qo'shildi:</b>\n    📖 ${l.subject}\n    🚪 ${l.room}-xona | 👨‍🏫 ${l.teacher}\n`;
+        text += `  ➕ <b>Yangi dars qo'shildi:</b>\n    📖 ${escapeHtml(l.subject)}\n    🚪 ${escapeHtml(l.room)}-xona | 👨‍🏫 ${escapeHtml(l.teacher)}\n`;
       }
     } else if (diff.type === 'MODIFIED') {
       for (const change of diff.changes) {
         if (change.kind === 'ROOM') {
-          text += `  🔄 <b>Xona o'zgardi:</b>\n    📖 ${change.subject}\n    ❌ Eski: <s>${change.from}</s>\n    ✅ Yangi: <b>${change.to}</b>\n`;
+          text += `  🔄 <b>Xona o'zgardi:</b>\n    📖 ${escapeHtml(change.subject)}\n    ❌ Eski: <s>${escapeHtml(change.from)}</s>\n    ✅ Yangi: <b>${escapeHtml(change.to)}</b>\n`;
         } else if (change.kind === 'TEACHER') {
-          text += `  👨‍🏫 <b>O'qituvchi almashdi:</b>\n    📖 ${change.subject}\n    ❌ Avval: <s>${change.from}</s>\n    ✅ Yangi: <b>${change.to}</b>\n`;
+          text += `  👨‍🏫 <b>O'qituvchi almashdi:</b>\n    📖 ${escapeHtml(change.subject)}\n    ❌ Avval: <s>${escapeHtml(change.from)}</s>\n    ✅ Yangi: <b>${escapeHtml(change.to)}</b>\n`;
         } else if (change.kind === 'SUBJECT') {
-          text += `  🔄 <b>Fan o'zgardi:</b>\n    ❌ <s>${change.from}</s> ➡️ <b>${change.to}</b>\n`;
+          text += `  🔄 <b>Fan o'zgardi:</b>\n    ❌ <s>${escapeHtml(change.from)}</s> ➡️ <b>${escapeHtml(change.to)}</b>\n`;
+        } else if (change.kind === 'ADDED_PART') {
+          text += `  ➕ <b>Qo'shimcha dars/kichik guruh:</b>\n    📖 ${escapeHtml(change.to)}\n`;
+        } else if (change.kind === 'REMOVED_PART') {
+          text += `  ➖ <b>Dars olib tashlandi:</b>\n    ❌ <s>${escapeHtml(change.from)}</s>\n`;
         } else {
-          text += `  🔄 ${change.from || ''} ➡️ <b>${change.to || ''}</b>\n`;
+          text += `  🔄 ${escapeHtml(change.from || '')} ➡️ <b>${escapeHtml(change.to || '')}</b>\n`;
         }
       }
     }
   }
 
   text += '\n<i>💡 Yangilangan to\'liq jadvalni ko\'rish uchun /jadval yoki /hafta ni bosing.</i>';
-  return text;
+  return truncateText(text, 3950);
 }
 
 /**
- * Dispatches targeted alerts to students of affected groups via BullMQ
+ * Dispatches targeted alerts to students of affected groups via BullMQ (or direct Telegram delivery fallback),
+ * and pre-warms the updated schedule image ONLY for active groups with registered users.
  */
-async function dispatchGroupAlerts(groupName, diffs, allUsers) {
+async function dispatchGroupAlerts(groupName, diffs, usersList) {
   const canonicalGroupName = edupageService.getCanonicalGroupName(groupName) || groupName;
   const normGroup = normalizeGroupName(canonicalGroupName);
   const rawNormGroup = normalizeGroupName(groupName);
 
-  const matchingUsers = (allUsers || []).filter(u => {
-    if (!u.telegram_id || !u.class_name) return false;
+  // If usersList is already filtered, use it; otherwise filter from all users
+  const rawUsers = (usersList || []).filter(u => {
+    if (!u || !u.telegram_id || !u.class_name || u.is_banned || u.is_blocked) return false;
     const uNorm = normalizeGroupName(u.class_name);
     if (uNorm === normGroup || uNorm === rawNormGroup) return true;
 
@@ -218,43 +258,77 @@ async function dispatchGroupAlerts(groupName, diffs, allUsers) {
     return false;
   });
 
+  // Deduplicate by telegram_id
+  const matchingUsers = Array.from(new Map(rawUsers.map(u => [String(u.telegram_id), u])).values());
+
+  // Invalidate rendered weekly image cache for this group
+  await scheduleService.invalidateImageCache(groupName);
+
   if (matchingUsers.length === 0) {
     logger.debug('Schedule changed for group with no registered bot users', { groupName });
     return;
   }
 
-  const message = formatChangeAlert(groupName, diffs);
+  const message = formatChangeAlert(canonicalGroupName, diffs);
 
-  // Invalidate rendered weekly image cache
-  scheduleService.invalidateImageCache(groupName);
-
-  // Enqueue alert notifications into BullMQ
-  const jobs = matchingUsers.map(u => ({
-    name: 'schedule-change-alert',
-    data: {
-      userId: u.telegram_id,
-      message,
-    },
-    opts: {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 3000 },
-      removeOnComplete: true,
-      removeOnFail: 100,
-    },
-  }));
-
+  // 1. Deliver notifications specifically to affected students
   const queue = getBroadcastQueue();
-  if (queue) {
+  const redis = getRedisClient();
+  const hasRealQueue = queue && !queue.isDummy && redis && !redis.isDummy;
+  if (hasRealQueue) {
+    const jobs = matchingUsers.map(u => ({
+      name: 'schedule-change-alert',
+      data: {
+        userId: u.telegram_id,
+        message,
+      },
+      opts: {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 3000 },
+        removeOnComplete: true,
+        removeOnFail: 100,
+      },
+    }));
+
     await queue.addBulk(jobs);
-    logger.info(`📢 Queued schedule change alert to ${matchingUsers.length} users of ${groupName}`, {
-      groupName,
+    logger.info(`📢 Queued schedule change alert via BullMQ to ${matchingUsers.length} users of ${canonicalGroupName}`, {
+      groupName: canonicalGroupName,
       diffCount: diffs.length,
     });
+  } else if (_botTelegram) {
+    logger.info(`📢 Delivering schedule change alerts directly to ${matchingUsers.length} users of ${canonicalGroupName}...`);
+    for (const u of matchingUsers) {
+      try {
+        await _botTelegram.sendMessage(u.telegram_id, message, { parse_mode: 'HTML' });
+      } catch (sendErr) {
+        const isBlocked = sendErr?.message?.includes('blocked') ||
+          sendErr?.message?.includes('deactivated') ||
+          sendErr?.response?.error_code === 403;
+        if (isBlocked) {
+          getDbService().markUserBlocked(u.telegram_id, true).catch(() => {});
+        } else {
+          logger.warn(`Direct alert send failed for user ${u.telegram_id}:`, { error: sendErr.message });
+        }
+      }
+      await new Promise(r => setTimeout(r, 60)); // 60ms pacing to stay safely under Telegram limits
+    }
   } else {
-    logger.info(`📢 Schedule change alert generated for ${matchingUsers.length} users of ${groupName} (queue disabled)`, {
-      groupName,
+    logger.info(`📢 Schedule change alert prepared for ${matchingUsers.length} users of ${canonicalGroupName} (no delivery transport available)`, {
+      groupName: canonicalGroupName,
       diffCount: diffs.length,
     });
+  }
+
+  // 2. Pre-warm fresh schedule image ONLY for this active group that actually has registered users!
+  if (_botTelegram) {
+    try {
+      const timetableCdn = require('./timetableCdnService');
+      timetableCdn.getOrGenerateTimetablePhoto(_botTelegram, canonicalGroupName, 'dark').catch(err => {
+        logger.debug('Active group timetable photo pre-warm in background error:', { group: canonicalGroupName, error: err.message });
+      });
+    } catch (e) {
+      logger.debug('timetableCdnService not available for active group pre-warm', { error: e.message });
+    }
   }
 }
 
@@ -301,51 +375,9 @@ async function checkScheduleChanges(forceDeepCheck = false) {
       }
     }
 
-    // 2. Tier 1: Conditional Metadata Gatekeeper (332 bytes probe)
-    let metadataSig = null;
-    try {
-      metadataSig = await edupageService.getMetadataSignature();
-    } catch (sigErr) {
-      logger.warn('EduPage metadata signature probe failed, falling back to deep sync', { error: sigErr.message });
-    }
-
-    const timeSinceLastDeep = Date.now() - lastDeepCheckAt;
-    const isSignatureUnchanged = Boolean(metadataSig && lastKnownSignature && metadataSig === lastKnownSignature);
-    const isPeriodicCheckDue = timeSinceLastDeep >= DEEP_CHECK_INTERVAL_MS;
-
-    // Skip heavy download if signature matches and 30 minutes haven't elapsed
-    if (isBaselineReady && isSignatureUnchanged && !isPeriodicCheckDue && !forceDeepCheck) {
-      tier1SkipsCount++;
-      lastCheckedAt = Date.now();
-      lastCheckStatus = 'ok (skipped by tier-1 gatekeeper)';
-      const durationMs = Date.now() - t0;
-      logger.debug('Tier-1 Gatekeeper: metadata signature unchanged, skipping 8MB payload', {
-        signature: metadataSig,
-        durationMs,
-        skipsCount: tier1SkipsCount,
-      });
-      return {
-        checked: true,
-        skippedTier1: true,
-        changedGroupsCount: 0,
-        changedGroups: [],
-        signature: metadataSig,
-        durationMs,
-      };
-    }
-
-    // 3. Tier 2: Deep Schedule Synchronization (O(1) Synchronous Map Iteration)
+    // 2. Real-time Database Synchronization from EduPage (Gzip payload ~767KB in ~1.6s)
     deepChecksCount++;
-    logger.info('Tier-2 Deep Check executing', {
-      reason: forceDeepCheck
-        ? 'forced'
-        : (isPeriodicCheckDue ? 'periodic_interval' : (isSignatureUnchanged ? 'initial_baseline' : 'signature_changed')),
-      oldSignature: lastKnownSignature,
-      newSignature: metadataSig,
-    });
-
-    // Fetch or resolve indexed university database
-    const indexedDb = await edupageService.getIndexedDatabase(forceDeepCheck || !isSignatureUnchanged);
+    const indexedDb = await edupageService.getIndexedDatabase(true);
     if (!indexedDb?.schedulesByClassId || !indexedDb?.classesById) {
       isChecking = false;
       lastCheckStatus = 'error_empty_tables';
@@ -366,13 +398,14 @@ async function checkScheduleChanges(forceDeepCheck = false) {
       const norm = normalizeGroupName(gName);
       if (!norm) continue;
 
+      const currentSimplified = getSimplifiedSchedule(currentRawSchedule);
       const currentHash = computeScheduleHash(currentRawSchedule);
-      newHashesForRedis[classId] = { hash: currentHash, groupName: gName, norm };
+      newHashesForRedis[classId] = { hash: currentHash, schedule: currentSimplified, groupName: gName, norm };
 
       if (isBaselineReady) {
         const oldEntry = groupSnapshots.get(classId);
         if (oldEntry && oldEntry.hash !== currentHash) {
-          const diffs = diffGroupSchedules(oldEntry.schedule, currentRawSchedule);
+          const diffs = diffGroupSchedules(oldEntry.schedule || {}, currentSimplified);
           if (diffs.length > 0) {
             changedGroups.push({ classId, groupName: gName, norm, diffs });
           }
@@ -382,18 +415,15 @@ async function checkScheduleChanges(forceDeepCheck = false) {
       // Update in-memory snapshot
       groupSnapshots.set(classId, {
         hash: currentHash,
-        schedule: currentRawSchedule,
+        schedule: currentSimplified,
         groupName: gName,
         norm,
       });
     }
 
-    if (metadataSig) {
-      lastKnownSignature = metadataSig;
-    }
     lastDeepCheckAt = Date.now();
 
-    // 4. Baseline vs Change detection dispatch
+    // 3. Baseline vs Change detection dispatch
     if (!isBaselineReady) {
       isBaselineReady = true;
       logger.info('✅ Initial schedule baseline snapshot established', {
@@ -405,26 +435,73 @@ async function checkScheduleChanges(forceDeepCheck = false) {
         groups: changedGroups.map(g => g.groupName),
       });
 
-      // Dispatch notifications once for all affected groups
+      // Fetch enrolled active users from DB once
       const db = getDbService();
-      const allUsers = await db.getAllUsers();
-      for (const item of changedGroups) {
-        await dispatchGroupAlerts(item.groupName, item.diffs, allUsers);
+      let broadcastUsers = [];
+      try {
+        if (typeof db.getScheduleBroadcastUsers === 'function') {
+          broadcastUsers = await db.getScheduleBroadcastUsers();
+        }
+        if (!broadcastUsers || broadcastUsers.length === 0) {
+          broadcastUsers = await db.getAllUsers();
+        }
+      } catch (e) {
+        logger.warn('Failed to load users for schedule change alerts', { error: e.message });
       }
+
+      // Group active users by normalized group name for fast O(1) matching
+      const usersByGroupNorm = new Map();
+      for (const u of (broadcastUsers || [])) {
+        if (!u.telegram_id || !u.class_name || u.is_banned || u.is_blocked) continue;
+        const uCanonical = edupageService.getCanonicalGroupName(u.class_name) || u.class_name;
+        const uNorm = normalizeGroupName(uCanonical);
+        const uRawNorm = normalizeGroupName(u.class_name);
+
+        if (uNorm) {
+          if (!usersByGroupNorm.has(uNorm)) usersByGroupNorm.set(uNorm, []);
+          usersByGroupNorm.get(uNorm).push(u);
+        }
+        if (uRawNorm && uRawNorm !== uNorm) {
+          if (!usersByGroupNorm.has(uRawNorm)) usersByGroupNorm.set(uRawNorm, []);
+          usersByGroupNorm.get(uRawNorm).push(u);
+        }
+      }
+
+      let activeChangesCount = 0;
+      for (const item of changedGroups) {
+        const canonical = edupageService.getCanonicalGroupName(item.groupName) || item.groupName;
+        const norm = normalizeGroupName(canonical);
+        const rawNorm = normalizeGroupName(item.groupName);
+
+        const matchingUsers = [
+          ...(usersByGroupNorm.get(norm) || []),
+          ...(rawNorm && rawNorm !== norm ? (usersByGroupNorm.get(rawNorm) || []) : []),
+        ];
+
+        // Deduplicate
+        const uniqueMatching = Array.from(new Map(matchingUsers.map(u => [String(u.telegram_id), u])).values());
+
+        if (uniqueMatching.length === 0) {
+          // Inactive/Unused group: Only purge stale cache metadata. DO NOT generate images or send alerts to save server RAM/CPU!
+          logger.debug(`Schedule changed for inactive group "${item.groupName}" (0 registered users). Image rendering skipped to save resources.`);
+          await scheduleService.invalidateImageCache(item.groupName).catch(() => {});
+        } else {
+          // Active group with real students! Invalidate old image, dispatch alerts, and pre-warm image ONLY for this group!
+          activeChangesCount++;
+          logger.info(`📢 Active group "${item.groupName}" changed! Alerting ${uniqueMatching.length} enrolled users and pre-warming CDN.`);
+          await dispatchGroupAlerts(item.groupName, item.diffs, uniqueMatching);
+        }
+      }
+      logger.info(`Schedule change processing finished: ${activeChangesCount} active groups alerted, ${changedGroups.length - activeChangesCount} inactive groups skipped.`);
     } else {
-      logger.debug('Schedule deep check completed: no changes detected', { durationMs: Date.now() - t0 });
+      logger.debug('Schedule check completed: no changes detected', { durationMs: Date.now() - t0 });
     }
 
-    // 5. Save updated baseline hashes and signature to Redis
+    // 4. Save updated baseline hashes to Redis
     if (redis) {
       redis.set(REDIS_WATCHER_KEY, JSON.stringify(newHashesForRedis), 'EX', 24 * 60 * 60).catch(err => {
         logger.warn('Failed to save schedule watcher hashes in Redis', { error: err.message });
       });
-      if (lastKnownSignature) {
-        redis.set(REDIS_SIG_KEY, lastKnownSignature, 'EX', 24 * 60 * 60).catch(err => {
-          logger.warn('Failed to save schedule watcher signature in Redis', { error: err.message });
-        });
-      }
     }
 
     lastCheckedAt = Date.now();
@@ -464,9 +541,11 @@ function getWatcherStatus() {
 }
 
 module.exports = {
+  setBotInstance,
   checkScheduleChanges,
   diffGroupSchedules,
   computeScheduleHash,
   formatChangeAlert,
   getWatcherStatus,
 };
+

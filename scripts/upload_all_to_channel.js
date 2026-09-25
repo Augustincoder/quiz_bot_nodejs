@@ -73,7 +73,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`🤖 Bot Token:    ${BOT_TOKEN.slice(0, 10)}...`);
+  console.log(`🤖 Bot Token:    [SOZLANGAN / CONFIGURED]`);
   console.log(`📢 Kanal ID:     ${CHANNEL_ID}`);
   console.log(`💻 CPU yadrolar: ${cpuCores} ta (Parallel libvips renderer)`);
   console.log(`⏱️ Pacing Delay: ${delayMs}ms oralig'i (Telegram CDN limitiga moslangan)`);

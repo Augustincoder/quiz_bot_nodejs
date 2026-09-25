@@ -46,6 +46,7 @@ process.on("uncaughtException", async (err) => {
 
 // ─── Bot & Workers Setup ─────────────────────────────────────
 const bot = new Telegraf(BOT_TOKEN);
+scheduleWatcher.setBotInstance(bot);
 let _workers = null;
 let _cronJobs = [];
 
@@ -389,17 +390,22 @@ async function main() {
     timezone: "Asia/Tashkent",
   });
 
-  // 3. Realtime Schedule Watcher (Kunduzi har 3 daqiqada tekshirib o'zgarishlarni aniqlaydi)
+  // 3. Realtime Schedule Watcher (Dushanbadan Shanbagacha kunduzi har 3 daqiqada)
   const watcherDayCron = cron.schedule("*/3 7-20 * * 1-6", () => scheduleWatcher.checkScheduleChanges(false), {
     timezone: "Asia/Tashkent",
   });
 
-  // 4. Realtime Schedule Watcher (Kechasi va dam olish kunlari har 30 daqiqada)
+  // 4. Realtime Schedule Watcher (Tungi soatlarda har 30 daqiqada)
   const watcherNightCron = cron.schedule("*/30 21-23,0-6 * * *", () => scheduleWatcher.checkScheduleChanges(false), {
     timezone: "Asia/Tashkent",
   });
 
-  _cronJobs = [morningCron, eveningCron, watcherDayCron, watcherNightCron];
+  // 5. Realtime Schedule Watcher (Yakshanba kunduzi har 15 daqiqada — dushanba jadvali o'zgarishlarini oldindan aniqlash uchun)
+  const watcherSundayCron = cron.schedule("*/15 7-20 * * 0", () => scheduleWatcher.checkScheduleChanges(false), {
+    timezone: "Asia/Tashkent",
+  });
+
+  _cronJobs = [morningCron, eveningCron, watcherDayCron, watcherNightCron, watcherSundayCron];
   logger.info("⏰ Dars jadvali avtomatik tarqatish va Realtime Watcher faollashtirildi");
 
   // Initial watcher snapshot baseline in background

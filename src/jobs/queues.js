@@ -7,6 +7,7 @@ let quizTimerQueue;
 
 if (!process.env.REDIS_URL || redisConnection.isDummy) {
   const dummyQueue = {
+    isDummy: true,
     add: async () => ({ id: 'dummy' }),
     addBulk: async () => [],
     pause: async () => {},
