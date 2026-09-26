@@ -8,7 +8,7 @@ const logger = require('../core/logger');
 
 const DISK_CACHE_PATH = path.join(__dirname, '../data/timetable_cache.json');
 
-const DAY_NAMES = ['Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba'];
+const DAY_NAMES = ['Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba', 'Yakshanba'];
 const PERIOD_TIMES = {
   1: { start: '08:00', end: '09:20' },
   2: { start: '09:30', end: '10:50' },
@@ -56,6 +56,7 @@ let l1CacheTime = 0;
 
 // Singleflight Mutex: collapses concurrent callers into a single network fetch
 let activeFetchPromise = null;
+let activeFetchPromiseIsForced = false;
 
 /**
  * Optional Redis client resolver (graceful degradation if Redis is unavailable)
@@ -631,11 +632,16 @@ async function getOrFetchIndexedData(forceRefresh = false) {
     return l1IndexedDatabase;
   }
 
-  // Singleflight: reuse running promise to coalesce concurrent incoming calls
+  // Singleflight: reuse running promise if it satisfies forceRefresh requirement
   if (activeFetchPromise) {
-    return activeFetchPromise;
+    if (!forceRefresh || activeFetchPromiseIsForced) {
+      return activeFetchPromise;
+    }
+    // If caller demands forceRefresh but in-flight fetch is unforced, await it then proceed
+    await activeFetchPromise.catch(() => {});
   }
 
+  activeFetchPromiseIsForced = Boolean(forceRefresh);
   activeFetchPromise = (async () => {
     try {
       const defaultNum = await resolveDefaultNum();
@@ -710,6 +716,7 @@ async function getOrFetchIndexedData(forceRefresh = false) {
       return l1IndexedDatabase;
     } finally {
       activeFetchPromise = null;
+      activeFetchPromiseIsForced = false;
     }
   })();
 

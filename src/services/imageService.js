@@ -44,15 +44,18 @@ const DAY_NAMES = ['Dush', 'Sesh', 'Chor', 'Pay', 'Juma', 'Shan'];
 // ─── Text Processing Helpers ─────────────────────────────────────────────────
 function escapeXml(unsafe) {
   if (!unsafe) return '';
-  return unsafe.toString().replace(/[<>&'"]/g, c => {
-    switch (c) {
-      case '<': return '&lt;';
-      case '>': return '&gt;';
-      case '&': return '&amp;';
-      case '\'': return '&apos;';
-      case '"': return '&quot;';
-    }
-  });
+  return unsafe
+    .toString()
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .replace(/[<>&'"]/g, c => {
+      switch (c) {
+        case '<': return '&lt;';
+        case '>': return '&gt;';
+        case '&': return '&amp;';
+        case '\'': return '&apos;';
+        case '"': return '&quot;';
+      }
+    });
 }
 
 function cleanSubjectTitle(subject) {

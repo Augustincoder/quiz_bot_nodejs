@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node --expose-gc --max-old-space-size=350 index.js",
-    "dev": "nodemon index.js",
+    "dev": "nodemon --exec \"node --expose-gc --max-old-space-size=350\" index.js",
     "upload:cdn": "node --expose-gc scripts/upload_all_to_channel.js",
     "prewarm:cdn": "node --expose-gc --max-old-space-size=350 scripts/prewarm_timetable_cdn.js",
     "prewarm:cdn:active": "node --expose-gc --max-old-space-size=350 scripts/prewarm_timetable_cdn.js --active-only",

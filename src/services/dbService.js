@@ -17,8 +17,8 @@ try {
   logger.error('Supabase ulanish xatosi:', { error: e.message });
 }
 
-// In-memory fallback cache for timetable CDN metadata
-const fallbackTimetableCache = new Map();
+// In-memory fallback cache for timetable CDN metadata (bounded to 1000 items)
+const fallbackTimetableCache = new TTLMap(24 * 60 * 60 * 1000, 1000);
 
 async function loadAllOfficialTests() {
   if (!supabase) return {};
@@ -712,12 +712,13 @@ async function isUserBanned(userId) {
 // 📵 USER BLOCKED STATUS (TELEGRAM FLOOD GUARD)
 // ==========================================
 
-const localBlockedUsers = new Set();
+// In-memory flood guard bounded to 2000 users with 7-day TTL
+const localBlockedUsers = new TTLMap(7 * 24 * 60 * 60 * 1000, 2000);
 
 async function markUserBlocked(userId, isBlocked = true) {
   const uid = String(userId);
   if (isBlocked) {
-    localBlockedUsers.add(uid);
+    localBlockedUsers.set(uid, true);
   } else {
     localBlockedUsers.delete(uid);
   }
@@ -988,10 +989,21 @@ async function getAllCachedTimetables() {
 async function clearAllTimetableCache() {
   if (redis) {
     try {
-      const keys = await redis.keys('cache:timetable_cdn:*');
-      if (keys && keys.length > 0) {
-        await redis.del(keys);
-        logger.info(`Cleared ${keys.length} timetable CDN keys from Redis.`);
+      if (typeof redis.scanStream === 'function') {
+        const stream = redis.scanStream({ match: 'cache:timetable_cdn:*', count: 100 });
+        stream.on('data', async (keys) => {
+          if (keys && keys.length > 0) {
+            await redis.del(keys).catch(() => {});
+          }
+        });
+        stream.on('end', () => {
+          logger.info('Finished scanning and clearing Redis timetable CDN cache.');
+        });
+      } else {
+        const keys = await redis.keys('cache:timetable_cdn:*');
+        if (keys && keys.length > 0) {
+          await redis.del(keys);
+        }
       }
     } catch (e) {
       logger.error('Error clearing Redis timetable cache:', { error: e.message });

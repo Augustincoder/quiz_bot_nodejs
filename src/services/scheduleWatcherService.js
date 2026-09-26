@@ -55,6 +55,7 @@ let lastDeepCheckAt = 0;
 let lastKnownSignature = null;
 let lastCheckStatus = 'idle';
 let isChecking = false;
+let lastCheckStartedAt = 0;
 let isBaselineReady = false;
 let tier1SkipsCount = 0;
 let deepChecksCount = 0;
@@ -566,8 +567,13 @@ async function notifyGroupScheduleChanged(groupName, newHash) {
  */
 async function checkScheduleChanges(forceOrOptions = false) {
   if (isChecking) {
-    logger.debug('Schedule check already in progress, skipping iteration');
-    return { checked: false, reason: 'in_progress' };
+    if (Date.now() - (lastCheckStartedAt || 0) > 5 * 60 * 1000) {
+      logger.warn('Previous schedule check was stuck for >5m; auto-resetting isChecking lock.');
+      isChecking = false;
+    } else {
+      logger.debug('Schedule check already in progress, skipping iteration');
+      return { checked: false, reason: 'in_progress' };
+    }
   }
 
   let forceDeepCheck = false;
@@ -596,6 +602,7 @@ async function checkScheduleChanges(forceOrOptions = false) {
   }
 
   isChecking = true;
+  lastCheckStartedAt = Date.now();
   lastCheckStatus = 'checking';
   const t0 = Date.now();
 
@@ -668,14 +675,17 @@ async function checkScheduleChanges(forceOrOptions = false) {
       }
     }
 
-    // Map all cached timetable hashes in DB
+    // Map all cached timetable hashes in DB (store Set of hashes across themes)
     const cachedTimetablesMap = new Map();
     try {
       if (typeof db.getAllCachedTimetables === 'function') {
         const cachedRows = await db.getAllCachedTimetables();
         for (const row of (cachedRows || [])) {
           if (row.group_normalized && row.schedule_hash) {
-            cachedTimetablesMap.set(row.group_normalized, row.schedule_hash);
+            if (!cachedTimetablesMap.has(row.group_normalized)) {
+              cachedTimetablesMap.set(row.group_normalized, new Set());
+            }
+            cachedTimetablesMap.get(row.group_normalized).add(row.schedule_hash);
           }
         }
       }
@@ -736,7 +746,8 @@ async function checkScheduleChanges(forceOrOptions = false) {
       const oldEntry = groupSnapshots.get(cidStr);
       const oldSchedule = oldEntry?.schedule || activeSnapshotsMap.get(norm) || (rawNorm ? activeSnapshotsMap.get(rawNorm) : null);
       const oldHash = oldEntry?.hash;
-      const dbCachedHash = cachedTimetablesMap.get(norm) || (rawNorm ? cachedTimetablesMap.get(rawNorm) : null);
+      const dbCachedHashSet = cachedTimetablesMap.get(norm) || (rawNorm ? cachedTimetablesMap.get(rawNorm) : null);
+      const isDbCacheStale = dbCachedHashSet && dbCachedHashSet.size > 0 && !dbCachedHashSet.has(currentHash);
       const lastAlertedHash = alertedHashesMap.get(norm) || (rawNorm ? alertedHashesMap.get(rawNorm) : null);
       const hasActiveUsers = (usersByGroupNorm.has(norm) && usersByGroupNorm.get(norm).length > 0) ||
                              (rawNorm && usersByGroupNorm.has(rawNorm) && usersByGroupNorm.get(rawNorm).length > 0);
@@ -767,8 +778,8 @@ async function checkScheduleChanges(forceOrOptions = false) {
         diffs = diffGroupSchedules(oldSchedule || {}, currentSimplified);
       }
       // Detection Condition 2: Active registered group whose DB/CDN cache is stale
-      else if (hasActiveUsers && dbCachedHash && dbCachedHash !== currentHash) {
-        logger.info(`🚨 Stale DB/CDN cache detected for active group "${canonical}" (DB: ${dbCachedHash.slice(0, 10)}... vs EduPage: ${currentHash.slice(0, 10)}...)`);
+      else if (hasActiveUsers && isDbCacheStale) {
+        logger.info(`🚨 Stale DB/CDN cache detected for active group "${canonical}" (EduPage: ${currentHash.slice(0, 10)}...)`);
         hasChanged = true;
         diffs = diffGroupSchedules(oldSchedule || {}, currentSimplified);
       }

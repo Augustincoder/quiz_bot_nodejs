@@ -4,7 +4,7 @@ const { Markup } = require('telegraf');
 const dbService = require('../services/dbService');
 const scheduleService = require('../services/scheduleService');
 const edupageService = require('../services/edupageService');
-const { getTimetableKeyboard, getTimetableInlineKeyboard } = require('../keyboards/keyboards');
+const { getTimetableInlineKeyboard } = require('../keyboards/keyboards');
 const { TTLMap, escapeHtml, safeAnswerCb, safeEdit } = require('../core/utils');
 const logger = require('../core/logger');
 
@@ -541,7 +541,9 @@ async function renderRoomView(ctx, periodNum, binoId = 'all', pageIdx = 0, expli
   if (!pages) {
     const filterParam = binoId === 'all' ? null : (binoId === 'my' ? 'my' : fromBinoId(binoId));
     pages = await scheduleService.fetchEmptyRooms(className, dayIdx, periodNum, offsetDays, filterParam, timeMode);
-    roomsPaginationCache.set(cacheKey, pages);
+    if (Array.isArray(pages) && pages.length > 0 && !pages[0]?.startsWith('❌')) {
+      roomsPaginationCache.set(cacheKey, pages);
+    }
   }
 
   const safePage = Math.max(0, Math.min(pageIdx, (pages.length || 1) - 1));
