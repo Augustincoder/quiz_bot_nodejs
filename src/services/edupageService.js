@@ -102,7 +102,7 @@ function normalizeGroupName(str) {
   if (!str) return '';
   const transliterated = transliterateCyrillic(String(str));
   const clean = transliterated.toUpperCase().replace(/[^A-Z0-9]/g, '');
-  return clean.replace(/^([A-Z0-9]+?)([IRK])(\d{2})$/, '$1$3$2');
+  return clean.replace(/^([A-Z]+\d+)([IRK])(\d{2})$/, '$1$3$2');
 }
 
 /**
@@ -585,6 +585,7 @@ function buildIndexedDatabase(raw, defaultNum) {
   }
 
   return {
+    raw,
     defaultNum,
     fetchedAt: Date.now(),
     classesById,
@@ -608,13 +609,14 @@ async function fetchRawTimetable(defaultNum) {
 }
 
 async function saveDiskCache(raw) {
+  const tmpPath = `${DISK_CACHE_PATH}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
   try {
     await fs.promises.mkdir(path.dirname(DISK_CACHE_PATH), { recursive: true });
-    const tmpPath = `${DISK_CACHE_PATH}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
     await fs.promises.writeFile(tmpPath, JSON.stringify(raw), 'utf8');
     await fs.promises.rename(tmpPath, DISK_CACHE_PATH);
   } catch (err) {
     logger.warn('Failed to atomically write EduPage L3 Disk Cache', { error: err.message });
+    await fs.promises.unlink(tmpPath).catch(() => {});
   }
 }
 
@@ -665,6 +667,7 @@ async function getOrFetchIndexedData(forceRefresh = false) {
         // Fallback 1: Stale-While-Revalidate Memory Cache
         if (l1IndexedDatabase && (now - l1CacheTime < L1_STALE_TTL)) {
           logger.warn('EduPage network request failed; serving stale memory cache', { error: networkErr.message });
+          l1CacheTime = Date.now() - L1_CACHE_TTL + 60000; // 1-minute cooldown before retrying EduPage network
           return l1IndexedDatabase;
         }
 
@@ -675,7 +678,7 @@ async function getOrFetchIndexedData(forceRefresh = false) {
             if (diskRaw?.r?.dbiAccessorRes?.tables) {
               logger.warn('EduPage network request failed; restored from L3 Disk Cache', { error: networkErr.message });
               l1IndexedDatabase = buildIndexedDatabase(diskRaw, defaultNum);
-              l1CacheTime = Date.now();
+              l1CacheTime = Date.now() - L1_CACHE_TTL + 60000;
               return l1IndexedDatabase;
             }
           }
@@ -695,7 +698,7 @@ async function getOrFetchIndexedData(forceRefresh = false) {
       l1CacheTime = Date.now();
 
       // Async atomic write to L3 Disk Cache (guarantees zero corruption across reboots)
-      saveDiskCache(raw).catch(() => {});
+      saveDiskCache({ ...raw, _defaultNum: defaultNum }).catch(() => {});
 
       // Async write to L2 Redis
       if (redis) {
@@ -976,7 +979,7 @@ async function warmUpCache() {
 
     // 2. Fetch fresh from network / Redis in background
     logger.info('Pre-warming EduPage schedule cache in background...');
-    await getOrFetchIndexedData();
+    await getOrFetchIndexedData(true);
     logger.info('EduPage schedule cache successfully pre-warmed');
   } catch (err) {
     logger.warn('Failed to pre-warm EduPage cache (will retry on first request)', { error: err.message });

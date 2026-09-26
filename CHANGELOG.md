@@ -4,6 +4,37 @@ Barcha muhim o'zgarishlar, yangilanishlar va xavfsizlik yaxshilanishlari ushbu h
 
 ---
 
+## [1.1.6] — 2026-09-26
+
+### 🛡 Katta Audit va Xatoliklarni Bartaraf Etish (Audit Fixes & System Hardening)
+* **Kritik: Foydalanuvchi Tarixini Saqlab Qolish (`getUserStats` & `updateUserStats`):**
+  - Tarmoq uzilishlarida `getUserStats` endi bo'sh 0-statistikani haqiqiy foydalanuvchi deb qabul qilmaydi (`_fetchFailed: true` bayrog'i qo'shildi).
+  - `updateUserStats` va `saveTestToShelf` ushbu holatda yangilashni to'xtatadi va talabaning yechgan testlari va xatolari tarixini 0 ga tushib qolishidan 100% himoyalaydi.
+* **Kritik: Xesh Formulalarini Unifikatsiya Qilish (False Positive Alert Prevention):**
+  - `timetableCdnService` va `scheduleWatcherService` dagi darslarni saralash formulasi yagona manbaga keltirildi (`subject + room + teacher` deterministik saralash).
+  - O'zgarmagan jadvallar uchun sun'iy xesh farqi va soxta xabarnomalar yuborilishi butunlay bartaraf etildi.
+* **Kritik: BullMQ Retry Tizimini Qayta Tiklash:**
+  - `workers.js` da faqat terminal xatolar (bot bloklangan, akkaunt o'chirilgan) to'xtatiladi; tarmoq va server xatolarida xato qayta tashlanadi (`throw err`).
+  - BullMQ'dagi `attempts: 3` va eksponensial backoff yana to'liq ishlay boshladi.
+  - `quizTimerWorker` ga ushlanmagan xatolar tufayli jarayon qulashining oldini oluvchi `.on('error', ...)` tinglovchisi qo'shildi.
+* **Kritik: `/hafta` Foydalanuvchi Qulflanishini Bartaraf Etish:**
+  - `activeHaftaRequests.add(userId)` dan so'ng darhol `try/finally` blokiga kirilishi ta'minlandi. Ma'lumotlar bazasi xatosi bo'lganda ham foydalanuvchi bloklanib qolmaydi.
+* **Kritik: Guruh Nomlarini Normalizatsiya Qilish Regexini To'g'rilash:**
+  - Regex `^([A-Z]+\d+)([IRK])(\d{2})$` ga o'zgartirildi. `MI-24` va `BI-15` kabi yo'nalishlar endi `M-24i` va `B-15i` bilan to'qnashmaydi.
+* **Yuqori: Supabase 1,000-qator Chegarasini Bartaraf Etish (Pagination):**
+  - `getAllUsers`, `getScheduleBroadcastUsers` va `getBroadcastRecipients` funksiyalariga `.range(from, to)` orqali avtomatik sahifalash qo'shildi. Bot foydalanuvchilari soni 1,000 dan oshganda ham barchasiga xabar yetib boradi.
+* **Yuqori: HTML Xavfsiz Qisqartirish (`truncateText`):**
+  - `truncateText` qirqilganda ochiq qolgan `<b>`, `<s>`, `<i>`, `<code>` teglari avtomatik yopiladi. Telegram API'ning `400 Bad Request: can't parse entities` xatosi yo'qotildi.
+* **Yuqori: 21:00 Cron To'qnashuvini Ajratish (Render RAM Himoyasi):**
+  - Tungi kuzatuvchi croni 21:00 dagi kechki jadval tarqatish bilan to'qnashmasligi uchun 21:05 ga ko'chirildi (`5,35 21-23,0-6 * * *`).
+* **Xotira Optimizatsiyasi:**
+  - `imageMemoryCache` sig'imi 50 tadan 15 tagacha kamaytirilib, Render'ning 512 MB RAM limitida xotira yuki 70-90 MB ga yengillashtirildi.
+  - Express JSON body parser hajmi 10 MB dan 2 MB ga tushirildi.
+* **Xavfsiz O'chirish (Graceful Shutdown):**
+  - Server o'chirilganda HTTP/Socket.io, BullMQ workerlar va navbatlar to'g'ri ketma-ketlikda to'xtatiladi. `_workers?.broadcastWorker?.close()` xavfsiz chaqiruvga o'tkazildi.
+
+---
+
 ## [1.1.5] — 2026-09-26
 
 ### 🚀 Senior Audit & Chuqur Nosozliklarni Bartaraf Etish (Deep System Audit)

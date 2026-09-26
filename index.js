@@ -78,7 +78,10 @@ bot.use(async (ctx, next) => {
   const ignoredUpdates = ["poll_answer", "poll", "my_chat_member", "chat_member"];
   if (ignoredUpdates.includes(ctx.updateType)) return next();
 
-  const key = `tg_session:${ctx.from?.id || ctx.chat?.id || "unknown"}`;
+  const userId = ctx.from?.id || ctx.chat?.id;
+  if (!userId) return next();
+
+  const key = `tg_session:${userId}`;
   let originalSessionStr = '{"state":null,"data":{}}';
 
   try {
@@ -94,17 +97,18 @@ bot.use(async (ctx, next) => {
     ctx.session = { state: null, data: {} };
   }
 
-  // Call downstream handlers ONCE. Never call next() inside a catch block!
-  await next();
-
-  // Save session to Redis if modified
   try {
-    const newSessionStr = JSON.stringify(ctx.session || { state: null, data: {} });
-    if (originalSessionStr !== newSessionStr) {
-      await redisConnection.set(key, newSessionStr, "EX", 86400);
+    await next();
+  } finally {
+    // Save session to Redis if modified, even if downstream handler threw an error
+    try {
+      const newSessionStr = JSON.stringify(ctx.session || { state: null, data: {} });
+      if (originalSessionStr !== newSessionStr) {
+        await redisConnection.set(key, newSessionStr, "EX", 86400);
+      }
+    } catch (err) {
+      logger.error("Session Redis write error:", { error: err.message });
     }
-  } catch (err) {
-    logger.error("Session Redis write error:", { error: err.message });
   }
 });
 
@@ -170,21 +174,21 @@ bot.command("profile", (ctx) => handlers.profile.cbProfile(ctx));
 bot.command("schedule", (ctx) => (handlers.schedule.cbSchedule || handlers.schedule.cmdTimetable)(ctx));
 
 bot.command("testcron_bugun", async (ctx) => {
-  if (!isAdmin(ctx.from.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
+  if (!isAdmin(ctx.from?.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
   await ctx.reply("⏳ Bugungi jadval tarqatish jarayoni boshlanmoqda...");
   await queueSchedules(false);
   return ctx.reply("✅ Bugungi dars jadvali tarqatish vazifasi navbatga qo'shildi!");
 });
 
 bot.command("testcron_ertaga", async (ctx) => {
-  if (!isAdmin(ctx.from.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
+  if (!isAdmin(ctx.from?.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
   await ctx.reply("⏳ Ertangi jadval tarqatish jarayoni boshlanmoqda...");
   await queueSchedules(true);
   return ctx.reply("✅ Ertangi dars jadvali tarqatish vazifasi navbatga qo'shildi!");
 });
 
 bot.command("check_schedule", async (ctx) => {
-  if (!isAdmin(ctx.from.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
+  if (!isAdmin(ctx.from?.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
   const text = (ctx.message?.text || "").trim();
   const arg = text.replace(/^\/check_schedule\s*/i, "").trim();
 
@@ -203,7 +207,7 @@ bot.command("check_schedule", async (ctx) => {
 });
 
 bot.command(["send_schedule_alert", "alert_group"], async (ctx) => {
-  if (!isAdmin(ctx.from.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
+  if (!isAdmin(ctx.from?.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
   const text = (ctx.message?.text || "").trim();
   const groupArg = text.replace(/^\/(send_schedule_alert|alert_group)\s*/i, "").trim();
 
@@ -221,7 +225,7 @@ bot.command(["send_schedule_alert", "alert_group"], async (ctx) => {
 });
 
 bot.command(["prewarm_active", "prewarm_start"], async (ctx) => {
-  if (!isAdmin(ctx.from.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
+  if (!isAdmin(ctx.from?.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
   const timetableCdnService = require("./src/services/timetableCdnService");
   const status = timetableCdnService.getWorkerStatus();
 
@@ -255,7 +259,7 @@ bot.command(["prewarm_active", "prewarm_start"], async (ctx) => {
 });
 
 bot.command("prewarm_status", async (ctx) => {
-  if (!isAdmin(ctx.from.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
+  if (!isAdmin(ctx.from?.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
   const timetableCdnService = require("./src/services/timetableCdnService");
   const st = timetableCdnService.getWorkerStatus();
 
@@ -280,7 +284,7 @@ bot.command("prewarm_status", async (ctx) => {
 });
 
 bot.command("prewarm_stop", async (ctx) => {
-  if (!isAdmin(ctx.from.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
+  if (!isAdmin(ctx.from?.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
   const timetableCdnService = require("./src/services/timetableCdnService");
   const stopped = timetableCdnService.stopPrewarmWorker();
   if (stopped) {
@@ -413,6 +417,7 @@ async function queueSchedules(isTomorrow = false) {
 
 // ═══ GRACEFUL SHUTDOWN ═══════════════════════════════════════
 let _isShuttingDown = false;
+let _httpServer = null;
 
 async function gracefulShutdown(signal) {
   if (_isShuttingDown) return;
@@ -426,14 +431,28 @@ async function gracefulShutdown(signal) {
     } catch {}
     _cronJobs.forEach((job) => job?.stop());
     bot.stop(signal);
+
+    if (_httpServer) {
+      await new Promise(r => _httpServer.close(r)).catch(() => {});
+    }
+
     await Promise.allSettled([
       broadcastQueue.pause(),
       quizTimerQueue.pause(),
-      _workers?.broadcastWorker.close(),
-      _workers?.quizTimerWorker.close(),
-      Sentry.flush(3000),
-      redisConnection.quit()
     ]);
+
+    await Promise.allSettled([
+      _workers?.broadcastWorker?.close(),
+      _workers?.quizTimerWorker?.close(),
+    ]);
+
+    await Promise.allSettled([
+      broadcastQueue.close(),
+      quizTimerQueue.close(),
+    ]);
+
+    await Sentry.flush(3000);
+    await redisConnection.quit().catch(() => {});
     logger.info('✅ Graceful shutdown completed');
   } catch (err) {
     logger.error('Shutdown error:', { error: err.message });
@@ -484,17 +503,29 @@ async function main() {
   });
 
   // 3. Realtime Schedule Watcher (Dushanbadan Shanbagacha kunduzi har 3 daqiqada)
-  const watcherDayCron = cron.schedule("*/3 7-20 * * 1-6", () => scheduleWatcher.checkScheduleChanges(false), {
+  const watcherDayCron = cron.schedule("*/3 7-20 * * 1-6", () => {
+    scheduleWatcher.checkScheduleChanges(false).catch(err => {
+      logger.error("Watcher day cron error:", { error: err.message });
+    });
+  }, {
     timezone: "Asia/Tashkent",
   });
 
-  // 4. Realtime Schedule Watcher (Tungi soatlarda har 30 daqiqada)
-  const watcherNightCron = cron.schedule("*/30 21-23,0-6 * * *", () => scheduleWatcher.checkScheduleChanges(false), {
+  // 4. Realtime Schedule Watcher (Tungi soatlarda har 30 daqiqada — 21:05 da boshlanib 21:00 kechki tarqatish bilan to'qnashmaydi)
+  const watcherNightCron = cron.schedule("5,35 21-23,0-6 * * *", () => {
+    scheduleWatcher.checkScheduleChanges(false).catch(err => {
+      logger.error("Watcher night cron error:", { error: err.message });
+    });
+  }, {
     timezone: "Asia/Tashkent",
   });
 
   // 5. Realtime Schedule Watcher (Yakshanba kunduzi har 15 daqiqada — dushanba jadvali o'zgarishlarini oldindan aniqlash uchun)
-  const watcherSundayCron = cron.schedule("*/15 7-20 * * 0", () => scheduleWatcher.checkScheduleChanges(false), {
+  const watcherSundayCron = cron.schedule("*/15 7-20 * * 0", () => {
+    scheduleWatcher.checkScheduleChanges(false).catch(err => {
+      logger.error("Watcher sunday cron error:", { error: err.message });
+    });
+  }, {
     timezone: "Asia/Tashkent",
   });
 
@@ -542,6 +573,7 @@ async function main() {
   // Web Server & Socket.io
   const app = express();
   const server = http.createServer(app);
+  _httpServer = server;
   const adminRouter = require("./src/api/admin");
 
   // Security Hardening Headers
@@ -556,7 +588,7 @@ async function main() {
   });
 
   app.use(cors());
-  app.use(express.json({ limit: "10mb" }));
+  app.use(express.json({ limit: "2mb" }));
   app.use("/api/admin", adminRouter);
   app.get("/", (_, res) => res.send("Bot 100% aktiv va ishlab turibdi! 🚀"));
 

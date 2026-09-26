@@ -13,8 +13,8 @@ const { generateScheduleImage } = require('./imageService');
 const { TTLMap } = require('../core/utils');
 const logger = require('../core/logger');
 
-// L1 in-memory cache for rendered weekly PNG images (15 minutes TTL, max 50 items ~12.5MB)
-const imageMemoryCache = new TTLMap(15 * 60 * 1000, 50);
+// L1 in-memory cache for rendered weekly PNG images (15 minutes TTL, max 15 items ~25-30MB)
+const imageMemoryCache = new TTLMap(15 * 60 * 1000, 15);
 
 // Singleflight promise map to coalesce concurrent image generations per group & theme
 const imageGenerationInflight = new Map();

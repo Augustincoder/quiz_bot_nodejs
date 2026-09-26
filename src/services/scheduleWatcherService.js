@@ -7,7 +7,7 @@ const scheduleService = require('./scheduleService');
 const { normalizeGroupName } = require('./edupageService');
 const { escapeHtml, truncateText, TTLMap } = require('../core/utils');
 
-const recentAlertsSent = new TTLMap(2 * 60 * 60 * 1000, 500); // 2-hour deduplication cache
+const recentAlertsSent = new TTLMap(2 * 60 * 60 * 1000, 2000); // 2-hour deduplication cache for all 1335+ groups
 
 let _dbService = null;
 function getDbService() {
@@ -91,7 +91,7 @@ function getSimplifiedSchedule(schedule) {
         subject: (l.subject || '').trim(),
         teacher: (l.teacher || '').trim(),
         room: (l.room || '').trim(),
-      })).sort((a, b) => (a.subject + a.room).localeCompare(b.subject + b.room));
+      })).sort((a, b) => (a.subject + a.room + a.teacher).localeCompare(b.subject + b.room + b.teacher));
     }
   }
   return simplified;
@@ -324,24 +324,35 @@ function formatChangeAlert(groupName, diffs) {
       for (const change of (diff.changes || [])) {
         changesFormatted++;
         if (change.kind === 'ROOM_AND_TEACHER') {
+          const fromR = change.fromRoom ? `<s>${escapeHtml(change.fromRoom)}</s>` : '<i>(belgilanmagan)</i>';
+          const toR = change.toRoom ? `<b>${escapeHtml(change.toRoom)}</b>` : '<i>(belgilanmagan)</i>';
+          const fromT = change.fromTeacher ? `<s>${escapeHtml(change.fromTeacher)}</s>` : '<i>(belgilanmagan)</i>';
+          const toT = change.toTeacher ? `<b>${escapeHtml(change.toTeacher)}</b>` : '<i>(belgilanmagan)</i>';
           text += `  🔄 <b>Xona va o'qituvchi o'zgardi:</b>\n`;
           text += `    📖 <b>${escapeHtml(change.subject)}</b>\n`;
-          text += `    🚪 Xona: <s>${escapeHtml(change.fromRoom)}</s> ➡️ <b>${escapeHtml(change.toRoom)}</b>\n`;
-          text += `    👨‍🏫 O'qituvchi: <s>${escapeHtml(change.fromTeacher)}</s> ➡️ <b>${escapeHtml(change.toTeacher)}</b>\n`;
+          text += `    🚪 Xona: ${fromR} ➡️ ${toR}\n`;
+          text += `    👨‍🏫 O'qituvchi: ${fromT} ➡️ ${toT}\n`;
         } else if (change.kind === 'ROOM') {
+          const fromR = change.from ? `<s>${escapeHtml(change.from)}</s>` : '<i>(belgilanmagan)</i>';
+          const toR = change.to ? `<b>${escapeHtml(change.to)}</b>` : '<i>(belgilanmagan)</i>';
           text += `  🔄 <b>Xona o'zgardi:</b>\n`;
           text += `    📖 <b>${escapeHtml(change.subject)}</b>\n`;
-          text += `    🚪 <s>${escapeHtml(change.from)}</s> ➡️ <b>${escapeHtml(change.to)}</b>\n`;
+          text += `    🚪 ${fromR} ➡️ ${toR}\n`;
         } else if (change.kind === 'TEACHER') {
+          const fromT = change.from ? `<s>${escapeHtml(change.from)}</s>` : '<i>(belgilanmagan)</i>';
+          const toT = change.to ? `<b>${escapeHtml(change.to)}</b>` : '<i>(belgilanmagan)</i>';
           text += `  👨‍🏫 <b>O'qituvchi almashdi:</b>\n`;
           text += `    📖 <b>${escapeHtml(change.subject)}</b>\n`;
-          text += `    ❌ Avval: <s>${escapeHtml(change.from)}</s> ➡️ ✅ Yangi: <b>${escapeHtml(change.to)}</b>\n`;
+          text += `    ❌ Avval: ${fromT} ➡️ ✅ Yangi: ${toT}\n`;
         } else if (change.kind === 'SUBJECT') {
-          text += `  🔄 <b>Fan o'zgardi:</b> <s>${escapeHtml(change.from)}</s> ➡️ <b>${escapeHtml(change.to)}</b>\n`;
+          const fromS = change.from ? `<s>${escapeHtml(change.from)}</s>` : '<i>(bo\'sh)</i>';
+          const toS = change.to ? `<b>${escapeHtml(change.to)}</b>` : '<i>(bo\'sh)</i>';
+          text += `  🔄 <b>Fan o'zgardi:</b> ${fromS} ➡️ ${toS}\n`;
         } else if (change.kind === 'ADDED_PART') {
-          text += `  ➕ <b>Qo'shimcha dars/kichik guruh:</b> 📖 ${escapeHtml(change.to)}\n`;
+          text += `  ➕ <b>Qo'shimcha dars/kichik guruh:</b> 📖 ${escapeHtml(change.to || '')}\n`;
         } else if (change.kind === 'REMOVED_PART') {
-          text += `  ➖ <b>Dars olib tashlandi:</b> ❌ <s>${escapeHtml(change.from)}</s>\n`;
+          const fromS = change.from ? `<s>${escapeHtml(change.from)}</s>` : '<i>(dars)</i>';
+          text += `  ➖ <b>Dars olib tashlandi:</b> ❌ ${fromS}\n`;
         }
       }
     }
@@ -359,7 +370,7 @@ function formatChangeAlert(groupName, diffs) {
  * Dispatches targeted alerts to students of affected groups via BullMQ (or direct Telegram delivery fallback),
  * and pre-warms the updated schedule image ONLY for active groups with registered users.
  */
-async function dispatchGroupAlerts(groupName, diffs, usersList, currentHash = null) {
+async function dispatchGroupAlerts(groupName, diffs, usersList, currentHash = null, currentSchedule = null) {
   const canonicalGroupName = edupageService.getCanonicalGroupName(groupName) || groupName;
   const normGroup = normalizeGroupName(canonicalGroupName);
   const rawNormGroup = normalizeGroupName(groupName);
@@ -392,7 +403,7 @@ async function dispatchGroupAlerts(groupName, diffs, usersList, currentHash = nu
   const matchingUsers = Array.from(new Map(rawUsers.map(u => [String(u.telegram_id), u])).values());
 
   // Invalidate rendered weekly image cache for this group
-  await scheduleService.invalidateImageCache(groupName);
+  await scheduleService.invalidateImageCache(groupName).catch(() => {});
 
   if (matchingUsers.length === 0) {
     logger.debug('Schedule changed for group with no registered bot users', { groupName });
@@ -404,28 +415,38 @@ async function dispatchGroupAlerts(groupName, diffs, usersList, currentHash = nu
   // 1. Deliver notifications specifically to affected students
   const queue = getBroadcastQueue();
   const redis = getRedisClient();
-  const hasRealQueue = queue && !queue.isDummy && redis && !redis.isDummy;
-  if (hasRealQueue) {
-    const jobs = matchingUsers.map(u => ({
-      name: 'schedule-change-alert',
-      data: {
-        userId: u.telegram_id,
-        message,
-      },
-      opts: {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 3000 },
-        removeOnComplete: true,
-        removeOnFail: 100,
-      },
-    }));
+  const isRedisReady = redis && !redis.isDummy && (redis.status === 'ready' || redis.status === 'connecting');
+  const hasRealQueue = queue && !queue.isDummy && isRedisReady;
+  let queueDelivered = false;
 
-    await queue.addBulk(jobs);
-    logger.info(`📢 Queued schedule change alert via BullMQ to ${matchingUsers.length} users of ${canonicalGroupName}`, {
-      groupName: canonicalGroupName,
-      diffCount: diffs.length,
-    });
-  } else if (_botTelegram) {
+  if (hasRealQueue) {
+    try {
+      const jobs = matchingUsers.map(u => ({
+        name: 'schedule-change-alert',
+        data: {
+          userId: u.telegram_id,
+          message,
+        },
+        opts: {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 3000 },
+          removeOnComplete: true,
+          removeOnFail: 100,
+        },
+      }));
+
+      await queue.addBulk(jobs);
+      queueDelivered = true;
+      logger.info(`📢 Queued schedule change alert via BullMQ to ${matchingUsers.length} users of ${canonicalGroupName}`, {
+        groupName: canonicalGroupName,
+        diffCount: diffs.length,
+      });
+    } catch (queueErr) {
+      logger.error('Failed to queue alerts via BullMQ, falling back to direct delivery', { error: queueErr.message });
+    }
+  }
+
+  if (!queueDelivered && _botTelegram) {
     logger.info(`📢 Delivering schedule change alerts directly to ${matchingUsers.length} users of ${canonicalGroupName}...`);
     for (const u of matchingUsers) {
       try {
@@ -442,7 +463,7 @@ async function dispatchGroupAlerts(groupName, diffs, usersList, currentHash = nu
       }
       await new Promise(r => setTimeout(r, 60)); // 60ms pacing to stay safely under Telegram limits
     }
-  } else {
+  } else if (!queueDelivered) {
     logger.info(`📢 Schedule change alert prepared for ${matchingUsers.length} users of ${canonicalGroupName} (no delivery transport available)`, {
       groupName: canonicalGroupName,
       diffCount: diffs.length,
@@ -465,7 +486,7 @@ async function dispatchGroupAlerts(groupName, diffs, usersList, currentHash = nu
     if (rawNormGroup && rawNormGroup !== normGroup) {
       redis.set(`cache:schedule:last_alerted_hash:${rawNormGroup}`, currentHash, 'EX', 86400 * 30).catch(() => {});
     }
-    const snap = groupSnapshots.get(normGroup)?.schedule || groupSnapshots.get(canonicalGroupName)?.schedule;
+    const snap = currentSchedule || groupSnapshots.get(normGroup)?.schedule || groupSnapshots.get(canonicalGroupName)?.schedule;
     if (snap) {
       redis.set(`cache:schedule:active_snapshot:${normGroup}`, JSON.stringify(snap), 'EX', 86400 * 30).catch(() => {});
     }
@@ -534,7 +555,7 @@ async function notifyGroupScheduleChanged(groupName, newHash) {
   }
 
   logger.info(`📢 Proactively dispatching alerts to ${matchingUsers.length} enrolled students of ${canonicalGroupName} (triggered by on-demand stale refresh).`);
-  await dispatchGroupAlerts(canonicalGroupName, diffs, matchingUsers, newHash);
+  await dispatchGroupAlerts(canonicalGroupName, diffs, matchingUsers, newHash, currentSimplified);
 }
 
 /**
@@ -766,7 +787,7 @@ async function checkScheduleChanges(forceOrOptions = false) {
 
       if (hasChanged) {
         if (!diffs || diffs.length === 0) diffs = [{ type: 'SCHEDULE_FULL_OVERVIEW', schedule: currentSimplified }];
-        changedGroups.push({ classId: cidStr, groupName: canonical, norm, rawNorm, diffs, currentHash });
+        changedGroups.push({ classId: cidStr, groupName: canonical, norm, rawNorm, diffs, currentHash, schedule: currentSimplified });
       }
 
       // Update in-memory snapshot
@@ -821,7 +842,7 @@ async function checkScheduleChanges(forceOrOptions = false) {
           // Active group with real students! Invalidate old image and dispatch alerts ONLY for this group!
           activeChangesCount++;
           logger.info(`📢 Active group "${item.groupName}" changed! Alerting ${uniqueMatching.length} enrolled users.`);
-          await dispatchGroupAlerts(item.groupName, item.diffs, uniqueMatching, item.currentHash);
+          await dispatchGroupAlerts(item.groupName, item.diffs, uniqueMatching, item.currentHash, item.schedule);
         }
       }
       logger.info(`Schedule change processing finished: ${activeChangesCount} active groups alerted, ${changedGroups.length - activeChangesCount} inactive groups skipped.`);
@@ -922,7 +943,7 @@ async function forceAlertGroup(groupName) {
   if (rawNorm) recentAlertsSent.delete(`${rawNorm}:${currentHash}`);
 
   logger.info(`📢 Force alerting ${uniqueUsers.length} enrolled users of ${canonical}...`);
-  await dispatchGroupAlerts(canonical, diffs, uniqueUsers, currentHash);
+  await dispatchGroupAlerts(canonical, diffs, uniqueUsers, currentHash, currentSimplified);
 
   return { success: true, groupName: canonical, usersCount: uniqueUsers.length, currentHash, diffCount: diffs.length };
 }
@@ -951,6 +972,7 @@ module.exports = {
   forceAlertGroup,
   diffGroupSchedules,
   computeScheduleHash,
+  getSimplifiedSchedule,
   formatChangeAlert,
   getWatcherStatus,
 };

@@ -10,6 +10,7 @@ if (!process.env.REDIS_URL || redisConnection.isDummy) {
     isDummy: true,
     add: async () => ({ id: 'dummy' }),
     addBulk: async () => [],
+    getJob: async () => null,
     pause: async () => {},
     resume: async () => {},
     close: async () => {},

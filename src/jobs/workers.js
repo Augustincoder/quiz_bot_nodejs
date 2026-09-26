@@ -26,13 +26,15 @@ function initWorkers(bot, scheduleService) {
         if (isBlocked) {
           logger.info('User blocked bot or deactivated during alert, marking blocked', { userId });
           dbService.markUserBlocked(userId, true).catch(() => {});
-        } else if (err?.parameters?.retry_after) {
+          return; // Terminal state, complete job without retrying
+        } else if (err?.parameters?.retry_after && err.parameters.retry_after <= 10) {
           const retrySec = err.parameters.retry_after;
           logger.warn(`Alert rate limit hit. Waiting ${retrySec}s`, { userId });
           await new Promise(r => setTimeout(r, (retrySec + 1) * 1000));
-          await bot.telegram.sendMessage(userId, message, { parse_mode: 'HTML' }).catch(() => {});
+          await bot.telegram.sendMessage(userId, message, { parse_mode: 'HTML' });
         } else {
-          logger.error('Alert sending failed', { userId, error: err.message });
+          logger.error('Alert sending failed, flagging job for BullMQ retry', { userId, error: err.message });
+          throw err; // Allow BullMQ attempts and backoff to retry
         }
       }
       return;
@@ -66,13 +68,15 @@ function initWorkers(bot, scheduleService) {
         if (isBlocked) {
           logger.info('Broadcast user blocked bot or deactivated, marking blocked', { userId });
           dbService.markUserBlocked(userId, true).catch(() => {});
-        } else if (err?.parameters?.retry_after) {
+          return; // Terminal state, do not retry
+        } else if (err?.parameters?.retry_after && err.parameters.retry_after <= 10) {
           const retrySec = err.parameters.retry_after;
           logger.warn(`Broadcast rate limit hit. Waiting ${retrySec}s`, { userId });
           await new Promise(r => setTimeout(r, (retrySec + 1) * 1000));
-          await bot.telegram.sendMessage(userId, msg, { parse_mode: 'HTML' }).catch(() => {});
+          await bot.telegram.sendMessage(userId, msg, { parse_mode: 'HTML' });
         } else {
-          logger.error('Broadcast message sending failed', { userId, error: err.message });
+          logger.error('Broadcast message sending failed, flagging for BullMQ retry', { userId, error: err.message });
+          throw err; // Trigger BullMQ retry
         }
       }
     }
@@ -97,6 +101,10 @@ function initWorkers(bot, scheduleService) {
   });
   broadcastWorker.on('error', err => {
     logger.error('Broadcast worker Redis error', { error: err?.message });
+  });
+
+  quizTimerWorker.on('error', err => {
+    logger.error('Quiz timer worker Redis error', { error: err?.message });
   });
 
   logger.info('👷 BullMQ workers initialized successfully');

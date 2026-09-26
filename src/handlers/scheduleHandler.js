@@ -319,16 +319,15 @@ async function cmdHafta(ctx) {
   }
   activeHaftaRequests.add(userId);
 
-  const userTheme = await dbService.getUserScheduleTheme(userId);
   let msg = null;
-
-  // Show loading notification only if not already cached in CDN
-  const cached = await dbService.getTimetableCache(className, userTheme);
-  if (!cached || !cached.file_id) {
-    msg = await ctx.reply('⏳ Haftalik dars jadvali rasmga olinmoqda. Iltimos kuting...').catch(() => null);
-  }
-
   try {
+    const userTheme = await dbService.getUserScheduleTheme(userId);
+
+    // Show loading notification only if not already cached in CDN
+    const cached = await dbService.getTimetableCache(className, userTheme);
+    if (!cached || !cached.file_id) {
+      msg = await ctx.reply('⏳ Haftalik dars jadvali rasmga olinmoqda. Iltimos kuting...').catch(() => null);
+    }
     const photoResult = await scheduleService.fetchWeeklySchedulePhoto(className, userTheme, ctx.telegram);
     if (!photoResult) {
       if (msg?.message_id) {
@@ -399,11 +398,17 @@ async function cbSwitchScheduleTheme(ctx) {
 
   try {
     const rawClass = await dbService.getUserClass(userId);
-    if (!rawClass) return;
+    if (!rawClass) {
+      await ctx.reply('⚠️ Avval /setclass orqali guruhingizni sozlang (Masalan: /setclass MI-15)').catch(() => {});
+      return;
+    }
     const className = edupageService.getCanonicalGroupName(rawClass) || rawClass;
 
     const photoResult = await scheduleService.fetchWeeklySchedulePhoto(className, theme, ctx.telegram);
-    if (!photoResult) return;
+    if (!photoResult) {
+      await ctx.reply('⚠️ Ushbu mavzudagi dars jadvalini tayyorlab bo\'lmadi.').catch(() => {});
+      return;
+    }
     await dbService.setUserScheduleTheme(userId, theme);
 
     const kb = buildThemeSwitcherKeyboard(theme);
@@ -429,6 +434,7 @@ async function cbSwitchScheduleTheme(ctx) {
     }
   } catch (err) {
     logger.error('cbSwitchScheduleTheme error', { error: err.message, userId, theme });
+    await ctx.reply('⚠️ Mavzuni almashtirishda xatolik yuz berdi. Iltimos keyinroq qayta urinib ko\'ring.').catch(() => {});
   } finally {
     activeThemeSwitches.delete(userId);
   }
@@ -588,25 +594,35 @@ async function cbBoshXona(ctx) {
 }
 
 async function cbRoomAction(ctx) {
-  const parts = ctx.callbackQuery.data.split('_');
+  const parts = ctx.callbackQuery?.data?.split('_') || [];
   const periodNum = parseInt(parts[1], 10);
   const binoId = parts[2];
   const page = parseInt(parts[3], 10);
 
+  if (Number.isNaN(periodNum) || periodNum < 1 || periodNum > 8) {
+    return safeAnswerCb(ctx);
+  }
+
   if (binoId === 'my') {
-    const rawClass = await dbService.getUserClass(ctx.from.id);
+    const rawClass = await dbService.getUserClass(ctx.from?.id);
     if (!rawClass) {
-      return safeAnswerCb(ctx, '⚠️ Avval /setclass orqali guruhingizni sozlang (Masalan: /setclass MI-15)', true);
+      return safeAnswerCb(ctx, '⚠️ Avval /setclass orqali guruhingizni sozlang (Masalan: /setclass MI-15)', { show_alert: true });
     }
   }
 
   await safeAnswerCb(ctx);
-  await renderRoomView(ctx, periodNum, binoId, page);
+  await renderRoomView(ctx, periodNum, binoId, Number.isNaN(page) ? 0 : page);
 }
 
 async function cbBackToRoomsMenu(ctx) {
   await safeAnswerCb(ctx);
-  await ctx.editMessageText('🏢 Qaysi para uchun bo\'sh xonalarni ko\'rmoqchisiz?', PARA_KB);
+  try {
+    await ctx.editMessageText('🏢 Qaysi para uchun bo\'sh xonalarni ko\'rmoqchisiz?', PARA_KB);
+  } catch (err) {
+    if (!err?.message?.includes('message is not modified')) {
+      await ctx.reply('🏢 Qaysi para uchun bo\'sh xonalarni ko\'rmoqchisiz?', PARA_KB).catch(() => {});
+    }
+  }
 }
 
 async function cbRetryHafta(ctx) {

@@ -131,7 +131,27 @@ const safeAnswerCb = async (ctx, text, opts) => {
 const truncateText = (text, max = 4000) => {
   if (!text || typeof text !== 'string') return text || '';
   if (text.length <= max) return text;
-  return text.slice(0, max - 40) + '\n\n<i>...(matn qisqartirildi)</i>';
+
+  let sliced = text.slice(0, max - 45);
+  // Avoid truncating inside an HTML tag <...
+  const lastOpenBracket = sliced.lastIndexOf('<');
+  const lastCloseBracket = sliced.lastIndexOf('>');
+  if (lastOpenBracket > lastCloseBracket) {
+    sliced = sliced.slice(0, lastOpenBracket);
+  }
+
+  // Automatically close unclosed HTML tags to prevent Telegram 400 Bad Request
+  const tags = ['b', 'i', 's', 'u', 'code', 'pre'];
+  for (const tag of tags) {
+    const openCount = (sliced.match(new RegExp(`<${tag}>`, 'gi')) || []).length;
+    const closeCount = (sliced.match(new RegExp(`</${tag}>`, 'gi')) || []).length;
+    const diff = openCount - closeCount;
+    for (let i = 0; i < diff; i++) {
+      sliced += `</${tag}>`;
+    }
+  }
+
+  return sliced + '\n\n<i>...(matn qisqartirildi)</i>';
 };
 
 function splitMessage(text, maxLength = 4000) {

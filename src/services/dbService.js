@@ -76,13 +76,17 @@ async function getUserStats(userId) {
     return { user_id: uid, tests_completed: 0, total_correct: 0, total_wrong: 0, history: [] };
   } catch (err) {
     logger.error('getUserStats error:', { userId: uid, error: err.message });
-    return { user_id: uid, tests_completed: 0, total_correct: 0, total_wrong: 0, history: [] };
+    return { user_id: uid, tests_completed: 0, total_correct: 0, total_wrong: 0, history: [], _fetchFailed: true };
   }
 }
 
 async function updateUserStats(userId, correct, wrong, subjectKey, testId, mistakes) {
   const uid = String(userId);
   const stats = await getUserStats(uid);
+  if (stats._fetchFailed) {
+    logger.error('updateUserStats aborted: could not retrieve user stats due to DB error. Historical data protected.', { userId: uid });
+    return;
+  }
   stats.tests_completed = (stats.tests_completed || 0) + 1;
   stats.total_correct = (stats.total_correct || 0) + correct;
   stats.total_wrong = (stats.total_wrong || 0) + wrong;
@@ -101,7 +105,8 @@ async function updateUserStats(userId, correct, wrong, subjectKey, testId, mista
   stats.history = stats.history.slice(0, 15);
 
   try {
-    const { error } = await supabase.from('user_stats').upsert(stats);
+    delete stats._fetchFailed;
+    const { error } = await supabase.from('user_stats').upsert(stats, { onConflict: 'user_id' });
     if (error) throw error;
 
     await redis.set(`cache:user_stats:${uid}`, JSON.stringify(stats), 'EX', 300).catch(() => {});
@@ -285,13 +290,24 @@ async function searchUsers(query, limit = 20) {
 }
 
 async function getBroadcastRecipients() {
+  if (!supabase) return [];
   try {
-    const { data, error } = await supabase
-      .from('users')
-      .select('telegram_id')
-      .or('is_banned.is.null,is_banned.eq.false');
-    if (error) throw error;
-    return (data || []).map(u => u.telegram_id);
+    const pageSize = 1000;
+    let from = 0;
+    const allIds = [];
+    while (true) {
+      const { data, error } = await supabase
+        .from('users')
+        .select('telegram_id')
+        .or('is_banned.is.null,is_banned.eq.false')
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      allIds.push(...data.map(u => u.telegram_id));
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    return allIds;
   } catch (err) {
     logger.error('getBroadcastRecipients error:', { error: err.message });
     return [];
@@ -315,9 +331,21 @@ async function getAllUserNames() {
 async function getAllUsers() {
   if (!supabase) return [];
   try {
-    const { data, error } = await supabase.from('users').select('*');
-    if (error) throw error;
-    return data || [];
+    const pageSize = 1000;
+    let from = 0;
+    const allUsers = [];
+    while (true) {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      allUsers.push(...data);
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    return allUsers;
   } catch (err) {
     logger.error('getAllUsers error:', { error: err.message });
     return [];
@@ -580,6 +608,10 @@ async function saveTestToShelf(userId, folderName, testInfo) {
   const uid = String(userId);
   try {
     const stats = await getUserStats(uid);
+    if (stats._fetchFailed) {
+      logger.error('saveTestToShelf aborted: could not retrieve user stats due to DB error', { userId: uid });
+      return 'error';
+    }
     let shelf = stats.shelf || {};
 
     if (!shelf[folderName]) shelf[folderName] = [];
@@ -596,10 +628,16 @@ async function saveTestToShelf(userId, folderName, testInfo) {
       progress: testInfo.progress || null,
     });
 
-    stats.shelf = shelf;
-    const { error } = await supabase.from('user_stats').upsert(stats);
-    if (error) throw error;
+    const { error } = await supabase.from('user_stats').update({ shelf }).eq('user_id', uid);
+    if (error) {
+      stats.shelf = shelf;
+      delete stats._fetchFailed;
+      const { error: upsertErr } = await supabase.from('user_stats').upsert(stats, { onConflict: 'user_id' });
+      if (upsertErr) throw upsertErr;
+    }
 
+    stats.shelf = shelf;
+    delete stats._fetchFailed;
     await redis.set(`cache:user_stats:${uid}`, JSON.stringify(stats), 'EX', 300).catch(() => {});
     return 'saved';
   } catch (e) {
@@ -731,14 +769,24 @@ async function isUserBlocked(userId) {
 async function getScheduleBroadcastUsers() {
   if (!supabase) return [];
   try {
-    const { data, error } = await supabase
-      .from('users')
-      .select('telegram_id, class_name, is_banned')
-      .not('class_name', 'is', null)
-      .or('is_banned.is.null,is_banned.eq.false');
+    const pageSize = 1000;
+    let from = 0;
+    const allUsers = [];
+    while (true) {
+      const { data, error } = await supabase
+        .from('users')
+        .select('telegram_id, class_name, is_banned')
+        .not('class_name', 'is', null)
+        .or('is_banned.is.null,is_banned.eq.false')
+        .range(from, from + pageSize - 1);
 
-    if (error) throw error;
-    return (data || []).filter(u => u.class_name && u.class_name.trim() && !u.is_banned);
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      allUsers.push(...data);
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    return allUsers.filter(u => u.class_name && u.class_name.trim() && !u.is_banned);
   } catch (err) {
     logger.error('getScheduleBroadcastUsers error:', { error: err.message });
     return [];

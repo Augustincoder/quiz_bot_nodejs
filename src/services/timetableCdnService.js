@@ -32,28 +32,20 @@ let workerState = {
   currentTheme: null,
 };
 
+let _scheduleWatcher = null;
+function getScheduleWatcher() {
+  if (!_scheduleWatcher) {
+    _scheduleWatcher = require('./scheduleWatcherService');
+  }
+  return _scheduleWatcher;
+}
+
 /**
  * Computes deterministic SHA-256 hash of schedule content.
- * Normalizes subject, teacher, and room to prevent false positives.
+ * Delegates directly to scheduleWatcherService for a single source of truth across the system.
  */
 function computeScheduleHash(schedule) {
-  if (!schedule || typeof schedule !== 'object') return 'empty';
-
-  const simplified = {};
-  for (let d = 0; d < 6; d++) {
-    if (!schedule[d]) continue;
-    simplified[d] = {};
-    const periods = Object.keys(schedule[d]).map(Number).sort((a, b) => a - b);
-    for (const p of periods) {
-      simplified[d][p] = (schedule[d][p] || []).map((l) => ({
-        subject: (l.subject || '').trim(),
-        teacher: (l.teacher || '').trim(),
-        room: (l.room || '').trim(),
-      }));
-    }
-  }
-
-  return crypto.createHash('sha256').update(JSON.stringify(simplified)).digest('hex');
+  return getScheduleWatcher().computeScheduleHash(schedule);
 }
 
 /**
