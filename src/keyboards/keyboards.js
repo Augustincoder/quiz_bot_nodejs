@@ -140,7 +140,7 @@ function getTimetableInlineKeyboard(className = null) {
     ],
     [
       Markup.button.callback("🏢 Bo'sh xonalar", "schedule_rooms"),
-      Markup.button.callback("⚡️ Hozirgi para", "bosh_now"),
+      Markup.button.callback("🔔 Xabarnomalar", "schedule_notify_settings"),
     ],
     [
       Markup.button.callback(className ? "✏️ Guruhni o'zgartirish" : "⚙️ Guruhni kiritish", "schedule_settings"),

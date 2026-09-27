@@ -597,6 +597,44 @@ function buildIndexedDatabase(raw, defaultNum) {
   };
 }
 
+// ─── EduPage Circuit Breaker ──────────────────────────────────
+let circuitBreakerState = 'CLOSED'; // 'CLOSED' | 'OPEN' | 'HALF_OPEN'
+let consecutiveFailures = 0;
+let nextCircuitRetryTime = 0;
+const FAILURE_THRESHOLD = 3;
+const CIRCUIT_RESET_TIMEOUT_MS = 45000; // 45 seconds
+
+function recordEduPageFailure(err) {
+  consecutiveFailures++;
+  if (consecutiveFailures >= FAILURE_THRESHOLD) {
+    circuitBreakerState = 'OPEN';
+    nextCircuitRetryTime = Date.now() + CIRCUIT_RESET_TIMEOUT_MS;
+    logger.warn(`⚡ EduPage Circuit Breaker tripped to OPEN (${consecutiveFailures} consecutive failures). Fast-failing network calls for 45s.`, { error: err?.message });
+  }
+}
+
+function recordEduPageSuccess() {
+  if (circuitBreakerState !== 'CLOSED') {
+    logger.info('✅ EduPage Circuit Breaker recovered and reset to CLOSED.');
+  }
+  circuitBreakerState = 'CLOSED';
+  consecutiveFailures = 0;
+  nextCircuitRetryTime = 0;
+}
+
+function canAttemptEduPageNetwork() {
+  if (circuitBreakerState === 'CLOSED') return true;
+  if (circuitBreakerState === 'OPEN') {
+    if (Date.now() >= nextCircuitRetryTime) {
+      circuitBreakerState = 'HALF_OPEN';
+      logger.info('🔄 EduPage Circuit Breaker testing recovery (HALF_OPEN probe request)...');
+      return true;
+    }
+    return false;
+  }
+  return true; // HALF_OPEN allows 1 probe
+}
+
 /**
  * Fetches raw timetable JSON from TsUE EduPage with retry
  */
@@ -665,34 +703,57 @@ async function getOrFetchIndexedData(forceRefresh = false) {
         }
       }
 
-      // Network Fetch from TsUE EduPage
+      // Network Fetch from TsUE EduPage with Circuit Breaker
       let raw;
-      try {
-        raw = await fetchRawTimetable(defaultNum);
-      } catch (networkErr) {
-        // Fallback 1: Stale-While-Revalidate Memory Cache
-        if (l1IndexedDatabase && (now - l1CacheTime < L1_STALE_TTL)) {
-          logger.warn('EduPage network request failed; serving stale memory cache', { error: networkErr.message });
-          l1CacheTime = Date.now() - L1_CACHE_TTL + 60000; // 1-minute cooldown before retrying EduPage network
+      const canAttemptNetwork = canAttemptEduPageNetwork();
+      if (canAttemptNetwork) {
+        try {
+          raw = await fetchRawTimetable(defaultNum);
+          recordEduPageSuccess();
+        } catch (networkErr) {
+          recordEduPageFailure(networkErr);
+          // Fallback 1: Stale-While-Revalidate Memory Cache
+          if (l1IndexedDatabase && (now - l1CacheTime < L1_STALE_TTL)) {
+            logger.warn('EduPage network request failed; serving stale memory cache', { error: networkErr.message });
+            l1CacheTime = Date.now() - L1_CACHE_TTL + 60000;
+            return l1IndexedDatabase;
+          }
+
+          // Fallback 2: L3 Disk Cache
+          try {
+            if (fs.existsSync(DISK_CACHE_PATH)) {
+              const diskRaw = JSON.parse(await fs.promises.readFile(DISK_CACHE_PATH, 'utf8'));
+              if (diskRaw?.r?.dbiAccessorRes?.tables) {
+                logger.warn('EduPage network request failed; restored from L3 Disk Cache', { error: networkErr.message });
+                l1IndexedDatabase = buildIndexedDatabase(diskRaw, defaultNum);
+                l1CacheTime = Date.now() - L1_CACHE_TTL + 60000;
+                return l1IndexedDatabase;
+              }
+            }
+          } catch (diskErr) {
+            logger.error('Failed to read L3 Disk Cache', { error: diskErr.message });
+          }
+
+          throw networkErr;
+        }
+      } else {
+        logger.warn('⚡ EduPage Circuit Breaker is OPEN. Serving from L1 memory or L3 disk cache without network latency.');
+        if (l1IndexedDatabase) {
           return l1IndexedDatabase;
         }
-
-        // Fallback 2: L3 Disk Cache (guarantees survival through process restarts & server downtime)
         try {
           if (fs.existsSync(DISK_CACHE_PATH)) {
             const diskRaw = JSON.parse(await fs.promises.readFile(DISK_CACHE_PATH, 'utf8'));
             if (diskRaw?.r?.dbiAccessorRes?.tables) {
-              logger.warn('EduPage network request failed; restored from L3 Disk Cache', { error: networkErr.message });
               l1IndexedDatabase = buildIndexedDatabase(diskRaw, defaultNum);
-              l1CacheTime = Date.now() - L1_CACHE_TTL + 60000;
+              l1CacheTime = Date.now() - L1_CACHE_TTL + 30000;
               return l1IndexedDatabase;
             }
           }
         } catch (diskErr) {
-          logger.error('Failed to read L3 Disk Cache', { error: diskErr.message });
+          logger.error('Failed to read L3 Disk Cache during circuit break', { error: diskErr.message });
         }
-
-        throw networkErr;
+        throw new Error('EduPage Circuit Breaker is OPEN and no local cache is available');
       }
 
       if (!raw?.r?.dbiAccessorRes?.tables) {

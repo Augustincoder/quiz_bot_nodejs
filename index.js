@@ -22,6 +22,7 @@ const { loadAllTests, syncUserNames } = require("./src/core/loader");
 const scheduleService = require("./src/services/scheduleService");
 const edupageService = require("./src/services/edupageService");
 const scheduleWatcher = require("./src/services/scheduleWatcherService");
+const watchdogService = require("./src/services/watchdogService");
 const { BOT_TOKEN } = require("./src/config/config");
 const dbService = require("./src/services/dbService");
 const { getState, States, isAdmin, clearState } = require("./src/core/utils");
@@ -415,10 +416,27 @@ async function queueSchedules(isTomorrow = false) {
       return;
     }
 
+    // Filter by user notification preference (both, morning, evening, silent)
+    const targetPeriod = isTomorrow ? 'evening' : 'morning';
+    const userPrefs = await Promise.all(
+      eligibleUsers.map((u) => dbService.getUserNotificationPreference(u.telegram_id))
+    );
+    const finalRecipients = eligibleUsers.filter((u, idx) => {
+      const pref = userPrefs[idx] || 'both';
+      if (pref === 'silent') return false; // Sokin rejim: daily routine schedules skipped
+      if (pref === 'both') return true;
+      return pref === targetPeriod;
+    });
+
+    if (finalRecipients.length === 0) {
+      logger.info(`Dars jadvali yuborish uchun faol sozlamali talabalar topilmadi (period: ${targetPeriod}).`);
+      return;
+    }
+
     // 4. Batch jobs into BullMQ to avoid memory & Redis connection spikes
     const BATCH_SIZE = 250;
-    for (let i = 0; i < eligibleUsers.length; i += BATCH_SIZE) {
-      const chunk = eligibleUsers.slice(i, i + BATCH_SIZE).map((user) => ({
+    for (let i = 0; i < finalRecipients.length; i += BATCH_SIZE) {
+      const chunk = finalRecipients.slice(i, i + BATCH_SIZE).map((user) => ({
         name: "send-schedule",
         data: {
           userId: user.telegram_id,
@@ -427,6 +445,7 @@ async function queueSchedules(isTomorrow = false) {
           isTomorrow,
         },
         opts: {
+          priority: 5, // Priority 5 for routine scheduled broadcast (Priority 1 is for urgent change alerts)
           attempts: 3,
           backoff: { type: "exponential", delay: 5000 },
           removeOnComplete: 100,
@@ -437,7 +456,7 @@ async function queueSchedules(isTomorrow = false) {
       await broadcastQueue.addBulk(chunk);
     }
 
-    logger.info(`✅ Jami ${eligibleUsers.length} ta foydalanuvchi uchun dars jadvali BullMQ navbatiga tizildi`);
+    logger.info(`✅ Jami ${finalRecipients.length} ta foydalanuvchi uchun dars jadvali BullMQ navbatiga tizildi (Filtrlandi: ${eligibleUsers.length - finalRecipients.length} ta shaxsiy sozlama bo'yicha)`);
   } catch (error) {
     logger.error("Schedule broadcast error:", { error: error.message });
   }
@@ -454,6 +473,7 @@ async function gracefulShutdown(signal) {
 
   try {
     try {
+      watchdogService.stopWatchdog();
       const timetableCdnService = require('./src/services/timetableCdnService');
       timetableCdnService.stopPrewarmWorker();
     } catch {}
@@ -592,6 +612,7 @@ async function main() {
     nightPrewarmStopCron,
   ];
   logger.info("⏰ Dars jadvali avtomatik tarqatish, Realtime Watcher va Tungi CDN Worker faollashtirildi");
+  watchdogService.startWatchdog();
 
   // Initial watcher snapshot baseline in background
   scheduleWatcher.checkScheduleChanges(false).catch((err) => {

@@ -1020,6 +1020,34 @@ async function clearAllTimetableCache() {
   }
 }
 
+async function getUserNotificationPreference(userId) {
+  if (!userId) return 'both';
+  if (redis) {
+    try {
+      const pref = await redis.get(`user:notify_pref:${userId}`);
+      if (pref) return pref;
+    } catch (e) {
+      logger.debug('Redis read error for notification preference', { userId, error: e.message });
+    }
+  }
+  return 'both'; // Default: morning + evening
+}
+
+async function setUserNotificationPreference(userId, preference) {
+  if (!userId) return false;
+  const valid = ['both', 'morning', 'evening', 'silent'];
+  const cleanPref = valid.includes(preference) ? preference : 'both';
+  if (redis) {
+    try {
+      await redis.set(`user:notify_pref:${userId}`, cleanPref, 'EX', 86400 * 90); // 90 days TTL
+    } catch (e) {
+      logger.warn('Failed to set notification preference in Redis', { userId, error: e.message });
+      return false;
+    }
+  }
+  return true;
+}
+
 module.exports = {
   loadAllOfficialTests,
   saveOfficialTest,
@@ -1062,4 +1090,6 @@ module.exports = {
   deleteTimetableCache,
   getAllCachedTimetables,
   clearAllTimetableCache,
+  getUserNotificationPreference,
+  setUserNotificationPreference,
 };

@@ -633,12 +633,80 @@ async function cbRetryHafta(ctx) {
   await cmdHafta(ctx);
 }
 
+const PREF_LABELS = {
+  both: "🔔 Ikkisi ham (07:30 va 21:00)",
+  morning: "🌤 Faqat ertalab (07:30)",
+  evening: "🌙 Faqat kechqurun (21:00)",
+  silent: "🔕 Faqat o'zgarishlar (Sokin rejim)",
+};
+
+async function renderNotifySettings(ctx, alertMessage = null) {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+
+  const currentPref = await dbService.getUserNotificationPreference(userId);
+  const currentLabel = PREF_LABELS[currentPref] || PREF_LABELS.both;
+
+  const text = `🔔 <b>Dars Jadvali Xabarnoma Sozlamalari</b>\n━━━━━━━━━━━━━━━━━━━━\n` +
+    `👤 Hozirgi tanlovingiz: <b>${escapeHtml(currentLabel)}</b>\n\n` +
+    `Bot sizga qachon dars jadvalini yuborishini o'zingizga moslang:\n` +
+    `• <b>Ikkisi ham:</b> Har kuni ertalab bugungi va kechasi ertangi jadval\n` +
+    `• <b>Faqat ertalab:</b> Soat 07:30 da bugungi darslar\n` +
+    `• <b>Faqat kechqurun:</b> Soat 21:00 da ertangi darslar\n` +
+    `• <b>Sokin rejim:</b> Har kungi xabar kelmaydi, faqat jadval o'zgarganda ogohlantiriladi\n\n` +
+    `👇 <i>Kerakli rejimni tanlang:</i>`;
+
+  const kb = Markup.inlineKeyboard([
+    [
+      Markup.button.callback(`${currentPref === 'both' ? '✅ ' : ''}🔔 Ikkisi ham`, 'set_pref_both'),
+    ],
+    [
+      Markup.button.callback(`${currentPref === 'morning' ? '✅ ' : ''}🌤 Faqat ertalab`, 'set_pref_morning'),
+      Markup.button.callback(`${currentPref === 'evening' ? '✅ ' : ''}🌙 Faqat kechqurun`, 'set_pref_evening'),
+    ],
+    [
+      Markup.button.callback(`${currentPref === 'silent' ? '✅ ' : ''}🔕 Faqat o'zgarishlar (Sokin)`, 'set_pref_silent'),
+    ],
+    [
+      Markup.button.callback('🔙 Jadval Markaziga qaytish', 'schedule_menu'),
+    ],
+  ]);
+
+  if (alertMessage) {
+    await safeAnswerCb(ctx, alertMessage);
+  } else {
+    await safeAnswerCb(ctx);
+  }
+
+  try {
+    await ctx.editMessageText(text, { parse_mode: 'HTML', ...kb });
+  } catch (e) {
+    if (!e?.message?.includes('message is not modified')) {
+      await ctx.reply(text, { parse_mode: 'HTML', ...kb }).catch(() => {});
+    }
+  }
+}
+
+async function cbNotifySettings(ctx) {
+  return renderNotifySettings(ctx);
+}
+
+async function cbSetPref(ctx, pref) {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+
+  await dbService.setUserNotificationPreference(userId, pref);
+  const label = PREF_LABELS[pref] || pref;
+  return renderNotifySettings(ctx, `✅ Saqlandi: ${label}`);
+}
+
 function register(bot) {
   bot.command('jadval', cmdJadval);
   bot.command('hafta', cmdHafta);
   bot.command('xonalar', cmdXonalar);
   bot.command('timetable', cmdTimetable);
   bot.command('schedule', cmdTimetable);
+  bot.command('notify_settings', cbNotifySettings);
 
   // Reply Keyboard triggers
   bot.hears('📅 Bugungi jadval', cmdJadval);
@@ -664,6 +732,13 @@ function register(bot) {
   bot.action(/^rm_/, cbRoomAction);
   bot.action('back_to_rooms_menu', cbBackToRoomsMenu);
   bot.action('retry_hafta', cbRetryHafta);
+
+  // Notification preference triggers
+  bot.action('schedule_notify_settings', cbNotifySettings);
+  bot.action('set_pref_both', (ctx) => cbSetPref(ctx, 'both'));
+  bot.action('set_pref_morning', (ctx) => cbSetPref(ctx, 'morning'));
+  bot.action('set_pref_evening', (ctx) => cbSetPref(ctx, 'evening'));
+  bot.action('set_pref_silent', (ctx) => cbSetPref(ctx, 'silent'));
 }
 
 module.exports = {

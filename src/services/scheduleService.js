@@ -187,6 +187,10 @@ async function invalidateImageCache(className) {
   }
 }
 
+function clearImageMemoryCache() {
+  imageMemoryCache.clear();
+}
+
 module.exports = {
   fetchTodaySchedule,
   fetchWeeklyScheduleImage,
@@ -195,4 +199,5 @@ module.exports = {
   getGroupBuildings,
   invalidateImageCache,
   warmUpCache,
+  clearImageMemoryCache,
 };

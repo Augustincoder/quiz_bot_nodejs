@@ -429,6 +429,7 @@ async function dispatchGroupAlerts(groupName, diffs, usersList, currentHash = nu
           message,
         },
         opts: {
+          priority: 1, // Highest priority: schedule change alerts must be delivered ahead of routine broadcasts
           attempts: 3,
           backoff: { type: 'exponential', delay: 3000 },
           removeOnComplete: true,
