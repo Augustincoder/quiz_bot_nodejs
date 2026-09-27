@@ -768,7 +768,7 @@ function formatTimetableText(schedule, dayIdx) {
     const dayLessons = schedule[d];
     if (dayIdx === null) parts.push(`\n📅 <b>${DAY_NAMES[d] || 'Noma\'lum kun'}:</b>`);
     if (!dayLessons || Object.keys(dayLessons).length === 0) {
-      parts.push(dayIdx === null ? '  — Dars yo\'q' : '📭 Bugun dars yo\'q.');
+      parts.push(dayIdx === null ? '  — Dars yo\'q' : '📭 Ushbu kunda darslar yo\'q.');
       continue;
     }
 
@@ -822,7 +822,11 @@ async function getFormattedSchedule(className, dayIdx) {
     }
 
     if (dayIdx !== null && dayIdx !== undefined) {
-      const safeDay = Math.max(0, Math.min(5, Number(dayIdx) || 0));
+      const numDay = Number(dayIdx);
+      if (numDay === 6) {
+        return `📅 <b>Yakshanba — dam olish kuni!</b>\n\n📭 Ushbu kunda darslar bo'lmaydi.`;
+      }
+      const safeDay = Math.max(0, Math.min(5, numDay || 0));
       return `📅 <b>${DAY_NAMES[safeDay]} — dars jadvali:</b>\n${formatTimetableText(schedule, safeDay)}`;
     }
     return formatTimetableText(schedule, null);
@@ -1002,6 +1006,30 @@ async function getIndexedDatabase(forceRefresh = false) {
   return getOrFetchIndexedData(forceRefresh);
 }
 
+/**
+ * Checks whether a group has any scheduled lessons on a given day index (0=Mon..6=Sun)
+ * @param {string} className
+ * @param {number} dayIdx 0=Mon .. 5=Sat, 6=Sun
+ * @returns {Promise<boolean>}
+ */
+async function hasClassLessonsOnDay(className, dayIdx) {
+  if (!className || dayIdx === null || dayIdx === undefined) return false;
+  const numDay = Number(dayIdx);
+  if (numDay < 0 || numDay >= 6) return false; // Sunday (6) never has lessons
+  try {
+    const db = await getOrFetchIndexedData();
+    const classId = findClassId(db, className);
+    if (!classId) return false;
+    const schedule = db.schedulesByClassId.get(classId);
+    if (!schedule) return false;
+    const dayLessons = schedule[numDay];
+    return Boolean(dayLessons && Object.keys(dayLessons).length > 0);
+  } catch (err) {
+    logger.error('Error in hasClassLessonsOnDay', { className, dayIdx, error: err.message });
+    return false;
+  }
+}
+
 module.exports = {
   getFormattedSchedule,
   getEmptyRoomsText,
@@ -1019,4 +1047,6 @@ module.exports = {
   getGroupBuildings,
   parseRoomLocation,
   resolveDefaultNum,
+  findClassId,
+  hasClassLessonsOnDay,
 };

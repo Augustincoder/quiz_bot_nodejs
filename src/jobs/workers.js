@@ -42,15 +42,34 @@ function initWorkers(bot, scheduleService) {
 
     const { userId, className, dayOfWeek, isTomorrow } = job.data;
 
+    // 1. Sunday is a universal day off — never broadcast
+    if (dayOfWeek === 6) {
+      logger.debug('Broadcast schedule skipped: Sunday is a day off', { className, userId });
+      return;
+    }
+
     const scheduleText = await scheduleService.fetchTodaySchedule(className, dayOfWeek);
 
-    const isInvalid = !scheduleText ||
+    // 2. If there are NO lessons scheduled for this group on this day, DO NOT send empty "dars yo'q" notification!
+    const hasNoLessons = !scheduleText ||
       scheduleText.includes('Jadval topilmadi') ||
       scheduleText.includes('xatolik') ||
       scheduleText.includes('topilmadi') ||
-      scheduleText.includes('kiritilmagan');
+      scheduleText.includes('kiritilmagan') ||
+      scheduleText.includes("darslar yo'q") ||
+      scheduleText.includes("dars yo'q") ||
+      scheduleText.includes("dam olish kuni") ||
+      !scheduleText.includes('-para');
 
-    if (!isInvalid) {
+    if (hasNoLessons) {
+      logger.debug('Broadcast schedule skipped: no lessons for group on this day', {
+        className,
+        dayOfWeek,
+        isTomorrow,
+        userId,
+      });
+      return;
+    }
       const greeting = isTomorrow ? '🌙 <b>Xayrli tun!</b> Ertangi dars jadvalingiz:' : '🌤 <b>Xayrli tong!</b> Bugungi dars jadvalingiz:';
       let msg = `${greeting}\n\n🎓 <b>Guruh: ${escapeHtml(className)}</b>\n\n${scheduleText}`;
       if (msg.length > 4000) {
@@ -79,7 +98,6 @@ function initWorkers(bot, scheduleService) {
           throw err; // Trigger BullMQ retry
         }
       }
-    }
   }, {
     connection: redisConnection.createWorkerConnection(),
     limiter: { max: 25, duration: 1000 },

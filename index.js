@@ -20,6 +20,7 @@ const { broadcastQueue, quizTimerQueue } = require("./src/jobs/queues");
 const initWorkers = require("./src/jobs/workers");
 const { loadAllTests, syncUserNames } = require("./src/core/loader");
 const scheduleService = require("./src/services/scheduleService");
+const edupageService = require("./src/services/edupageService");
 const scheduleWatcher = require("./src/services/scheduleWatcherService");
 const { BOT_TOKEN } = require("./src/config/config");
 const dbService = require("./src/services/dbService");
@@ -380,15 +381,37 @@ async function queueSchedules(isTomorrow = false) {
       dayOfWeek = (dayOfWeek + 1) % 7;
     }
 
-    // Sunday (6) is a day off — no classes
+    // Sunday (6) is a day off — no classes ever
     if (dayOfWeek === 6) {
       logger.info("Yakshanba kuni dars bo'lmaydi, jadval tarqatish o'tkazib yuborildi.");
       return;
     }
 
-    const eligibleUsers = users.filter((u) => u.class_name && u.telegram_id);
+    // Pre-filter: only include users whose groups actually have lessons on target day!
+    const db = await edupageService.getIndexedDatabase().catch(() => null);
+    const classesWithLessons = new Set();
+    if (db && db.schedulesByClassId) {
+      for (const [classId, sched] of db.schedulesByClassId.entries()) {
+        const dayLessons = sched[dayOfWeek];
+        if (dayLessons && Object.keys(dayLessons).length > 0) {
+          classesWithLessons.add(classId);
+        }
+      }
+    }
+
+    const eligibleUsers = users.filter((u) => {
+      if (!u.class_name || !u.telegram_id) return false;
+      if (db && classesWithLessons.size > 0) {
+        const classId = edupageService.findClassId(db, u.class_name);
+        if (classId && !classesWithLessons.has(classId)) {
+          return false; // Skip groups without lessons on this day (e.g. Saturday for 94% of groups)
+        }
+      }
+      return true;
+    });
+
     if (eligibleUsers.length === 0) {
-      logger.info("Dars jadvali yuborish uchun guruhini kiritgan foydalanuvchilar mavjud emas.");
+      logger.info(`Dars jadvali yuborish uchun faol darslari bor talabalar topilmadi (dayOfWeek: ${dayOfWeek}).`);
       return;
     }
 

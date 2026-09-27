@@ -41,15 +41,23 @@ async function fetchTodaySchedule(className, specificDayIdx = null) {
 
   let dayOfWeek;
   if (specificDayIdx !== null && specificDayIdx !== undefined) {
-    dayOfWeek = specificDayIdx;
+    dayOfWeek = Number(specificDayIdx);
   } else {
-    const date = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
-    dayOfWeek = (date.getDay() + 6) % 7;
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Tashkent',
+      weekday: 'short',
+    }).formatToParts(new Date());
+    const weekdayStr = parts.find((p) => p.type === 'weekday')?.value || 'Mon';
+    const dayMap = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+    dayOfWeek = dayMap[weekdayStr] ?? ((new Date().getUTCDay() + 6) % 7);
   }
 
-  // Sunday (6) defaults to Monday (0)
-  const targetDay = dayOfWeek < 6 ? dayOfWeek : 0;
-  return getFormattedSchedule(canonical, targetDay);
+  // Sunday (6) is a day off
+  if (dayOfWeek === 6) {
+    return "📅 <b>Yakshanba — dam olish kuni!</b>\n\n📭 Ushbu kunda darslar bo'lmaydi.";
+  }
+
+  return getFormattedSchedule(canonical, dayOfWeek);
 }
 
 /**
