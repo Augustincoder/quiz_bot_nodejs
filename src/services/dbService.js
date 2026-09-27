@@ -1033,6 +1033,26 @@ async function getUserNotificationPreference(userId) {
   return 'both'; // Default: morning + evening
 }
 
+async function getUserNotificationPreferences(userIds) {
+  if (!Array.isArray(userIds) || userIds.length === 0) return [];
+  if (redis && typeof redis.mget === 'function') {
+    try {
+      const keys = userIds.map(id => `user:notify_pref:${id}`);
+      const results = [];
+      const CHUNK = 500;
+      for (let i = 0; i < keys.length; i += CHUNK) {
+        const slice = keys.slice(i, i + CHUNK);
+        const res = await redis.mget(slice);
+        results.push(...(res || []));
+      }
+      return results.map(r => r || 'both');
+    } catch (e) {
+      logger.debug('Redis mget failed for notification preferences', { error: e.message });
+    }
+  }
+  return userIds.map(() => 'both');
+}
+
 async function setUserNotificationPreference(userId, preference) {
   if (!userId) return false;
   const valid = ['both', 'morning', 'evening', 'silent'];
@@ -1091,5 +1111,6 @@ module.exports = {
   getAllCachedTimetables,
   clearAllTimetableCache,
   getUserNotificationPreference,
+  getUserNotificationPreferences,
   setUserNotificationPreference,
 };

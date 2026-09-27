@@ -416,10 +416,10 @@ async function queueSchedules(isTomorrow = false) {
       return;
     }
 
-    // Filter by user notification preference (both, morning, evening, silent)
+    // Filter by user notification preference (both, morning, evening, silent) via fast batched mget
     const targetPeriod = isTomorrow ? 'evening' : 'morning';
-    const userPrefs = await Promise.all(
-      eligibleUsers.map((u) => dbService.getUserNotificationPreference(u.telegram_id))
+    const userPrefs = await dbService.getUserNotificationPreferences(
+      eligibleUsers.map((u) => u.telegram_id)
     );
     const finalRecipients = eligibleUsers.filter((u, idx) => {
       const pref = userPrefs[idx] || 'both';

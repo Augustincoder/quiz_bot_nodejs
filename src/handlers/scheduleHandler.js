@@ -672,18 +672,22 @@ async function renderNotifySettings(ctx, alertMessage = null) {
     ],
   ]);
 
-  if (alertMessage) {
-    await safeAnswerCb(ctx, alertMessage);
-  } else {
-    await safeAnswerCb(ctx);
-  }
-
-  try {
-    await ctx.editMessageText(text, { parse_mode: 'HTML', ...kb });
-  } catch (e) {
-    if (!e?.message?.includes('message is not modified')) {
-      await ctx.reply(text, { parse_mode: 'HTML', ...kb }).catch(() => {});
+  if (ctx.callbackQuery) {
+    if (alertMessage) {
+      await safeAnswerCb(ctx, alertMessage);
+    } else {
+      await safeAnswerCb(ctx);
     }
+
+    try {
+      await ctx.editMessageText(text, { parse_mode: 'HTML', ...kb });
+    } catch (e) {
+      if (!e?.message?.includes('message is not modified')) {
+        await ctx.reply(text, { parse_mode: 'HTML', ...kb }).catch(() => {});
+      }
+    }
+  } else {
+    await ctx.reply(text, { parse_mode: 'HTML', ...kb });
   }
 }
 

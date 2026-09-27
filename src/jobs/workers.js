@@ -2,7 +2,7 @@
 
 const { Worker } = require('bullmq');
 const redisConnection = require('../services/redisService');
-const { escapeHtml } = require('../core/utils');
+const { escapeHtml, truncateText } = require('../core/utils');
 const logger = require('../core/logger');
 const dbService = require('../services/dbService');
 
@@ -73,7 +73,7 @@ function initWorkers(bot, scheduleService) {
       const greeting = isTomorrow ? '🌙 <b>Xayrli tun!</b> Ertangi dars jadvalingiz:' : '🌤 <b>Xayrli tong!</b> Bugungi dars jadvalingiz:';
       let msg = `${greeting}\n\n🎓 <b>Guruh: ${escapeHtml(className)}</b>\n\n${scheduleText}`;
       if (msg.length > 4000) {
-        msg = msg.slice(0, 3950) + '\n\n<i>...(jadval qisqartirildi)</i>';
+        msg = truncateText(msg, 3950);
       }
 
       try {

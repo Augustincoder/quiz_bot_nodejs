@@ -3,8 +3,11 @@
 const logger = require('../core/logger');
 const scheduleService = require('./scheduleService');
 
-// Render 512MB RAM safety threshold: trigger at 380MB heap
-const HEAP_THRESHOLD_BYTES = 380 * 1024 * 1024;
+// Render 512MB RAM safety thresholds:
+// 1. Heap threshold: 350MB V8 heap
+// 2. RSS threshold: 420MB process resident memory (Render SIGKILLs container at 512MB)
+const HEAP_THRESHOLD_BYTES = 350 * 1024 * 1024;
+const RSS_THRESHOLD_BYTES = 420 * 1024 * 1024;
 const CHECK_INTERVAL_MS = 30 * 1000;
 
 let _timer = null;
@@ -16,8 +19,11 @@ function checkMemory() {
     const heapUsedMb = Math.round(mem.heapUsed / 1024 / 1024);
     const rssMb = Math.round(mem.rss / 1024 / 1024);
 
-    if (mem.heapUsed > HEAP_THRESHOLD_BYTES) {
-      logger.warn(`🚨 Surgical RAM Watchdog Alert: Heap ${heapUsedMb}MB (RSS: ${rssMb}MB) > 380MB threshold. Initiating disposable cache purge...`);
+    const isHeapHigh = mem.heapUsed > HEAP_THRESHOLD_BYTES;
+    const isRssHigh = mem.rss > RSS_THRESHOLD_BYTES;
+
+    if (isHeapHigh || isRssHigh) {
+      logger.warn(`🚨 Surgical RAM Watchdog Alert: Heap ${heapUsedMb}MB / RSS ${rssMb}MB exceeded safe ceiling. Initiating disposable cache purge...`);
 
       // 1. Clear ONLY disposable timetable PNG image buffers (quizzes and sessions are 100% untouched)
       scheduleService.clearImageMemoryCache();
