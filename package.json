@@ -9,7 +9,7 @@
     "upload:cdn": "node --expose-gc scripts/upload_all_to_channel.js",
     "prewarm:cdn": "node --expose-gc --max-old-space-size=350 scripts/prewarm_timetable_cdn.js",
     "prewarm:cdn:active": "node --expose-gc --max-old-space-size=350 scripts/prewarm_timetable_cdn.js --active-only",
-    "test": "node scripts/test_group_normalization.js && node scripts/test_weekend_schedule.js && node scripts/test_schedule_diff_sensitivity.js"
+    "test": "node scripts/test_group_normalization.js && node scripts/test_weekend_schedule.js && node scripts/test_schedule_diff_sensitivity.js && node scripts/test_circuit_breaker.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

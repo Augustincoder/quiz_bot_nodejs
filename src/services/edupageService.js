@@ -606,10 +606,10 @@ const CIRCUIT_RESET_TIMEOUT_MS = 45000; // 45 seconds
 
 function recordEduPageFailure(err) {
   consecutiveFailures++;
-  if (consecutiveFailures >= FAILURE_THRESHOLD) {
+  if (consecutiveFailures >= FAILURE_THRESHOLD || circuitBreakerState === 'HALF_OPEN') {
     circuitBreakerState = 'OPEN';
     nextCircuitRetryTime = Date.now() + CIRCUIT_RESET_TIMEOUT_MS;
-    logger.warn(`⚡ EduPage Circuit Breaker tripped to OPEN (${consecutiveFailures} consecutive failures). Fast-failing network calls for 45s.`, { error: err?.message });
+    logger.warn(`⚡ EduPage Circuit Breaker tripped to OPEN (${consecutiveFailures} consecutive failures, previous state: ${circuitBreakerState}). Fast-failing network calls for 45s.`, { error: err?.message });
   }
 }
 
@@ -709,6 +709,9 @@ async function getOrFetchIndexedData(forceRefresh = false) {
       if (canAttemptNetwork) {
         try {
           raw = await fetchRawTimetable(defaultNum);
+          if (!raw?.r?.dbiAccessorRes?.tables) {
+            throw new Error('Invalid response structure from EduPage API (missing tables)');
+          }
           recordEduPageSuccess();
         } catch (networkErr) {
           recordEduPageFailure(networkErr);
