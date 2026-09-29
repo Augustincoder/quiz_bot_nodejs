@@ -517,6 +517,14 @@ async function main() {
   await loadAllTests();
   await syncUserNames();
 
+  // Pre-load EduPage Timetable from L3 Disk Cache into RAM (Zero cold-start delay)
+  try {
+    await edupageService.getIndexedDatabase();
+    logger.info("📅 EduPage dars jadvali xotiraga muvaffaqiyatli yuklandi");
+  } catch (err) {
+    logger.warn("EduPage dars jadvalini yuklash fonda davom etadi:", { error: err.message });
+  }
+
   _workers = initWorkers(bot, scheduleService);
   await broadcastQueue.resume();
   await quizTimerQueue.resume();

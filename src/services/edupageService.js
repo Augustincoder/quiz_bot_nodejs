@@ -6,7 +6,14 @@ const https = require('https');
 const zlib = require('zlib');
 const logger = require('../core/logger');
 
-const DISK_CACHE_PATH = path.join(__dirname, '../data/timetable_cache.json');
+function resolveDiskCachePath() {
+  const localSrcPath = path.join(__dirname, '../data/timetable_cache.json');
+  if (fs.existsSync(localSrcPath)) return localSrcPath;
+  const rootDataPath = path.join(__dirname, '../../data/timetable_cache.json');
+  if (fs.existsSync(rootDataPath)) return rootDataPath;
+  return localSrcPath;
+}
+const DISK_CACHE_PATH = resolveDiskCachePath();
 
 const DAY_NAMES = ['Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba', 'Yakshanba'];
 const PERIOD_TIMES = {
@@ -34,7 +41,8 @@ const httpsAgent = new https.Agent({
   keepAlive: true,
   maxSockets: 10,
   keepAliveMsecs: 30000,
-  timeout: 45000,
+  timeout: 30000,
+  family: 4,
 });
 
 const DEFAULT_HEADERS = {
@@ -255,6 +263,7 @@ function httpPost(path, payload, timeoutMs = 30000) {
       hostname: 'tsue.edupage.org',
       path,
       agent: httpsAgent,
+      family: 4,
       method: 'POST',
       headers: {
         ...DEFAULT_HEADERS,
@@ -336,9 +345,9 @@ async function resolveDefaultNum() {
     const currentYear = new Date().getFullYear();
     const payload = { __args: [null, currentYear], __gsh: '00000000' };
     const res = await fetchWithRetry(
-      () => httpPost('/timetable/server/ttviewer.js?__func=getTTViewerData', payload, 15000),
+      () => httpPost('/timetable/server/ttviewer.js?__func=getTTViewerData', payload, 8000),
       1,
-      800
+      500
     );
 
     const discoveredNum = res?.r?.regular?.default_num;
@@ -641,9 +650,9 @@ function canAttemptEduPageNetwork() {
 async function fetchRawTimetable(defaultNum) {
   const payload = { __args: [null, defaultNum.toString()], __gsh: '00000000' };
   return fetchWithRetry(
-    () => httpPost('/timetable/server/regulartt.js?__func=regularttGetData', payload, 35000),
-    2,
-    1000
+    () => httpPost('/timetable/server/regulartt.js?__func=regularttGetData', payload, 15000),
+    1,
+    800
   );
 }
 

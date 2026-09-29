@@ -4,7 +4,6 @@ node_modules/
 .env.*
 !.env.example
 data/timetable_cache.json
-src/data/timetable_cache.json
 src/data/*.tmp
 data/*.tmp
 logs/
