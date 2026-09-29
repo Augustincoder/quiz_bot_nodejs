@@ -1,0 +1,42 @@
+# ==============================================================================
+# .dockerignore for Quiz Bot Node.js (Northflank & Production)
+# ==============================================================================
+
+# Version control & tooling
+.git
+.gitignore
+.github
+.agent
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Dependencies (will be freshly built inside container)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+
+# Secrets and environment files (Inject via Northflank Secret / Environment variables)
+.env
+.env.*
+!.env.example
+
+# Application logs & runtime generated caches
+logs/
+*.log
+*.tmp
+data/*.tmp
+src/data/*.tmp
+data/timetable_cache.json
+src/data/timetable_cache.json
+
+# Development previews, assets & docs not required in runtime image
+previews/
+*.docx
+.eslintrc*
+eslint.config.js
+CHANGELOG.md
+README.md

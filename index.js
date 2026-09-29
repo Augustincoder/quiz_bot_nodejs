@@ -640,6 +640,7 @@ async function main() {
   app.use(express.json({ limit: "2mb" }));
   app.use("/api/admin", adminRouter);
   app.get("/", (_, res) => res.send("Bot 100% aktiv va ishlab turibdi! 🚀"));
+  app.get("/health", (_, res) => res.status(200).json({ status: "ok", uptime: Math.floor(process.uptime()), memory: process.memoryUsage().rss }));
 
   // Express Global Error Handler
   app.use((err, req, res, next) => {
