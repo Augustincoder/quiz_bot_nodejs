@@ -126,23 +126,31 @@ function wrapSubjectText(text, cardW) {
   return { lines, fSize };
 }
 
-// Load raw groups from groups.json for exact naming
-let rawGroupsMap = new Map();
-try {
-  const groupsPath = path.join(__dirname, '../data/groups.json');
-  if (fs.existsSync(groupsPath)) {
-    const arr = JSON.parse(fs.readFileSync(groupsPath, 'utf8'));
-    for (const g of arr) {
-      if (typeof g === 'string' && g.trim()) {
-        const norm = g.toUpperCase().replace(/[^A-Z0-9]/g, '');
-        if (norm && !rawGroupsMap.has(norm)) {
-          rawGroupsMap.set(norm, g.trim());
+// Load raw groups from groups.json lazily for exact naming
+let rawGroupsMap = null;
+
+function getRawGroupsMap() {
+  if (rawGroupsMap !== null) {
+    return rawGroupsMap;
+  }
+  rawGroupsMap = new Map();
+  try {
+    const groupsPath = path.join(__dirname, '../data/groups.json');
+    if (fs.existsSync(groupsPath)) {
+      const arr = JSON.parse(fs.readFileSync(groupsPath, 'utf8'));
+      for (const g of arr) {
+        if (typeof g === 'string' && g.trim()) {
+          const norm = g.toUpperCase().replace(/[^A-Z0-9]/g, '');
+          if (norm && !rawGroupsMap.has(norm)) {
+            rawGroupsMap.set(norm, g.trim());
+          }
         }
       }
     }
+  } catch {
+    // Silent fallback
   }
-} catch {
-  // Silent fallback
+  return rawGroupsMap;
 }
 
 function resolveRawGroupName(name) {
@@ -153,8 +161,9 @@ function resolveRawGroupName(name) {
     if (canonical) return canonical;
   } catch {}
   const norm = name.toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (rawGroupsMap.has(norm)) {
-    return rawGroupsMap.get(norm);
+  const groupsMap = getRawGroupsMap();
+  if (groupsMap.has(norm)) {
+    return groupsMap.get(norm);
   }
   return name.toString().trim();
 }
