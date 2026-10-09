@@ -158,11 +158,6 @@ function buildRoomPageKb(periodNum, currentBino, currentPage, totalPages, studen
     for (let i = 0; i < binoButtons.length; i += 3) {
       rows.push(binoButtons.slice(i, i + 3));
     }
-
-            return Markup.button.callback(label, `rm_${periodNum}_${bId}_0`);
-      });
-      rows.push(otherButtons);
-    }
   } else {
     const DEFAULT_BINOS = [
       { id: 'asosiy', label: '🏛 Asosiy' },
@@ -439,7 +434,6 @@ async function cmdTimetable(ctx) {
   const className = rawClass ? (edupageService.getCanonicalGroupName(rawClass) || rawClass) : null;
   
   const tzDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
-  const dayOfWeek = (tzDate.getDay() + 6) % 7;
   const timeStr = `${String(tzDate.getHours()).padStart(2, '0')}:${String(tzDate.getMinutes()).padStart(2, '0')}`;
   
   let header = `🎓 <b>Dars Jadvali Markazi</b>\n━━━━━━━━━━━━━━━━━━━━\n`;
