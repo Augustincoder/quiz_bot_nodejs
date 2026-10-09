@@ -1,7 +1,5 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
 const { Markup } = require('telegraf');
 const dbService = require('../services/dbService');
 const edupageService = require('../services/edupageService');
@@ -9,7 +7,7 @@ const { escapeHtml, States, setState, clearState, safeAnswerCb, safeEdit } = req
 
 let VALID_GROUPS = [];
 try {
-  const rawGroups = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/groups.json'), 'utf8'));
+  const rawGroups = require('../data/groups.json');
 
   VALID_GROUPS = rawGroups.filter(g => {
     if (!g) return false;
