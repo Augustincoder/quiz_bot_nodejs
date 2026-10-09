@@ -402,11 +402,16 @@ async function getMetadataSignature() {
   }
 }
 
+const roomLocationCache = new Map();
 /**
  * Parses building and floor information from classroom code
  */
 function parseRoomLocation(xona) {
   const clean = (xona || '').trim();
+  if (!clean) return { bino: 'Asosiy bino', qavat: '1-qavat' };
+  const cached = roomLocationCache.get(clean);
+  if (cached) return cached;
+  if (roomLocationCache.size > 1000) roomLocationCache.clear();
   const bochkaMatch = clean.match(/^(\d+)-bochka/i);
   if (bochkaMatch) return { bino: `${bochkaMatch[1]}-bochka`, qavat: '1-qavat' };
 
@@ -422,7 +427,9 @@ function parseRoomLocation(xona) {
   const normalMatch = clean.match(/^(\d)(\d{2})/);
   if (normalMatch) return { bino: 'Asosiy bino', qavat: `${normalMatch[1]}-qavat` };
 
-  return { bino: 'Asosiy bino', qavat: `${clean.charAt(0) || '1'}-qavat` };
+  const res = { bino: 'Asosiy bino', qavat: `${clean.charAt(0) || '1'}-qavat` };
+  roomLocationCache.set(clean, res);
+  return res;
 }
 
 /**
@@ -433,6 +440,14 @@ function parseRoomLocation(xona) {
 async function getGroupBuildings(className) {
   if (!className) return [];
   try {
+    const db = await getOrFetchIndexedData();
+    if (db && db.buildingsByClassId) {
+      const classId = findClassId(db, className);
+      if (classId && db.buildingsByClassId.has(classId)) {
+        return db.buildingsByClassId.get(classId);
+      }
+    }
+
     const canonical = getCanonicalGroupName(className) || className;
     const schedule = await getRawSchedule(canonical);
     if (!schedule) return [];
@@ -563,23 +578,65 @@ function buildIndexedDatabase(raw, defaultNum) {
     }
   });
 
+  // Pre-index building locations per class
+  const buildingsByClassId = new Map();
+  schedulesByClassId.forEach((classSchedule, cid) => {
+    const binos = new Set();
+    for (let d = 0; d < 6; d++) {
+      if (!classSchedule[d]) continue;
+      for (const p of Object.keys(classSchedule[d])) {
+        const lessons = classSchedule[d][p];
+        if (!Array.isArray(lessons)) continue;
+        for (const l of lessons) {
+          if (l.room && l.room !== '?' && !l.room.toLowerCase().includes('online')) {
+            const loc = parseRoomLocation(l.room);
+            if (loc && loc.bino) binos.add(loc.bino);
+          }
+        }
+      }
+    }
+    const sorted = Array.from(binos).sort((a, b) => {
+      if (a === 'Asosiy bino') return -1;
+      if (b === 'Asosiy bino') return 1;
+      return a.localeCompare(b, undefined, { numeric: true });
+    });
+    buildingsByClassId.set(cid, sorted);
+  });
+
   // Pre-index empty rooms matrix for all 6 days * 8 periods (48 slots)
+  const occupiedBySlot = new Map();
+  for (const card of cards) {
+    const daysStr = card.days || '';
+    const pObj = periods[card.period];
+    if (!pObj) continue;
+    const pNum = parseInt(pObj.period, 10);
+    if (Number.isNaN(pNum) || pNum < 1 || pNum > 8) continue;
+    const roomIds = card.classroomids || [];
+    if (roomIds.length === 0) continue;
+
+    for (let d = 0; d < 6; d++) {
+      if (daysStr[d] === '1') {
+        const key = `${d}:${pNum}`;
+        let set = occupiedBySlot.get(key);
+        if (!set) {
+          set = new Set();
+          occupiedBySlot.set(key, set);
+        }
+        for (const rid of roomIds) set.add(rid);
+      }
+    }
+  }
+
+  const roomEntries = Object.entries(rooms).filter(([, name]) => /^\d/.test((name || '').trim()));
   const emptyRoomsMatrix = new Map();
   for (let d = 0; d < 6; d++) {
     for (let p = 1; p <= 8; p++) {
-      const occupied = new Set();
-      for (const card of cards) {
-        if ((card.days || '')[d] !== '1') continue;
-        const pObj = periods[card.period];
-        if (!pObj || parseInt(pObj.period, 10) !== p) continue;
-        (card.classroomids || []).forEach(rid => occupied.add(rid));
-      }
-
-      const empty = Object.entries(rooms)
-        .filter(([id, name]) => !occupied.has(id) && /^\d/.test((name || '').trim()))
+      const key = `${d}:${p}`;
+      const occupied = occupiedBySlot.get(key);
+      const empty = roomEntries
+        .filter(([id]) => !occupied || !occupied.has(id))
         .map(([, name]) => name.trim().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'));
-
-      emptyRoomsMatrix.set(`${d}:${p}`, empty);
+      emptyRoomsMatrix.set(key, empty);
     }
   }
 
@@ -602,6 +659,7 @@ function buildIndexedDatabase(raw, defaultNum) {
     classesByName,
     classNamesList,
     schedulesByClassId,
+    buildingsByClassId,
     emptyRoomsMatrix,
   };
 }
