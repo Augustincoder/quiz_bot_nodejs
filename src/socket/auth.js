@@ -35,12 +35,13 @@ const socketAuthMiddleware = (socket, next) => {
   try {
     const initData = socket.handshake.auth?.initData;
     const isMockAuthEnabled = process.env.ALLOW_MOCK_AUTH === "true";
+    const isAllowedEnv = process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
 
-    // 1. Local Bypass (strictly forbidden in production)
+    // 1. Local Bypass (strictly forbidden outside non-production test/development environments)
     if (isMockAuthEnabled) {
-      if (process.env.NODE_ENV === "production") {
-        logger.error("SECURITY ALERT: ALLOW_MOCK_AUTH attempted in production environment!");
-        return next(new Error("Authentication error: Mock auth forbidden in production"));
+      if (!isAllowedEnv) {
+        logger.error("SECURITY ALERT: ALLOW_MOCK_AUTH attempted in non-development/non-test environment!");
+        return next(new Error("Authentication error: Mock auth forbidden outside development or test environments"));
       }
       let userObj = { id: "mock_user_" + Math.floor(Math.random() * 10000), first_name: "MockUser" };
       if (initData) {
