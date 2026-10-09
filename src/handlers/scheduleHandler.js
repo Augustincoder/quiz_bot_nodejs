@@ -489,7 +489,7 @@ async function cmdXonalar(ctx) {
   await ctx.reply('🏢 Qaysi para uchun bo\'sh xonalarni ko\'rmoqchisiz?', PARA_KB);
 }
 
-async function renderRoomView(ctx, periodNum, binoId = 'all', pageIdx = 0, explicitDayIdx = null, explicitOffsetDays = null, explicitTimeMode = null) {
+async function renderRoomView(ctx, periodNum, requestedBinoId = 'all', pageIdx = 0, explicitDayIdx = null, explicitOffsetDays = null, explicitTimeMode = null) {
   const tzDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
   let dayIdx = explicitDayIdx !== null ? explicitDayIdx : (tzDate.getDay() + 6) % 7;
   let offsetDays = explicitOffsetDays !== null ? explicitOffsetDays : 0;
@@ -534,6 +534,7 @@ async function renderRoomView(ctx, periodNum, binoId = 'all', pageIdx = 0, expli
   const rawClass = await dbService.getUserClass(ctx.from.id);
   const className = rawClass ? (edupageService.getCanonicalGroupName(rawClass) || rawClass) : null;
   const studentBinos = className ? await edupageService.getGroupBuildings(className) : [];
+  const binoId = requestedBinoId === 'default' ? (studentBinos.length > 0 ? 'my' : 'all') : requestedBinoId;
 
   const cacheKey = `${ctx.from.id}:${dayIdx}:${periodNum}:${binoId}:${timeMode || 'std'}`;
   let pages = roomsPaginationCache.get(cacheKey);
@@ -566,33 +567,20 @@ async function renderRoomView(ctx, periodNum, binoId = 'all', pageIdx = 0, expli
 async function cbBoshXonaNow(ctx) {
   await safeAnswerCb(ctx);
   const { current } = getPeriodNowAndNext();
-  const rawClass = await dbService.getUserClass(ctx.from.id);
-  const className = rawClass ? (edupageService.getCanonicalGroupName(rawClass) || rawClass) : null;
-  const studentBinos = className ? await edupageService.getGroupBuildings(className) : [];
-  const defaultBino = studentBinos.length > 0 ? 'my' : 'all';
-  await renderRoomView(ctx, current.periodNum, defaultBino, 0, current.dayIdx, current.offsetDays, 'now');
+  await renderRoomView(ctx, current.periodNum, 'default', 0, current.dayIdx, current.offsetDays, 'now');
 }
 
 async function cbBoshXonaNext(ctx) {
   await safeAnswerCb(ctx);
   const { next } = getPeriodNowAndNext();
-  const rawClass = await dbService.getUserClass(ctx.from.id);
-  const className = rawClass ? (edupageService.getCanonicalGroupName(rawClass) || rawClass) : null;
-  const studentBinos = className ? await edupageService.getGroupBuildings(className) : [];
-  const defaultBino = studentBinos.length > 0 ? 'my' : 'all';
-  await renderRoomView(ctx, next.periodNum, defaultBino, 0, next.dayIdx, next.offsetDays, 'next');
+  await renderRoomView(ctx, next.periodNum, 'default', 0, next.dayIdx, next.offsetDays, 'next');
 }
 
 async function cbBoshXona(ctx) {
   await safeAnswerCb(ctx);
   const periodNum = parseInt(ctx.callbackQuery.data.replace('bosh_', ''), 10);
   if (Number.isNaN(periodNum) || periodNum < 1 || periodNum > 8) return;
-
-  const rawClass = await dbService.getUserClass(ctx.from.id);
-  const className = rawClass ? (edupageService.getCanonicalGroupName(rawClass) || rawClass) : null;
-  const studentBinos = className ? await edupageService.getGroupBuildings(className) : [];
-  const defaultBino = studentBinos.length > 0 ? 'my' : 'all';
-  await renderRoomView(ctx, periodNum, defaultBino, 0);
+  await renderRoomView(ctx, periodNum, 'default', 0);
 }
 
 async function cbRoomAction(ctx) {
