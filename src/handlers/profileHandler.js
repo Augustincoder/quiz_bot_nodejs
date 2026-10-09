@@ -27,15 +27,41 @@ function normalize(str) {
 }
 
 function getLevenshteinDistance(a, b) {
-  const matrix = [];
-  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      matrix[i][j] = b[i - 1] === a[j - 1] ? matrix[i - 1][j - 1] : Math.min(matrix[i - 1][j - 1], matrix[i][j - 1], matrix[i - 1][j]) + 1;
-    }
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+
+  if (a.length < b.length) {
+    const tmp = a;
+    a = b;
+    b = tmp;
   }
-  return matrix[b.length][a.length];
+
+  const bLen = b.length;
+  let prevRow = new Int32Array(bLen + 1);
+  let currRow = new Int32Array(bLen + 1);
+
+  for (let j = 0; j <= bLen; j++) {
+    prevRow[j] = j;
+  }
+
+  for (let i = 1; i <= a.length; i++) {
+    currRow[0] = i;
+    const charA = a.charCodeAt(i - 1);
+    for (let j = 1; j <= bLen; j++) {
+      const cost = charA === b.charCodeAt(j - 1) ? 0 : 1;
+      currRow[j] = Math.min(
+        prevRow[j] + 1,
+        currRow[j - 1] + 1,
+        prevRow[j - 1] + cost
+      );
+    }
+    const temp = prevRow;
+    prevRow = currRow;
+    currRow = temp;
+  }
+
+  return prevRow[bLen];
 }
 
 async function getAvailableGroups() {
