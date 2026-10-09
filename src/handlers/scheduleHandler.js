@@ -159,14 +159,7 @@ function buildRoomPageKb(periodNum, currentBino, currentPage, totalPages, studen
       rows.push(binoButtons.slice(i, i + 3));
     }
 
-    const POPULAR_BINOS = ['Asosiy bino', '1-bino', '2-bino', '3-bino', '4-bino'];
-    const otherBinos = POPULAR_BINOS.filter(b => !studentBinos.includes(b)).slice(0, 3);
-    if (otherBinos.length > 0) {
-      const otherButtons = otherBinos.map(binoName => {
-        const bId = toBinoId(binoName);
-        const isActive = currentBino === bId || currentBino === binoName;
-        const label = isActive ? `• ${binoName} •` : binoName;
-        return Markup.button.callback(label, `rm_${periodNum}_${bId}_0`);
+            return Markup.button.callback(label, `rm_${periodNum}_${bId}_0`);
       });
       rows.push(otherButtons);
     }
@@ -740,4 +733,6 @@ module.exports = {
   cmdJadval,
   cmdHafta,
   cmdXonalar,
+  buildRoomPageKb,
+  buildRoomPageKb,
 };
