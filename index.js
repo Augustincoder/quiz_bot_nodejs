@@ -559,16 +559,18 @@ async function main() {
     timezone: "Asia/Tashkent",
   });
 
-  // 3. Realtime Schedule Watcher (Dushanbadan Shanbagacha dars vaqtida har 5 daqiqada)
-  const watcherDayCron = cron.schedule("*/5 7-19 * * 1-6", () => {
+  // 3. Realtime Schedule Watcher (Har kuni, shu jumladan Shanba va Yakshanba: 07:00 dan 21:55 gacha har 5 daqiqada)
+  // Universitet dispetcherlari dars jadvali o'zgarishlarini asosan Shanba va Yakshanba kunlari kiritishini hisobga olgan holda
+  // dam olish kunlarida ham hafta kunlari kabi to'liq va uzluksiz har 5 daqiqada tekshiriladi.
+  const watcherDayCron = cron.schedule("*/5 7-21 * * *", () => {
     scheduleWatcher.checkScheduleChanges(false).catch(err => {
-      logger.error("Watcher day cron error:", { error: err.message });
+      logger.error("Watcher daytime cron error:", { error: err.message });
     });
   }, {
     timezone: "Asia/Tashkent",
   });
 
-  // 4. Realtime Schedule Watcher (Tungi soatlarda har 30 daqiqada — 22:05 da boshlanib 21:00 kechki tarqatish bilan to'qnashmaydi)
+  // 4. Realtime Schedule Watcher (Tungi sokin soatlarda har 30 daqiqada — 22:05 dan 06:35 gacha)
   const watcherNightCron = cron.schedule("5,35 22-23,0-6 * * *", () => {
     scheduleWatcher.checkScheduleChanges(false).catch(err => {
       logger.error("Watcher night cron error:", { error: err.message });
@@ -577,16 +579,7 @@ async function main() {
     timezone: "Asia/Tashkent",
   });
 
-  // 5. Realtime Schedule Watcher (Yakshanba kunduzi har 20 daqiqada — dushanba jadvali o'zgarishlarini oldindan aniqlash uchun)
-  const watcherSundayCron = cron.schedule("*/20 7-21 * * 0", () => {
-    scheduleWatcher.checkScheduleChanges(false).catch(err => {
-      logger.error("Watcher sunday cron error:", { error: err.message });
-    });
-  }, {
-    timezone: "Asia/Tashkent",
-  });
-
-  // 6. Tungi 02:00 dan 05:00 gacha faol guruhlar jadval rasmlarini kanalga to'ldirish (Nightly Theme Completion Worker)
+  // 5. Tungi 02:00 dan 05:00 gacha faol guruhlar jadval rasmlarini kanalga to'ldirish (Nightly Theme Completion Worker)
   // Har kuni 02:00 da boshlanadi va 05:00 gacha yetishmagan mavzularni (light/dark/vibrant) bittalab to'ldiradi
   const nightPrewarmStartCron = cron.schedule("00 02 * * *", () => {
     logger.info("🌙 Nightly timetable theme completion worker started (02:00 Asia/Tashkent)...");
@@ -602,7 +595,7 @@ async function main() {
     timezone: "Asia/Tashkent",
   });
 
-  // 7. Tungi 05:00 da worker to'xtatiladi (Fail-safe hard cutoff)
+  // 6. Tungi 05:00 da worker to'xtatiladi (Fail-safe hard cutoff)
   const nightPrewarmStopCron = cron.schedule("00 05 * * *", () => {
     logger.info("🛑 Nightly timetable theme completion worker stopping (05:00 Asia/Tashkent cutoff)...");
     const timetableCdnService = require("./src/services/timetableCdnService");
@@ -616,7 +609,6 @@ async function main() {
     eveningCron,
     watcherDayCron,
     watcherNightCron,
-    watcherSundayCron,
     nightPrewarmStartCron,
     nightPrewarmStopCron,
   ];
