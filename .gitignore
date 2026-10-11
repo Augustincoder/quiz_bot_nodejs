@@ -16,9 +16,7 @@ ai_ignore_sql/
 !.agent/skills/**/data/*.csv
 data/users_stats.json
 src/data/users_stats.json
-data/timetable_cache.json
 src/data/timetable_cache.json
-previews/src/data/timetable_cache.json
 src/data/*.tmp
 data/*.tmp
 

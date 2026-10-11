@@ -50,11 +50,15 @@ function initWorkers(bot, scheduleService) {
 
     const scheduleText = await scheduleService.fetchTodaySchedule(className, dayOfWeek);
 
-    // 2. If there are NO lessons scheduled for this group on this day, DO NOT send empty "dars yo'q" notification!
+    // 2. If an error occurred while generating schedule, throw so BullMQ can retry
+    if (scheduleText && (scheduleText.includes('xatolik') || scheduleText.startsWith('❌'))) {
+      logger.warn('Schedule fetch error during broadcast, throwing for BullMQ retry', { className, userId });
+      throw new Error(`Schedule fetch error for group ${className}: ${scheduleText}`);
+    }
+
+    // 3. If there are NO lessons scheduled for this group on this day, DO NOT send empty "dars yo'q" notification!
     const hasNoLessons = !scheduleText ||
       scheduleText.includes('Jadval topilmadi') ||
-      scheduleText.includes('xatolik') ||
-      scheduleText.includes('topilmadi') ||
       scheduleText.includes('kiritilmagan') ||
       scheduleText.includes("darslar yo'q") ||
       scheduleText.includes("dars yo'q") ||

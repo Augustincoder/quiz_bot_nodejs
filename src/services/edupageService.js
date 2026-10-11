@@ -10,11 +10,11 @@ const inflateAsync = util.promisify(zlib.inflate);
 const logger = require('../core/logger');
 
 function resolveDiskCachePath() {
-  const localSrcPath = path.join(__dirname, '../data/timetable_cache.json');
-  if (fs.existsSync(localSrcPath)) return localSrcPath;
-  const rootDataPath = path.join(__dirname, '../../data/timetable_cache.json');
+  const rootDataPath = path.resolve(__dirname, '../../data/timetable_cache.json');
   if (fs.existsSync(rootDataPath)) return rootDataPath;
-  return localSrcPath;
+  const localSrcPath = path.resolve(__dirname, '../data/timetable_cache.json');
+  if (fs.existsSync(localSrcPath)) return localSrcPath;
+  return rootDataPath;
 }
 const DISK_CACHE_PATH = resolveDiskCachePath();
 
@@ -44,8 +44,7 @@ const httpsAgent = new https.Agent({
   keepAlive: true,
   maxSockets: 10,
   keepAliveMsecs: 30000,
-  timeout: 30000,
-  family: 4,
+  timeout: 45000,
 });
 
 const DEFAULT_HEADERS = {
@@ -282,7 +281,7 @@ function escapeHtml(str) {
 /**
  * Safe HTTPS POST request with timeout and keep-alive
  */
-function httpPost(path, payload, timeoutMs = 30000) {
+function httpPost(path, payload, timeoutMs = 45000) {
   return new Promise((resolve, reject) => {
     const postData = typeof payload === 'string' ? payload : JSON.stringify(payload);
     let isSettled = false;
@@ -291,7 +290,6 @@ function httpPost(path, payload, timeoutMs = 30000) {
       hostname: 'tsue.edupage.org',
       path,
       agent: httpsAgent,
-      family: 4,
       method: 'POST',
       headers: {
         ...DEFAULT_HEADERS,
@@ -369,11 +367,16 @@ async function resolveDefaultNum() {
     return cachedDefaultNum;
   }
 
+  // Fast return fallback if circuit breaker is open (prevents 15s timeout during outages)
+  if (!canAttemptEduPageNetwork()) {
+    return cachedDefaultNum || FALLBACK_DEFAULT_NUM;
+  }
+
   try {
     const currentYear = new Date().getFullYear();
     const payload = { __args: [null, currentYear], __gsh: '00000000' };
     const res = await fetchWithRetry(
-      () => httpPost('/timetable/server/ttviewer.js?__func=getTTViewerData', payload, 8000),
+      () => httpPost('/timetable/server/ttviewer.js?__func=getTTViewerData', payload, 15000),
       1,
       500
     );
@@ -387,7 +390,7 @@ async function resolveDefaultNum() {
   } catch (err) {
     logger.warn('Failed to resolve dynamic default_num from EduPage, using fallback', {
       error: err.message,
-      fallback: cachedDefaultNum,
+      fallback: cachedDefaultNum || FALLBACK_DEFAULT_NUM,
     });
   }
 
@@ -778,9 +781,9 @@ function canAttemptEduPageNetwork() {
 async function fetchRawTimetable(defaultNum) {
   const payload = { __args: [null, defaultNum.toString()], __gsh: '00000000' };
   return fetchWithRetry(
-    () => httpPost('/timetable/server/regulartt.js?__func=regularttGetData', payload, 15000),
+    () => httpPost('/timetable/server/regulartt.js?__func=regularttGetData', payload, 45000),
     1,
-    800
+    1500
   );
 }
 
@@ -805,6 +808,23 @@ async function getOrFetchIndexedData(forceRefresh = false) {
   // L1 In-Memory Cache Hit
   if (!forceRefresh && l1IndexedDatabase && (now - l1CacheTime < L1_CACHE_TTL)) {
     return l1IndexedDatabase;
+  }
+
+  // Fast Path on Cold Boot: Instantly restore from L3 Disk Cache if L1 is empty and not forceRefresh
+  if (!forceRefresh && !l1IndexedDatabase && fs.existsSync(DISK_CACHE_PATH)) {
+    try {
+      const diskRaw = JSON.parse(await fs.promises.readFile(DISK_CACHE_PATH, 'utf8'));
+      if (diskRaw?.r?.dbiAccessorRes?.tables) {
+        l1IndexedDatabase = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || FALLBACK_DEFAULT_NUM);
+        l1CacheTime = Date.now();
+        logger.info('EduPage schedule cache instantly restored from L3 Disk Cache on cold boot', {
+          classesCount: l1IndexedDatabase.schedulesByClassId.size,
+        });
+        return l1IndexedDatabase;
+      }
+    } catch (diskErr) {
+      logger.warn('Failed to read initial L3 Disk Cache on cold boot', { error: diskErr.message });
+    }
   }
 
   // Singleflight: reuse running promise if it satisfies forceRefresh requirement
@@ -852,9 +872,9 @@ async function getOrFetchIndexedData(forceRefresh = false) {
           recordEduPageSuccess();
         } catch (networkErr) {
           recordEduPageFailure(networkErr);
-          // Fallback 1: Stale-While-Revalidate Memory Cache
-          if (l1IndexedDatabase && (now - l1CacheTime < L1_STALE_TTL)) {
-            logger.warn('EduPage network request failed; serving stale memory cache', { error: networkErr.message });
+          // Fallback 1: Memory Cache (even if stale)
+          if (l1IndexedDatabase) {
+            logger.warn('EduPage network request failed; serving existing memory cache', { error: networkErr.message });
             l1CacheTime = Date.now() - L1_CACHE_TTL + 60000;
             return l1IndexedDatabase;
           }
@@ -865,7 +885,7 @@ async function getOrFetchIndexedData(forceRefresh = false) {
               const diskRaw = JSON.parse(await fs.promises.readFile(DISK_CACHE_PATH, 'utf8'));
               if (diskRaw?.r?.dbiAccessorRes?.tables) {
                 logger.warn('EduPage network request failed; restored from L3 Disk Cache', { error: networkErr.message });
-                l1IndexedDatabase = buildIndexedDatabase(diskRaw, defaultNum);
+                l1IndexedDatabase = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || defaultNum || FALLBACK_DEFAULT_NUM);
                 l1CacheTime = Date.now() - L1_CACHE_TTL + 60000;
                 return l1IndexedDatabase;
               }
@@ -885,7 +905,7 @@ async function getOrFetchIndexedData(forceRefresh = false) {
           if (fs.existsSync(DISK_CACHE_PATH)) {
             const diskRaw = JSON.parse(await fs.promises.readFile(DISK_CACHE_PATH, 'utf8'));
             if (diskRaw?.r?.dbiAccessorRes?.tables) {
-              l1IndexedDatabase = buildIndexedDatabase(diskRaw, defaultNum);
+              l1IndexedDatabase = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || defaultNum || FALLBACK_DEFAULT_NUM);
               l1CacheTime = Date.now() - L1_CACHE_TTL + 30000;
               return l1IndexedDatabase;
             }
@@ -1001,6 +1021,17 @@ async function getRawSchedule(className) {
     return db.schedulesByClassId.get(classId) || null;
   } catch (err) {
     logger.error('Error in getRawSchedule', { className, error: err.message });
+    // Emergency offline disk fallback
+    try {
+      if (fs.existsSync(DISK_CACHE_PATH)) {
+        const diskRaw = JSON.parse(fs.readFileSync(DISK_CACHE_PATH, 'utf8'));
+        if (diskRaw?.r?.dbiAccessorRes?.tables) {
+          const emergencyDb = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || FALLBACK_DEFAULT_NUM);
+          const classId = findClassId(emergencyDb, className);
+          if (classId) return emergencyDb.schedulesByClassId.get(classId) || null;
+        }
+      }
+    } catch {}
     return null;
   }
 }
@@ -1033,6 +1064,32 @@ async function getFormattedSchedule(className, dayIdx) {
     return formatTimetableText(schedule, null);
   } catch (err) {
     logger.error('Error in getFormattedSchedule', { className, dayIdx, error: err.message, stack: err.stack });
+
+    // Emergency offline disk fallback
+    try {
+      if (fs.existsSync(DISK_CACHE_PATH)) {
+        const diskRaw = JSON.parse(fs.readFileSync(DISK_CACHE_PATH, 'utf8'));
+        if (diskRaw?.r?.dbiAccessorRes?.tables) {
+          const emergencyDb = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || FALLBACK_DEFAULT_NUM);
+          const classId = findClassId(emergencyDb, className);
+          if (classId) {
+            const schedule = emergencyDb.schedulesByClassId.get(classId);
+            if (schedule && Object.keys(schedule).length > 0) {
+              if (dayIdx !== null && dayIdx !== undefined) {
+                const numDay = Number(dayIdx);
+                if (numDay === 6) return `📅 <b>Yakshanba — dam olish kuni!</b>\n\n📭 Ushbu kunda darslar bo'lmaydi.`;
+                const safeDay = Math.max(0, Math.min(5, numDay || 0));
+                return `📅 <b>${DAY_NAMES[safeDay]} — dars jadvali:</b>\n${formatTimetableText(schedule, safeDay)}`;
+              }
+              return formatTimetableText(schedule, null);
+            }
+          }
+        }
+      }
+    } catch (fallbackErr) {
+      logger.error('Emergency disk fallback failed in getFormattedSchedule', { error: fallbackErr.message });
+    }
+
     return '❌ Jadval ma\'lumotlarini olishda texnik xatolik yuz berdi. Birozdan so\'ng qayta urinib ko\'ring.';
   }
 }
@@ -1192,10 +1249,14 @@ async function warmUpCache() {
       }
     }
 
-    // 2. Fetch fresh from network / Redis in background
-    logger.info('Pre-warming EduPage schedule cache in background...');
-    await getOrFetchIndexedData(true);
-    logger.info('EduPage schedule cache successfully pre-warmed');
+    // 2. Fetch fresh from network / Redis in background only if L1 is expired or missing
+    if (!l1IndexedDatabase || (Date.now() - l1CacheTime >= L1_CACHE_TTL)) {
+      if (canAttemptEduPageNetwork()) {
+        logger.info('Pre-warming EduPage schedule cache in background...');
+        await getOrFetchIndexedData(false);
+        logger.info('EduPage schedule cache successfully pre-warmed');
+      }
+    }
   } catch (err) {
     logger.warn('Failed to pre-warm EduPage cache (will retry on first request)', { error: err.message });
   }

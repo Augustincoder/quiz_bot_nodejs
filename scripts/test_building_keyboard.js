@@ -47,8 +47,10 @@ try {
   const fallbackBuildingButtons = kbFallback.reply_markup.inline_keyboard.flat().filter(b => b.callback_data && b.callback_data.startsWith('rm_1_'));
   const fallbackTexts = fallbackBuildingButtons.map(b => b.text);
 
-  assert(fallbackTexts.some(t => t.includes('Asosiy')), 'Default fallback should include Asosiy when no group binos found');
-  console.log('  ✅ Passed: Fallback without studentBinos displays default campus buttons.');
+  assert(fallbackTexts.some(t => t.includes('4-bino')), 'Default fallback should include 4-bino when no group binos found');
+  assert(fallbackTexts.some(t => t.includes('5-bino')), 'Default fallback should include 5-bino when no group binos found');
+  assert.strictEqual(fallbackTexts.some(t => t.includes('Asosiy')), false, 'Default fallback should NOT force Asosiy bino');
+  console.log('  ✅ Passed: Fallback without studentBinos displays default campus buttons without forced Asosiy bino.');
   passed++;
 } catch (err) {
   console.error(`  ❌ Failed: ${err.message}`);

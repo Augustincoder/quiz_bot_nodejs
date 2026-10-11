@@ -30,7 +30,6 @@ logs/
 *.tmp
 data/*.tmp
 src/data/*.tmp
-data/timetable_cache.json
 
 # Development previews, assets & docs not required in runtime image
 previews/
