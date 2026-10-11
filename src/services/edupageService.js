@@ -42,9 +42,10 @@ const REDIS_TTL_SEC = 10 * 60; // 10 minutes in Redis (prevents stale schedule p
 // Keep-alive agent to reuse TCP/TLS sockets and minimize connection latency
 const httpsAgent = new https.Agent({
   keepAlive: true,
-  maxSockets: 10,
-  keepAliveMsecs: 30000,
-  timeout: 45000,
+  maxSockets: 8,
+  maxFreeSockets: 2,
+  keepAliveMsecs: 4000, // 4s: safely lower than EduPage Apache server's 10-second keep-alive timeout
+  timeout: 30000,
 });
 
 const DEFAULT_HEADERS = {

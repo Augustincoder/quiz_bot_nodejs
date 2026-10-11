@@ -559,8 +559,8 @@ async function main() {
     timezone: "Asia/Tashkent",
   });
 
-  // 3. Realtime Schedule Watcher (Dushanbadan Shanbagacha kunduzi har 3 daqiqada)
-  const watcherDayCron = cron.schedule("*/3 7-20 * * 1-6", () => {
+  // 3. Realtime Schedule Watcher (Dushanbadan Shanbagacha dars vaqtida har 5 daqiqada)
+  const watcherDayCron = cron.schedule("*/5 7-19 * * 1-6", () => {
     scheduleWatcher.checkScheduleChanges(false).catch(err => {
       logger.error("Watcher day cron error:", { error: err.message });
     });
@@ -568,8 +568,8 @@ async function main() {
     timezone: "Asia/Tashkent",
   });
 
-  // 4. Realtime Schedule Watcher (Tungi soatlarda har 30 daqiqada — 21:05 da boshlanib 21:00 kechki tarqatish bilan to'qnashmaydi)
-  const watcherNightCron = cron.schedule("5,35 21-23,0-6 * * *", () => {
+  // 4. Realtime Schedule Watcher (Tungi soatlarda har 30 daqiqada — 22:05 da boshlanib 21:00 kechki tarqatish bilan to'qnashmaydi)
+  const watcherNightCron = cron.schedule("5,35 22-23,0-6 * * *", () => {
     scheduleWatcher.checkScheduleChanges(false).catch(err => {
       logger.error("Watcher night cron error:", { error: err.message });
     });
@@ -577,8 +577,8 @@ async function main() {
     timezone: "Asia/Tashkent",
   });
 
-  // 5. Realtime Schedule Watcher (Yakshanba kunduzi har 15 daqiqada — dushanba jadvali o'zgarishlarini oldindan aniqlash uchun)
-  const watcherSundayCron = cron.schedule("*/15 7-20 * * 0", () => {
+  // 5. Realtime Schedule Watcher (Yakshanba kunduzi har 20 daqiqada — dushanba jadvali o'zgarishlarini oldindan aniqlash uchun)
+  const watcherSundayCron = cron.schedule("*/20 7-21 * * 0", () => {
     scheduleWatcher.checkScheduleChanges(false).catch(err => {
       logger.error("Watcher sunday cron error:", { error: err.message });
     });
