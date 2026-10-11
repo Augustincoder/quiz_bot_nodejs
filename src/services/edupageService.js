@@ -297,8 +297,25 @@ function httpPost(path, payload, timeoutMs = 45000) {
         'Content-Length': Buffer.byteLength(postData),
       },
     }, (res) => {
+      // Guard: Non-2xx HTTP status codes (e.g. 502 Bad Gateway, 503 Maintenance, 403 Cloudflare)
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        if (!isSettled) {
+          isSettled = true;
+          clearTimeout(timer);
+          res.resume(); // Drain stream to release TCP socket back to agent pool
+          reject(new Error(`EduPage HTTP error ${res.statusCode}: ${res.statusMessage || 'Unknown'}`));
+        }
+        return;
+      }
+
       const chunks = [];
       res.on('data', chunk => { chunks.push(chunk); });
+      res.on('error', (streamErr) => {
+        if (isSettled) return;
+        isSettled = true;
+        clearTimeout(timer);
+        reject(streamErr);
+      });
       res.on('end', async () => {
         if (isSettled) return;
         isSettled = true;
@@ -311,7 +328,11 @@ function httpPost(path, payload, timeoutMs = 45000) {
           } else if (encoding === 'deflate') {
             buffer = await inflateAsync(buffer);
           }
-          const json = JSON.parse(buffer.toString('utf8'));
+          const text = buffer.toString('utf8');
+          if (!text || text.trim().length === 0) {
+            throw new Error('Empty response body received from EduPage');
+          }
+          const json = JSON.parse(text);
           resolve(json);
         } catch (e) {
           reject(new Error(`JSON parse failed for EduPage response: ${e.message}`));
@@ -565,6 +586,11 @@ function buildIndexedDatabase(raw, defaultNum) {
   const lessonMap = Object.fromEntries(findRows('lessons').map(l => [l.id, l]));
   const cards = findRows('cards');
 
+  // Defense-in-depth: Reject incomplete datasets (e.g. maintenance pages, partial API responses)
+  if (rawClasses.length < 50 || cards.length < 100) {
+    throw new Error(`Incomplete EduPage dataset: classes=${rawClasses.length}, cards=${cards.length}`);
+  }
+
   const subjects = Object.fromEntries(findRows('subjects').map(s => [
     s.id, {
       name: s.name || s.short || 'Noma\'lum fan',
@@ -741,11 +767,13 @@ function buildIndexedDatabase(raw, defaultNum) {
 let circuitBreakerState = 'CLOSED'; // 'CLOSED' | 'OPEN' | 'HALF_OPEN'
 let consecutiveFailures = 0;
 let nextCircuitRetryTime = 0;
+let isHalfOpenProbeInFlight = false;
 const FAILURE_THRESHOLD = 3;
 const CIRCUIT_RESET_TIMEOUT_MS = 45000; // 45 seconds
 
 function recordEduPageFailure(err) {
   consecutiveFailures++;
+  isHalfOpenProbeInFlight = false;
   if (consecutiveFailures >= FAILURE_THRESHOLD || circuitBreakerState === 'HALF_OPEN') {
     circuitBreakerState = 'OPEN';
     nextCircuitRetryTime = Date.now() + CIRCUIT_RESET_TIMEOUT_MS;
@@ -760,6 +788,7 @@ function recordEduPageSuccess() {
   circuitBreakerState = 'CLOSED';
   consecutiveFailures = 0;
   nextCircuitRetryTime = 0;
+  isHalfOpenProbeInFlight = false;
 }
 
 function canAttemptEduPageNetwork() {
@@ -767,36 +796,115 @@ function canAttemptEduPageNetwork() {
   if (circuitBreakerState === 'OPEN') {
     if (Date.now() >= nextCircuitRetryTime) {
       circuitBreakerState = 'HALF_OPEN';
+      isHalfOpenProbeInFlight = true;
       logger.info('🔄 EduPage Circuit Breaker testing recovery (HALF_OPEN probe request)...');
       return true;
     }
     return false;
   }
-  return true; // HALF_OPEN allows 1 probe
+  // When in HALF_OPEN, throttle concurrent requests to exactly 1 probe in flight
+  if (circuitBreakerState === 'HALF_OPEN') {
+    if (!isHalfOpenProbeInFlight) {
+      isHalfOpenProbeInFlight = true;
+      return true;
+    }
+    return false;
+  }
+  return true;
 }
 
 /**
- * Fetches raw timetable JSON from TsUE EduPage with retry
+ * Fetches raw timetable JSON from TsUE EduPage (single attempt, fail-fast to cache)
  */
 async function fetchRawTimetable(defaultNum) {
   const payload = { __args: [null, defaultNum.toString()], __gsh: '00000000' };
-  return fetchWithRetry(
-    () => httpPost('/timetable/server/regulartt.js?__func=regularttGetData', payload, 45000),
-    1,
-    1500
-  );
+  return httpPost('/timetable/server/regulartt.js?__func=regularttGetData', payload, 45000);
 }
 
 async function saveDiskCache(raw) {
+  if (!raw?.r?.dbiAccessorRes?.tables || !Array.isArray(raw.r.dbiAccessorRes.tables) || raw.r.dbiAccessorRes.tables.length < 5) {
+    logger.warn('saveDiskCache aborted: invalid or incomplete raw structure');
+    return;
+  }
   const tmpPath = `${DISK_CACHE_PATH}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
+  const bakPath = `${DISK_CACHE_PATH}.bak`;
   try {
     await fs.promises.mkdir(path.dirname(DISK_CACHE_PATH), { recursive: true });
     await fs.promises.writeFile(tmpPath, JSON.stringify(raw), 'utf8');
+    if (fs.existsSync(DISK_CACHE_PATH)) {
+      await fs.promises.copyFile(DISK_CACHE_PATH, bakPath).catch(() => {});
+    }
     await fs.promises.rename(tmpPath, DISK_CACHE_PATH);
   } catch (err) {
     logger.warn('Failed to atomically write EduPage L3 Disk Cache', { error: err.message });
     await fs.promises.unlink(tmpPath).catch(() => {});
   }
+}
+
+async function readDiskCacheSafe() {
+  const candidates = [
+    DISK_CACHE_PATH,
+    `${DISK_CACHE_PATH}.bak`,
+    path.resolve(__dirname, '../data/timetable_cache.json'),
+    path.resolve(__dirname, '../../data/timetable_cache.json'),
+  ];
+  const checked = new Set();
+  for (const candidate of candidates) {
+    if (checked.has(candidate)) continue;
+    checked.add(candidate);
+    if (fs.existsSync(candidate)) {
+      try {
+        const content = await fs.promises.readFile(candidate, 'utf8');
+        if (!content || content.length < 100) continue;
+        const parsed = JSON.parse(content);
+        if (parsed?.r?.dbiAccessorRes?.tables && Array.isArray(parsed.r.dbiAccessorRes.tables) && parsed.r.dbiAccessorRes.tables.length >= 5) {
+          return parsed;
+        }
+      } catch (err) {
+        logger.warn('Candidate disk cache read failed', { path: candidate, error: err.message });
+      }
+    }
+  }
+  return null;
+}
+
+function readDiskCacheSyncSafe() {
+  const candidates = [
+    DISK_CACHE_PATH,
+    `${DISK_CACHE_PATH}.bak`,
+    path.resolve(__dirname, '../data/timetable_cache.json'),
+    path.resolve(__dirname, '../../data/timetable_cache.json'),
+  ];
+  const checked = new Set();
+  for (const candidate of candidates) {
+    if (checked.has(candidate)) continue;
+    checked.add(candidate);
+    if (fs.existsSync(candidate)) {
+      try {
+        const content = fs.readFileSync(candidate, 'utf8');
+        if (!content || content.length < 100) continue;
+        const parsed = JSON.parse(content);
+        if (parsed?.r?.dbiAccessorRes?.tables && Array.isArray(parsed.r.dbiAccessorRes.tables) && parsed.r.dbiAccessorRes.tables.length >= 5) {
+          return parsed;
+        }
+      } catch {}
+    }
+  }
+  return null;
+}
+
+// Non-blocking background revalidation guard
+let isBackgroundRevalidating = false;
+function revalidateInBackground() {
+  if (isBackgroundRevalidating || !canAttemptEduPageNetwork()) return;
+  isBackgroundRevalidating = true;
+  getOrFetchIndexedData(true)
+    .catch(err => {
+      logger.warn('Background schedule revalidation failed (serving existing cache)', { error: err.message });
+    })
+    .finally(() => {
+      isBackgroundRevalidating = false;
+    });
 }
 
 /**
@@ -805,25 +913,28 @@ async function saveDiskCache(raw) {
 async function getOrFetchIndexedData(forceRefresh = false) {
   const now = Date.now();
 
-  // L1 In-Memory Cache Hit
-  if (!forceRefresh && l1IndexedDatabase && (now - l1CacheTime < L1_CACHE_TTL)) {
+  // Fast path 1: L1 In-Memory Cache Hit (Stale-While-Revalidate)
+  if (!forceRefresh && l1IndexedDatabase) {
+    if (now - l1CacheTime >= L1_CACHE_TTL && canAttemptEduPageNetwork()) {
+      revalidateInBackground();
+    }
     return l1IndexedDatabase;
   }
 
-  // Fast Path on Cold Boot: Instantly restore from L3 Disk Cache if L1 is empty and not forceRefresh
-  if (!forceRefresh && !l1IndexedDatabase && fs.existsSync(DISK_CACHE_PATH)) {
-    try {
-      const diskRaw = JSON.parse(await fs.promises.readFile(DISK_CACHE_PATH, 'utf8'));
-      if (diskRaw?.r?.dbiAccessorRes?.tables) {
+  // Fast Path 2: Cold Boot - Instantly restore from L3 Disk Cache
+  if (!forceRefresh && !l1IndexedDatabase) {
+    const diskRaw = await readDiskCacheSafe();
+    if (diskRaw) {
+      try {
         l1IndexedDatabase = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || FALLBACK_DEFAULT_NUM);
         l1CacheTime = Date.now();
         logger.info('EduPage schedule cache instantly restored from L3 Disk Cache on cold boot', {
           classesCount: l1IndexedDatabase.schedulesByClassId.size,
         });
         return l1IndexedDatabase;
+      } catch (diskErr) {
+        logger.warn('Failed to build indexed database from disk cache on cold boot', { error: diskErr.message });
       }
-    } catch (diskErr) {
-      logger.warn('Failed to read initial L3 Disk Cache on cold boot', { error: diskErr.message });
     }
   }
 
@@ -843,7 +954,7 @@ async function getOrFetchIndexedData(forceRefresh = false) {
       const redis = getRedisClient();
       const redisKey = `cache:edupage:raw:${defaultNum}`;
 
-      // L2 Redis Check (only if L1 expired or missing, and not forcing network refresh)
+      // L2 Redis Check (only if not forcing network refresh)
       if (!forceRefresh && redis) {
         try {
           const cachedJson = await redis.get(redisKey);
@@ -879,19 +990,17 @@ async function getOrFetchIndexedData(forceRefresh = false) {
             return l1IndexedDatabase;
           }
 
-          // Fallback 2: L3 Disk Cache
-          try {
-            if (fs.existsSync(DISK_CACHE_PATH)) {
-              const diskRaw = JSON.parse(await fs.promises.readFile(DISK_CACHE_PATH, 'utf8'));
-              if (diskRaw?.r?.dbiAccessorRes?.tables) {
-                logger.warn('EduPage network request failed; restored from L3 Disk Cache', { error: networkErr.message });
-                l1IndexedDatabase = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || defaultNum || FALLBACK_DEFAULT_NUM);
-                l1CacheTime = Date.now() - L1_CACHE_TTL + 60000;
-                return l1IndexedDatabase;
-              }
+          // Fallback 2: L3 Disk Cache Safe Read
+          const diskRaw = await readDiskCacheSafe();
+          if (diskRaw) {
+            try {
+              logger.warn('EduPage network request failed; restored from L3 Disk Cache', { error: networkErr.message });
+              l1IndexedDatabase = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || defaultNum || FALLBACK_DEFAULT_NUM);
+              l1CacheTime = Date.now() - L1_CACHE_TTL + 60000;
+              return l1IndexedDatabase;
+            } catch (diskErr) {
+              logger.error('Failed to read L3 Disk Cache', { error: diskErr.message });
             }
-          } catch (diskErr) {
-            logger.error('Failed to read L3 Disk Cache', { error: diskErr.message });
           }
 
           throw networkErr;
@@ -901,17 +1010,15 @@ async function getOrFetchIndexedData(forceRefresh = false) {
         if (l1IndexedDatabase) {
           return l1IndexedDatabase;
         }
-        try {
-          if (fs.existsSync(DISK_CACHE_PATH)) {
-            const diskRaw = JSON.parse(await fs.promises.readFile(DISK_CACHE_PATH, 'utf8'));
-            if (diskRaw?.r?.dbiAccessorRes?.tables) {
-              l1IndexedDatabase = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || defaultNum || FALLBACK_DEFAULT_NUM);
-              l1CacheTime = Date.now() - L1_CACHE_TTL + 30000;
-              return l1IndexedDatabase;
-            }
+        const diskRaw = await readDiskCacheSafe();
+        if (diskRaw) {
+          try {
+            l1IndexedDatabase = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || defaultNum || FALLBACK_DEFAULT_NUM);
+            l1CacheTime = Date.now() - L1_CACHE_TTL + 30000;
+            return l1IndexedDatabase;
+          } catch (diskErr) {
+            logger.error('Failed to read L3 Disk Cache during circuit break', { error: diskErr.message });
           }
-        } catch (diskErr) {
-          logger.error('Failed to read L3 Disk Cache during circuit break', { error: diskErr.message });
         }
         throw new Error('EduPage Circuit Breaker is OPEN and no local cache is available');
       }
@@ -1023,13 +1130,11 @@ async function getRawSchedule(className) {
     logger.error('Error in getRawSchedule', { className, error: err.message });
     // Emergency offline disk fallback
     try {
-      if (fs.existsSync(DISK_CACHE_PATH)) {
-        const diskRaw = JSON.parse(fs.readFileSync(DISK_CACHE_PATH, 'utf8'));
-        if (diskRaw?.r?.dbiAccessorRes?.tables) {
-          const emergencyDb = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || FALLBACK_DEFAULT_NUM);
-          const classId = findClassId(emergencyDb, className);
-          if (classId) return emergencyDb.schedulesByClassId.get(classId) || null;
-        }
+      const diskRaw = readDiskCacheSyncSafe();
+      if (diskRaw?.r?.dbiAccessorRes?.tables) {
+        const emergencyDb = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || FALLBACK_DEFAULT_NUM);
+        const classId = findClassId(emergencyDb, className);
+        if (classId) return emergencyDb.schedulesByClassId.get(classId) || null;
       }
     } catch {}
     return null;
@@ -1067,22 +1172,20 @@ async function getFormattedSchedule(className, dayIdx) {
 
     // Emergency offline disk fallback
     try {
-      if (fs.existsSync(DISK_CACHE_PATH)) {
-        const diskRaw = JSON.parse(fs.readFileSync(DISK_CACHE_PATH, 'utf8'));
-        if (diskRaw?.r?.dbiAccessorRes?.tables) {
-          const emergencyDb = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || FALLBACK_DEFAULT_NUM);
-          const classId = findClassId(emergencyDb, className);
-          if (classId) {
-            const schedule = emergencyDb.schedulesByClassId.get(classId);
-            if (schedule && Object.keys(schedule).length > 0) {
-              if (dayIdx !== null && dayIdx !== undefined) {
-                const numDay = Number(dayIdx);
-                if (numDay === 6) return `📅 <b>Yakshanba — dam olish kuni!</b>\n\n📭 Ushbu kunda darslar bo'lmaydi.`;
-                const safeDay = Math.max(0, Math.min(5, numDay || 0));
-                return `📅 <b>${DAY_NAMES[safeDay]} — dars jadvali:</b>\n${formatTimetableText(schedule, safeDay)}`;
-              }
-              return formatTimetableText(schedule, null);
+      const diskRaw = readDiskCacheSyncSafe();
+      if (diskRaw?.r?.dbiAccessorRes?.tables) {
+        const emergencyDb = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || FALLBACK_DEFAULT_NUM);
+        const classId = findClassId(emergencyDb, className);
+        if (classId) {
+          const schedule = emergencyDb.schedulesByClassId.get(classId);
+          if (schedule && Object.keys(schedule).length > 0) {
+            if (dayIdx !== null && dayIdx !== undefined) {
+              const numDay = Number(dayIdx);
+              if (numDay === 6) return `📅 <b>Yakshanba — dam olish kuni!</b>\n\n📭 Ushbu kunda darslar bo'lmaydi.`;
+              const safeDay = Math.max(0, Math.min(5, numDay || 0));
+              return `📅 <b>${DAY_NAMES[safeDay]} — dars jadvali:</b>\n${formatTimetableText(schedule, safeDay)}`;
             }
+            return formatTimetableText(schedule, null);
           }
         }
       }

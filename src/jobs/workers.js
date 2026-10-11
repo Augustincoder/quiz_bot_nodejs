@@ -41,6 +41,10 @@ function initWorkers(bot, scheduleService) {
     }
 
     const { userId, className, dayOfWeek, isTomorrow } = job.data;
+    if (!userId || !className) {
+      logger.warn('Broadcast job skipped: missing userId or className', { data: job.data });
+      return;
+    }
 
     // 1. Sunday is a universal day off — never broadcast
     if (dayOfWeek === 6) {
@@ -106,6 +110,8 @@ function initWorkers(bot, scheduleService) {
     connection: redisConnection.createWorkerConnection(),
     concurrency: 10,
     limiter: { max: 25, duration: 1000 },
+    lockDuration: 60000,
+    maxStalledCount: 2,
   });
 
   const quizGame = require('../handlers/quizGame');
@@ -115,6 +121,8 @@ function initWorkers(bot, scheduleService) {
   }, {
     connection: redisConnection.createWorkerConnection(),
     concurrency: 5,
+    lockDuration: 60000,
+    maxStalledCount: 2,
   });
 
   broadcastWorker.on('completed', job => {
