@@ -772,6 +772,9 @@ async function checkScheduleChanges(forceOrOptions = false) {
         }
       }
 
+      const hasSentRecentAlert = recentAlertsSent.has(`${norm}:${currentHash}`) ||
+                                 Boolean(rawNorm && recentAlertsSent.has(`${rawNorm}:${currentHash}`));
+
       let hasChanged = false;
       let diffs = [];
 
@@ -781,19 +784,19 @@ async function checkScheduleChanges(forceOrOptions = false) {
         diffs = diffGroupSchedules(oldSchedule || {}, currentSimplified);
       }
       // Detection Condition 2: Active registered group whose DB/CDN cache is stale
-      else if (hasActiveUsers && isDbCacheStale) {
+      else if (hasActiveUsers && isDbCacheStale && !hasSentRecentAlert) {
         logger.info(`🚨 Stale DB/CDN cache detected for active group "${canonical}" (EduPage: ${currentHash.slice(0, 10)}...)`);
         hasChanged = true;
         diffs = diffGroupSchedules(oldSchedule || {}, currentSimplified);
       }
       // Detection Condition 3: Active group whose schedule hash has changed since the last alerted hash
-      else if (hasActiveUsers && lastAlertedHash && lastAlertedHash !== currentHash && !recentAlertsSent.has(`${norm}:${currentHash}`)) {
+      else if (hasActiveUsers && lastAlertedHash && lastAlertedHash !== currentHash && !hasSentRecentAlert) {
         logger.info(`📢 Schedule hash changed since last alert for "${canonical}" (Alerted: ${lastAlertedHash.slice(0, 10)}... -> Current: ${currentHash.slice(0, 10)}...)`);
         hasChanged = true;
         diffs = diffGroupSchedules(oldSchedule || {}, currentSimplified);
       }
       // Explicit admin checks (e.g. /check_schedule force or /check_schedule 56i)
-      else if (hasActiveUsers && (forceCheckAllActive || isTargetGroup) && !recentAlertsSent.has(`${norm}:${currentHash}`)) {
+      else if (hasActiveUsers && (forceCheckAllActive || isTargetGroup) && !hasSentRecentAlert) {
         logger.info(`📢 Force checking active group "${canonical}" (Current: ${currentHash.slice(0, 10)}...)`);
         hasChanged = true;
         diffs = diffGroupSchedules(oldSchedule || {}, currentSimplified);
