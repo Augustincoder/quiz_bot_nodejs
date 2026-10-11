@@ -5,7 +5,7 @@ const path = require('path');
 const os   = require('os');
 const { Markup } = require('telegraf');
 
-const { ADMIN_ID, SUBJECTS }  = require('../config/config');
+const { ADMIN_ID, ADMIN_IDS, SUBJECTS }  = require('../config/config');
 const dbService                = require('../services/dbService');
 const logger                   = require('../core/logger');
 const timetableCdnService      = require('../services/timetableCdnService');
@@ -499,6 +499,7 @@ async function cbAdminSyncTimetables(ctx) {
 }
 
 async function cbAdminCancel(ctx) {
+  clearAdminMediaGroupBuffers(ctx.from.id);
   clearState(ctx);
   await ctx.answerCbQuery('❌ Bekor qilindi').catch(() => {});
   try {
@@ -963,8 +964,86 @@ async function cbAdminStats(ctx) {
 // 📢 BROADCAST - FIXED RATE LIMITING
 // ============================================
 
+// In-memory buffer for admin media groups (albums)
+// key: media_group_id, value: { items: [], caption: '', adminId: number, timer: Timeout, ctx: object }
+const broadcastMediaGroupBuffers = new Map();
+
+function clearAdminMediaGroupBuffers(adminId) {
+  for (const [mgId, buf] of broadcastMediaGroupBuffers.entries()) {
+    if (buf.adminId === adminId) {
+      if (buf.timer) clearTimeout(buf.timer);
+      broadcastMediaGroupBuffers.delete(mgId);
+    }
+  }
+}
+
+function extractMediaItem(msg) {
+  if (msg.photo && msg.photo.length > 0) {
+    const photo = msg.photo[msg.photo.length - 1]; // highest resolution
+    return { type: 'photo', media: photo.file_id };
+  } else if (msg.video) {
+    return { type: 'video', media: msg.video.file_id };
+  } else if (msg.document) {
+    return { type: 'document', media: msg.document.file_id };
+  } else if (msg.audio) {
+    return { type: 'audio', media: msg.audio.file_id };
+  }
+  return null;
+}
+
+async function processMediaGroupBroadcast(buffer) {
+  const { items, caption, ctx } = buffer;
+  try {
+    await updateData(ctx, {
+      broadcast_text       : caption || '',
+      broadcast_message_id : ctx.message.message_id,
+      broadcast_has_media  : true,
+      broadcast_is_album   : true,
+      broadcast_media_group: items,
+    });
+    setState(ctx, States.ADMIN_BROADCAST_CONFIRM);
+
+    const usersCount = await dbService.getUserCount();
+
+    // 1. Send album preview to admin
+    const previewGroup = items.map((it, idx) => ({
+      type: it.type,
+      media: it.media,
+      ...(idx === 0 && caption ? { caption: caption, parse_mode: 'HTML' } : {}),
+    }));
+
+    try {
+      await ctx.telegram.sendMediaGroup(ctx.chat.id, previewGroup);
+    } catch (mgErr) {
+      logger.warn('Failed to send media group preview to admin', { error: mgErr.message });
+    }
+
+    // 2. Send confirmation prompt
+    const previewCaption = caption ? `\n\n📝 <b>Matn:</b>\n${escapeHtml(caption.slice(0, 500))}` : '';
+    await ctx.reply(
+      `📋 <b>ALBUM XABAR PREVIEW (${items.length} ta media)</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `👥 Qabul qiluvchilar: <b>${usersCount} ta</b>\n` +
+      `📸 Rasmlar/Medialar soni: <b>${items.length} ta</b>${previewCaption}\n\n` +
+      `⚠️ <b>Barcha foydalanuvchilarga yuborilsinmi?</b>`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('✅ HA, yuborish', 'admin_broadcast_confirm')],
+          [Markup.button.callback('✏️ Qayta yozish', 'admin_broadcast')],
+          [Markup.button.callback('❌ Bekor qilish', 'admin_cancel')],
+        ]),
+      }
+    );
+  } catch (err) {
+    logger.error('processMediaGroupBroadcast error:', err);
+    await ctx.reply('❌ Album xabarni tayyorlashda xatolik yuz berdi.');
+  }
+}
+
 async function cbAdminBroadcast(ctx) {
   await ctx.answerCbQuery().catch(() => {});
+  clearAdminMediaGroupBuffers(ctx.from.id);
   setState(ctx, States.ADMIN_BROADCAST);
 
   const usersCount = await dbService.getUserCount();
@@ -974,7 +1053,7 @@ async function cbAdminBroadcast(ctx) {
     `━━━━━━━━━━━━━━━━━━━━\n\n` +
     `👥 Qabul qiluvchilar: <b>${usersCount} ta</b>\n\n` +
     `✍️ <b>Xabar matnini yuboring:</b>\n\n` +
-    `<i>💡 HTML formatlash, rasm, video yuboring</i>`,
+    `<i>💡 HTML formatlash, rasm, video yoki bir nechta rasmli album yuborishingiz mumkin</i>`,
     {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([[
@@ -985,6 +1064,40 @@ async function cbAdminBroadcast(ctx) {
 }
 
 async function onBroadcastMessage(ctx) {
+  // 1. Check for Telegram media group (album of multiple photos/videos)
+  if (ctx.message?.media_group_id) {
+    const mgId = String(ctx.message.media_group_id);
+    const mediaItem = extractMediaItem(ctx.message);
+    if (mediaItem) {
+      let buffer = broadcastMediaGroupBuffers.get(mgId);
+      if (!buffer) {
+        buffer = {
+          mediaGroupId: mgId,
+          items: [],
+          caption: ctx.message.caption || '',
+          adminId: ctx.from.id,
+          ctx,
+          timer: null,
+        };
+        broadcastMediaGroupBuffers.set(mgId, buffer);
+      }
+
+      buffer.items.push(mediaItem);
+      if (!buffer.caption && ctx.message.caption) {
+        buffer.caption = ctx.message.caption;
+      }
+
+      // Debounce: wait 750ms for all photos in the album to arrive from Telegram
+      if (buffer.timer) clearTimeout(buffer.timer);
+      buffer.timer = setTimeout(async () => {
+        broadcastMediaGroupBuffers.delete(mgId);
+        await processMediaGroupBroadcast(buffer);
+      }, 750);
+      return;
+    }
+  }
+
+  // 2. Single message or single media
   const hasMedia = !!(
     ctx.message?.photo ||
     ctx.message?.video ||
@@ -1005,6 +1118,8 @@ async function onBroadcastMessage(ctx) {
       broadcast_text      : text || '',
       broadcast_message_id: ctx.message.message_id,
       broadcast_has_media : hasMedia,
+      broadcast_is_album  : false,
+      broadcast_media_group: null,
     });
     setState(ctx, States.ADMIN_BROADCAST_CONFIRM);
 
@@ -1032,6 +1147,32 @@ async function onBroadcastMessage(ctx) {
   }
 }
 
+async function onBroadcastConfirmInput(ctx) {
+  // If an extra photo belonging to an active album buffer arrives slightly late
+  if (ctx.message?.media_group_id) {
+    const mgId = String(ctx.message.media_group_id);
+    const buffer = broadcastMediaGroupBuffers.get(mgId);
+    if (buffer) {
+      const mediaItem = extractMediaItem(ctx.message);
+      if (mediaItem) buffer.items.push(mediaItem);
+      if (!buffer.caption && ctx.message.caption) buffer.caption = ctx.message.caption;
+      return;
+    }
+  }
+
+  return ctx.reply(
+    '⚠️ <b>Ommaviy xabar tasdiqlanishi kutilmoqda.</b>\n\nIltimos, yuqoridagi tugmalardan birini tanlang: "✅ HA, yuborish" yoki "❌ Bekor qilish".',
+    {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('✅ HA, yuborish', 'admin_broadcast_confirm')],
+        [Markup.button.callback('✏️ Qayta yozish', 'admin_broadcast')],
+        [Markup.button.callback('❌ Bekor qilish', 'admin_cancel')],
+      ]),
+    }
+  );
+}
+
 async function cbBroadcastConfirm(ctx) {
   // ✅ FIX: Prevent double-send from rapid taps
   if (isInFlight(ctx.from.id, 'broadcast', 60_000)) {
@@ -1042,13 +1183,16 @@ async function cbBroadcastConfirm(ctx) {
   const data    = await getData(ctx);
   const msgText = data.broadcast_text;
   const hasMedia = data.broadcast_has_media;
+  const isAlbum = !!data.broadcast_is_album && Array.isArray(data.broadcast_media_group) && data.broadcast_media_group.length > 1;
+  const mediaGroup = data.broadcast_media_group;
   const messageId = data.broadcast_message_id;
 
-  if (!msgText && !hasMedia) {
+  if (!msgText && !hasMedia && !isAlbum) {
     return ctx.reply('❌ Yuborish uchun xabar topilmadi. Qayta urinib ko\'ring.');
   }
 
   clearState(ctx);
+  clearAdminMediaGroupBuffers(ctx.from.id);
 
   const progress = await ctx.reply(
     '⏳ <b>Xabar yuborilmoqda...</b>\n\n📊 0%',
@@ -1067,16 +1211,52 @@ async function cbBroadcastConfirm(ctx) {
     let success = 0, blocked = 0, failed = 0;
     const total = recipients.length;
 
+    // Telegram caption max length is 1024 characters for media groups (max 10 items)
+    const albumCaption = msgText ? (msgText.length > 1024 ? msgText.slice(0, 1020) + '...' : msgText) : '';
+    const albumPayload = isAlbum
+      ? mediaGroup.slice(0, 10).map((item, idx) => ({
+          type: item.type || 'photo',
+          media: item.media,
+          ...(idx === 0 && albumCaption ? { caption: albumCaption, parse_mode: 'HTML' } : {}),
+        }))
+      : null;
+
+    const sendToRecipient = async (telegramId) => {
+      try {
+        if (isAlbum) {
+          await ctx.telegram.sendMediaGroup(telegramId, albumPayload);
+        } else if (hasMedia) {
+          await ctx.telegram.copyMessage(telegramId, ctx.chat.id, messageId);
+        } else {
+          await ctx.telegram.sendMessage(telegramId, msgText, { parse_mode: 'HTML' });
+        }
+      } catch (sendErr) {
+        // If HTML entity parsing fails (e.g. unclosed HTML tag in broadcast text), fallback to plain text
+        if (sendErr.message && sendErr.message.includes("can't parse entities")) {
+          if (isAlbum) {
+            const fallbackAlbum = albumPayload.map((item, idx) => ({
+              type: item.type,
+              media: item.media,
+              ...(idx === 0 && albumCaption ? { caption: albumCaption } : {}),
+            }));
+            await ctx.telegram.sendMediaGroup(telegramId, fallbackAlbum);
+          } else if (!hasMedia) {
+            await ctx.telegram.sendMessage(telegramId, msgText);
+          } else {
+            throw sendErr;
+          }
+        } else {
+          throw sendErr;
+        }
+      }
+    };
+
     for (let i = 0; i < total; i += BATCH_SIZE) {
       const batch = recipients.slice(i, i + BATCH_SIZE);
 
       await Promise.allSettled(batch.map(async telegramId => {
         try {
-          if (hasMedia) {
-            await ctx.telegram.copyMessage(telegramId, ctx.chat.id, messageId);
-          } else {
-            await ctx.telegram.sendMessage(telegramId, msgText, { parse_mode: 'HTML' });
-          }
+          await sendToRecipient(telegramId);
           success++;
         } catch (err) {
           if (err.parameters?.retry_after) {
@@ -1084,11 +1264,7 @@ async function cbBroadcastConfirm(ctx) {
             logger.warn('broadcast:rate_limit_hit', { retrySec });
             await new Promise(r => setTimeout(r, (retrySec + 1) * 1000));
             try {
-              if (hasMedia) {
-                await ctx.telegram.copyMessage(telegramId, ctx.chat.id, messageId);
-              } else {
-                await ctx.telegram.sendMessage(telegramId, msgText, { parse_mode: 'HTML' });
-              }
+              await sendToRecipient(telegramId);
               success++;
               return;
             } catch {
@@ -1105,6 +1281,7 @@ async function cbBroadcastConfirm(ctx) {
             msg.includes('user is deactivated')
           ) {
             blocked++;
+            dbService.markUserBlocked(telegramId, true).catch(() => {});
           } else {
             failed++;
             logger.warn('broadcast:send_fail', { uid: telegramId, err: msg });
@@ -1638,23 +1815,33 @@ async function onContactMessage(ctx) {
       [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ') || 'Anonim'
     ));
 
-    await ctx.telegram.sendMessage(
-      ADMIN_ID,
-      `📨 <b>YANGI MUROJAAT</b>\n` +
-      `━━━━━━━━━━━━━━━━━━━━\n\n` +
-      `👤 <a href="tg://user?id=${ctx.from.id}">${fName}</a>\n` +
-      `🆔 <code>${ctx.from.id}</code>\n\n` +
-      `💬 ${escapeHtml(msgText)}`,
-      {
-        parse_mode: 'HTML',
-        ...Markup.inlineKeyboard([[
-          Markup.button.callback(
-            '↩️ Javob berish',
-            `reply_${ctx.from.id}_${ctx.message.message_id}`
-          ),
-        ]]),
+    const targetAdmins = (Array.isArray(ADMIN_IDS) && ADMIN_IDS.length > 0)
+      ? ADMIN_IDS
+      : (ADMIN_ID ? [ADMIN_ID] : []);
+
+    if (targetAdmins.length === 0) {
+      logger.warn('No ADMIN_ID configured to receive user contact messages.');
+    } else {
+      for (const targetAdminId of targetAdmins) {
+        await ctx.telegram.sendMessage(
+          targetAdminId,
+          `📨 <b>YANGI MUROJAAT</b>\n` +
+          `━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `👤 <a href="tg://user?id=${ctx.from.id}">${fName}</a>\n` +
+          `🆔 <code>${ctx.from.id}</code>\n\n` +
+          `💬 ${escapeHtml(msgText)}`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([[
+              Markup.button.callback(
+                '↩️ Javob berish',
+                `reply_${ctx.from.id}_${ctx.message.message_id}`
+              ),
+            ]]),
+          }
+        ).catch(adminErr => logger.error('Failed to notify admin of contact message', { targetAdminId, error: adminErr.message }));
       }
-    );
+    }
 
     await ctx.reply(
       '✅ <b>Xabar yuborildi!</b>\n\nAdmin tez orada javob beradi.',
@@ -1716,6 +1903,7 @@ module.exports = {
   register,
   // Exported for use in other modules
   onBroadcastMessage,
+  onBroadcastConfirmInput,
   onReplyMessage,
   onAdmTestId,
   onAdmTextContent,

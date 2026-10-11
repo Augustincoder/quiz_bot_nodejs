@@ -54,11 +54,21 @@ const leaderboardCache = { text: null, ts: 0 };
 const LEADERBOARD_TTL  = 120_000;
 
 // ─── Session State Helpers ───────────────────────────────────
-const setState = (ctx, stateName) => { ctx.session.state = stateName; };
-const clearState = (ctx) => { ctx.session.state = null; ctx.session.data = {}; };
-const updateData = async (ctx, patch) => { ctx.session.data = { ...(ctx.session.data || {}), ...patch }; };
-const getData = async (ctx) => ctx.session.data || {};
-const getState = (ctx) => ctx.session.state || null;
+const setState = (ctx, stateName) => {
+  if (!ctx.session) ctx.session = {};
+  ctx.session.state = stateName;
+};
+const clearState = (ctx) => {
+  if (!ctx.session) ctx.session = {};
+  ctx.session.state = null;
+  ctx.session.data = {};
+};
+const updateData = async (ctx, patch) => {
+  if (!ctx.session) ctx.session = {};
+  ctx.session.data = { ...(ctx.session.data || {}), ...patch };
+};
+const getData = async (ctx) => (ctx.session?.data || {});
+const getState = (ctx) => (ctx.session?.state || null);
 
 // ─── State Constants ─────────────────────────────────────────
 const States = {
@@ -314,8 +324,10 @@ function parseTextQuestions(text, mode = 'hash') {
 const isAdmin = (userId) => {
   if (!userId) return false;
   const numId = Number(userId);
-  if (Array.isArray(ADMIN_IDS) && ADMIN_IDS.includes(numId)) return true;
-  return String(userId) === String(ADMIN_ID);
+  if (!Number.isFinite(numId) || numId <= 0) return false;
+  if (Array.isArray(ADMIN_IDS) && ADMIN_IDS.length > 0 && ADMIN_IDS.includes(numId)) return true;
+  if (ADMIN_ID && numId === Number(ADMIN_ID)) return true;
+  return false;
 };
 
 const adminGuard = (fn) => async (ctx, ...args) => {

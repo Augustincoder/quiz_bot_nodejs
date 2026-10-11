@@ -1,15 +1,41 @@
+# Dependencies
 node_modules/
-*.docx
+
+# Environment and secrets
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+
+# Database dumps, backups & user data (SECURITY & PRIVACY)
+ai_ignore_sql/
+*.sql
+*.csv
+!assets/
+!.agent/skills/**/data/*.csv
+data/users_stats.json
+src/data/users_stats.json
 data/timetable_cache.json
+src/data/timetable_cache.json
+previews/src/data/timetable_cache.json
 src/data/*.tmp
 data/*.tmp
+
+# Logs
 logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Office documents and test files
+*.docx
+
+# OS and IDE files
 .DS_Store
-previews/src/data/timetable_cache.json
+Thumbs.db
+__pycache__/
+*.pyc
+.idea/
+.vscode/

@@ -3,7 +3,19 @@ const fs = require('fs').promises; // Asinxron metodlar
 const fsSync = require('fs'); // Faqat ilk marta papka ochish uchun
 const path = require('path');
 
-const usersStatsPath = path.join(__dirname, '../../data/users_stats.json');
+function resolveUsersStatsPath() {
+  const rootPath = path.join(__dirname, '../../data/users_stats.json');
+  const srcPath = path.join(__dirname, '../data/users_stats.json');
+  if (fsSync.existsSync(srcPath)) {
+    try {
+      const data = JSON.parse(fsSync.readFileSync(srcPath, 'utf8'));
+      if (Object.keys(data).length > 0) return srcPath;
+    } catch {}
+  }
+  if (fsSync.existsSync(rootPath)) return rootPath;
+  return srcPath;
+}
+const usersStatsPath = resolveUsersStatsPath();
 
 // Bu funksiya bot ishga tushganda 1 marta ishlagani uchun Sync qolsa bo'ladi
 function initStorage() {

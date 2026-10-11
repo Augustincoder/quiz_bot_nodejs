@@ -8,10 +8,14 @@ const { advanceQuestion } = require('./gameLoop');
 
 let io;
 
+function isValidRoomCode(code) {
+  return typeof code === 'string' && /^[a-zA-Z0-9_-]{1,32}$/.test(code.trim());
+}
+
 function initSocket(httpServer) {
   io = new Server(httpServer, {
     cors: {
-      origin: process.env.FRONTEND_URL || "*",
+      origin: process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production' ? false : "*"),
       methods: ["GET", "POST"]
     }
   });
@@ -27,6 +31,9 @@ function initSocket(httpServer) {
     // --- Room Management ---
     socket.on("room:create", async ({ roomCode }) => {
       try {
+        if (!isValidRoomCode(roomCode)) {
+          return socket.emit("room:error", { code: 400, message: "Noto'g'ri xona kodi (Invalid room code)" });
+        }
         let room = await roomManager.getRoom(roomCode);
         if (!room) {
           room = await roomManager.createRoom(roomCode, userId, 'kahoot');
@@ -38,6 +45,9 @@ function initSocket(httpServer) {
     });
 
     socket.on("room:join", async ({ roomCode, displayName: reqDisplayName }) => {
+      if (!isValidRoomCode(roomCode)) {
+        return socket.emit("room:error", { code: 400, message: "Noto'g'ri xona kodi (Invalid room code)" });
+      }
       const idToJoin = userId;
       const cleanName = (reqDisplayName && typeof reqDisplayName === 'string')
         ? reqDisplayName.trim().substring(0, 30)
@@ -67,11 +77,18 @@ function initSocket(httpServer) {
 
     socket.on("room:start", async ({ roomCode }) => {
       try {
+        if (!isValidRoomCode(roomCode)) {
+          return socket.emit("room:error", { code: 400, message: "Noto'g'ri xona kodi (Invalid room code)" });
+        }
         const room = await roomManager.getRoom(roomCode);
         if (!room) return socket.emit("room:error", { code: 404, message: "Room not found" });
 
         if (room.hostId && String(room.hostId) !== userId) {
           return socket.emit("room:error", { code: 403, message: "Faqat xona egasi o'yinni boshlay oladi" });
+        }
+
+        if (!supabase) {
+          return socket.emit("room:error", { code: 503, message: "Supabase bazasi ulanmagan yoki mavjud emas" });
         }
 
         const { data: questions, error } = await supabase.from('kahoot_questions').select('*');
@@ -89,16 +106,19 @@ function initSocket(httpServer) {
 
     // --- Kahoot Game Logic ---
     socket.on("kahoot:answer_submit", async ({ roomCode, answerIndex }) => {
+        if (!isValidRoomCode(roomCode)) return;
         const room = await roomManager.getRoom(roomCode);
         if (!room || room.status !== 'action') return;
 
-        // Scoring based on time? For now, fixed points.
+        // Prevent duplicate answers / race condition score tampering
+        if (room.kahootAnswers.has(userId)) return;
+
+        room.kahootAnswers.set(userId, answerIndex);
+
         if (String(answerIndex) === String(room.currentAnswer)) {
             const player = room.players.get(userId);
             if (player) player.score += 10;
         }
-
-        room.kahootAnswers.set(userId, answerIndex);
 
         // If all players answered, show leaderboard
         if (room.kahootAnswers.size >= room.players.size) {
@@ -111,12 +131,14 @@ function initSocket(httpServer) {
         }
     });
     
-    socket.on("game:leaderboard_ack", async ({ roomCode, userId: ackId }) => {
+    socket.on("game:leaderboard_ack", async ({ roomCode }) => {
+      if (!isValidRoomCode(roomCode)) return;
       const room = await roomManager.getRoom(roomCode);
       if (!room) return;
       
+      // Use authenticated socket userId instead of untrusted client payload ackId
       room.leaderboardAcks = room.leaderboardAcks || new Set();
-      room.leaderboardAcks.add(ackId);
+      room.leaderboardAcks.add(userId);
       
       if (room.leaderboardAcks.size >= room.players.size) {
          advanceQuestion(roomCode);

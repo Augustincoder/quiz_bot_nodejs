@@ -100,15 +100,17 @@ function initWorkers(bot, scheduleService) {
       }
   }, {
     connection: redisConnection.createWorkerConnection(),
+    concurrency: 10,
     limiter: { max: 25, duration: 1000 },
   });
 
+  const quizGame = require('../handlers/quizGame');
   const quizTimerWorker = new Worker('quizTimerQueue', async (job) => {
     const { chatId, expectedIdx, pollId } = job.data;
-    const quizGame = require('../handlers/quizGame');
     await quizGame.questionTimeout(chatId, expectedIdx, pollId, bot.telegram);
   }, {
     connection: redisConnection.createWorkerConnection(),
+    concurrency: 5,
   });
 
   broadcastWorker.on('completed', job => {

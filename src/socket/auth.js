@@ -9,12 +9,18 @@ function validateTelegramInitData(initData) {
   try {
     const urlParams = new URLSearchParams(initData);
     const hash = urlParams.get("hash");
-    if (!hash) return false;
+    if (!hash || typeof hash !== "string" || hash.length !== 64) return false;
     urlParams.delete("hash");
 
-    // Check expiration (24 hours) to prevent replay attacks
-    const authDate = parseInt(urlParams.get("auth_date"), 10);
-    if (authDate && (Math.floor(Date.now() / 1000) - authDate > 86400)) {
+    // Strictly enforce auth_date presence and expiration to prevent replay attacks
+    const rawAuthDate = urlParams.get("auth_date");
+    if (!rawAuthDate) return false;
+    const authDate = parseInt(rawAuthDate, 10);
+    if (!Number.isFinite(authDate) || authDate <= 0) return false;
+
+    const now = Math.floor(Date.now() / 1000);
+    // Allow up to 60s future drift (clock skew) and reject expired initData (> 24 hours)
+    if (authDate > now + 60 || (now - authDate) > 86400) {
       return false;
     }
 

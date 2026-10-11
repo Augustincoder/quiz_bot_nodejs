@@ -1,7 +1,7 @@
 'use strict';
 
 const { Markup } = require('telegraf');
-const { ADMIN_ID } = require('../config/config');
+const { ADMIN_ID, ADMIN_IDS } = require('../config/config');
 const sessionService = require('../services/sessionService');
 const dbService = require('../services/dbService');
 const logger = require('../core/logger');
@@ -183,66 +183,75 @@ async function handleContactMessages(ctx, next) {
       `🕐 <b>Vaqt:</b> ${new Date().toLocaleString('uz-UZ')}\n\n` +
       `👇 <b>Xabar mazmuni:</b>`;
 
-    // Send header
-    await ctx.telegram.sendMessage(ADMIN_ID, adminHeader, { 
-      parse_mode: 'HTML' 
-    });
+    // Send header and forward message to configured admin(s)
+    const targetAdmins = (Array.isArray(ADMIN_IDS) && ADMIN_IDS.length > 0)
+      ? ADMIN_IDS
+      : (ADMIN_ID ? [ADMIN_ID] : []);
 
-    // ─── 2. COPY ACTUAL MESSAGE ────────────────────────
-    const copiedMsg = await ctx.copyMessage(ADMIN_ID);
+    if (targetAdmins.length === 0) {
+      logger.warn('No ADMIN_ID configured to receive user contact messages.');
+    } else {
+      for (const targetAdminId of targetAdmins) {
+        try {
+          await ctx.telegram.sendMessage(targetAdminId, adminHeader, { 
+            parse_mode: 'HTML' 
+          });
 
-    // ─── 3. ADMIN QUICK ACTIONS ────────────────────────
-    // ⚠️ MUHIM: copiedMsg.message_id ni saqlab qo'yamiz
-    // Admin shu xabarga reply qilsa → foydalanuvchiga yuboradi
-    // Shuningdek "Javob yozish" button orqali ham ishlaydi
+          // ─── 2. COPY ACTUAL MESSAGE ────────────────────────
+          const copiedMsg = await ctx.copyMessage(targetAdminId);
 
-    const quickActionsKeyboard = Markup.inlineKeyboard([
-      [
-        // userId va copiedMsg.message_id ni saqlaymiz
-        Markup.button.callback(
-          '✉️ Javob yozish', 
-          `reply_${userId}_${copiedMsg.message_id}`
-        ),
-        Markup.button.callback(
-          '👤 Profil', 
-          `admin_show_user_${userId}`
-        )
-      ],
-      [
-        Markup.button.callback(
-          '🚫 Testni to\'xtatish', 
-          `cancel_user_test_${userId}`
-        ),
-        Markup.button.callback(
-          '📊 Statistika', 
-          `admin_user_stats_${userId}`
-        )
-      ],
-      [
-        Markup.button.callback(
-          '⚠️ Ogohlantirish', 
-          `warn_user_${userId}`
-        ),
-        Markup.button.callback(
-          '⛔ Ban', 
-          `ban_user_${userId}`
-        )
-      ]
-    ]);
+          // ─── 3. ADMIN QUICK ACTIONS ────────────────────────
+          const quickActionsKeyboard = Markup.inlineKeyboard([
+            [
+              Markup.button.callback(
+                '✉️ Javob yozish', 
+                `reply_${userId}_${copiedMsg.message_id}`
+              ),
+              Markup.button.callback(
+                '👤 Profil', 
+                `admin_show_user_${userId}`
+              )
+            ],
+            [
+              Markup.button.callback(
+                '🚫 Testni to\'xtatish', 
+                `cancel_user_test_${userId}`
+              ),
+              Markup.button.callback(
+                '📊 Statistika', 
+                `admin_user_stats_${userId}`
+              )
+            ],
+            [
+              Markup.button.callback(
+                '⚠️ Ogohlantirish', 
+                `warn_user_${userId}`
+              ),
+              Markup.button.callback(
+                '⛔ Ban', 
+                `ban_user_${userId}`
+              )
+            ]
+          ]);
 
-    await ctx.telegram.sendMessage(
-      ADMIN_ID,
-      `⚡️ <b>Tezkor harakatlar:</b>\n` +
-      `<i>💡 Yoki ushbu xabarga to'g'ridan-to'g'ri reply qiling</i>`,
-      {
-        parse_mode: 'HTML',
-        reply_parameters: {
-          message_id: copiedMsg.message_id,
-          allow_sending_without_reply: true
-        },
-        ...quickActionsKeyboard
+          await ctx.telegram.sendMessage(
+            targetAdminId,
+            `⚡️ <b>Tezkor harakatlar:</b>\n` +
+            `<i>💡 Yoki ushbu xabarga to'g'ridan-to'g'ri reply qiling</i>`,
+            {
+              parse_mode: 'HTML',
+              reply_parameters: {
+                message_id: copiedMsg.message_id,
+                allow_sending_without_reply: true
+              },
+              ...quickActionsKeyboard
+            }
+          );
+        } catch (adminErr) {
+          logger.error('Failed to notify admin of contact message', { targetAdminId, error: adminErr.message });
+        }
       }
-    );
+    }
 
     // ─── 4. USER CONFIRMATION (Enhanced) ───────────────
     await ctx.telegram.deleteMessage(ctx.chat.id, sending.message_id)

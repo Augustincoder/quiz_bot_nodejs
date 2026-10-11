@@ -198,6 +198,15 @@ async function registerUser(userId, fullName, username) {
 }
 
 async function getUserCount() {
+  if (!supabase) {
+    try {
+      const storage = require('../core/storage');
+      const stats = await storage.getUsersStats();
+      return Object.keys(stats || {}).length;
+    } catch {
+      return 0;
+    }
+  }
   try {
     const { count, error } = await supabase
       .from('users')
@@ -245,14 +254,54 @@ async function getUsersByIds(userIds) {
 async function getUsersPaginated(page = 0, limit = 10) {
   const from = page * limit;
   const to = from + limit - 1;
+
+  if (!supabase) {
+    try {
+      const storage = require('../core/storage');
+      const stats = await storage.getUsersStats();
+      const userIds = Object.keys(stats || {});
+      const total = userIds.length;
+      const pagedIds = userIds.slice(from, to + 1);
+      const users = pagedIds.map(uid => ({
+        telegram_id: uid,
+        full_name: stats[uid]?.name || stats[uid]?.full_name || 'Foydalanuvchi',
+        username: stats[uid]?.username || "yo'q",
+        joined_at: stats[uid]?.joined_at || new Date().toISOString(),
+      }));
+      return { users, total };
+    } catch {
+      return { users: [], total: 0 };
+    }
+  }
+
   try {
-    const { data, error, count } = await supabase
+    // 1. Primary order: created_at (standard PostgreSQL timestamp)
+    let { data, error, count } = await supabase
       .from('users')
       .select('*', { count: 'exact' })
-      .order('id', { ascending: false })
+      .order('created_at', { ascending: false, nullsFirst: false })
       .range(from, to);
 
-    if (error) throw error;
+    if (error) {
+      // 2. Secondary order: joined_at (recorded on registration)
+      const fallbackJoined = await supabase
+        .from('users')
+        .select('*', { count: 'exact' })
+        .order('joined_at', { ascending: false, nullsFirst: false })
+        .range(from, to);
+
+      if (fallbackJoined.error) {
+        // 3. Fallback: unconstrained range
+        const unconstrained = await supabase
+          .from('users')
+          .select('*', { count: 'exact' })
+          .range(from, to);
+        if (unconstrained.error) throw unconstrained.error;
+        return { users: unconstrained.data || [], total: unconstrained.count ?? 0 };
+      }
+      return { users: fallbackJoined.data || [], total: fallbackJoined.count ?? 0 };
+    }
+
     return { users: data || [], total: count ?? 0 };
   } catch (err) {
     logger.error('getUsersPaginated error:', { page, limit, error: err.message });
@@ -261,8 +310,10 @@ async function getUsersPaginated(page = 0, limit = 10) {
 }
 
 async function searchUsers(query, limit = 20) {
-  if (!query) return [];
-  const cleanQuery = String(query).trim().replace(/[,()]/g, '');
+  const cleanQuery = String(query)
+    .trim()
+    .replace(/[^\p{L}\p{N}_\s-]/gu, '')
+    .substring(0, 50);
   if (!cleanQuery) return [];
   try {
     const isNumeric = /^\d+$/.test(cleanQuery);
@@ -657,12 +708,12 @@ async function saveToShelf(userId, testInfo) {
   });
 }
 
-// ==========================================
-// 🚫 BAN / UNBAN
-// ==========================================
+// L1 in-memory cache for user banned status (30s TTL, bounded to 2000 users)
+const userBannedL1Cache = new TTLMap(30 * 1000, 2000);
 
 async function banUser(userId) {
   const uid = String(userId);
+  userBannedL1Cache.set(uid, true);
   try {
     const { error } = await supabase.from('users').update({ is_banned: true }).eq('telegram_id', uid);
     if (error) throw error;
@@ -676,6 +727,7 @@ async function banUser(userId) {
 
 async function unbanUser(userId) {
   const uid = String(userId);
+  userBannedL1Cache.set(uid, false);
   try {
     const { error } = await supabase.from('users').update({ is_banned: false }).eq('telegram_id', uid);
     if (error) throw error;
@@ -689,9 +741,16 @@ async function unbanUser(userId) {
 
 async function isUserBanned(userId) {
   const uid = String(userId);
+  if (userBannedL1Cache.has(uid)) {
+    return userBannedL1Cache.get(uid);
+  }
   try {
     const cached = await redis.get(`user_banned:${uid}`);
-    if (cached !== null) return cached === '1';
+    if (cached !== null) {
+      const isBanned = cached === '1';
+      userBannedL1Cache.set(uid, isBanned);
+      return isBanned;
+    }
 
     const { data, error } = await supabase
       .from('users')
@@ -701,6 +760,7 @@ async function isUserBanned(userId) {
 
     if (error) throw error;
     const isBanned = data?.is_banned === true;
+    userBannedL1Cache.set(uid, isBanned);
     await redis.set(`user_banned:${uid}`, isBanned ? '1' : '0', 'EX', 3600).catch(() => {});
     return isBanned;
   } catch {
@@ -811,22 +871,27 @@ async function getTimetableCache(groupInput, theme) {
 
   const cacheKey = `cache:timetable_cdn:${primaryNorm}:${validTheme}`;
 
+  const l1Hit = fallbackTimetableCache.get(cacheKey);
+  if (l1Hit) return l1Hit;
+
   if (redis) {
     try {
       const cached = await redis.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached);
+        const parsed = JSON.parse(cached);
+        fallbackTimetableCache.set(cacheKey, parsed);
+        return parsed;
       }
     } catch (e) {
       logger.debug('Redis getTimetableCache error', { error: e.message });
     }
   }
 
-  if (!supabase) return fallbackTimetableCache.get(cacheKey) || null;
+  if (!supabase) return null;
 
   try {
     // 2. Direct query by primaryNorm
-    let { data, error } = await supabase
+    let { data } = await supabase
       .from('timetable_cache')
       .select('id, group_name, group_normalized, theme, file_id, channel_message_id, schedule_hash, updated_at')
       .eq('group_normalized', primaryNorm)
@@ -857,6 +922,7 @@ async function getTimetableCache(groupInput, theme) {
     }
 
     if (data) {
+      fallbackTimetableCache.set(cacheKey, data);
       if (redis) {
         await redis.set(cacheKey, JSON.stringify(data), 'EX', 86400 * 7).catch(() => {});
       }

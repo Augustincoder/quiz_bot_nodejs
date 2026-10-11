@@ -4,6 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const zlib = require('zlib');
+const util = require('util');
+const gunzipAsync = util.promisify(zlib.gunzip);
+const inflateAsync = util.promisify(zlib.inflate);
 const logger = require('../core/logger');
 
 function resolveDiskCachePath() {
@@ -158,15 +161,40 @@ try {
 }
 
 function getLevenshteinDistance(a, b) {
-  const matrix = [];
-  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      matrix[i][j] = b[i - 1] === a[j - 1] ? matrix[i - 1][j - 1] : Math.min(matrix[i - 1][j - 1], matrix[i][j - 1], matrix[i - 1][j]) + 1;
-    }
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+
+  if (a.length < b.length) {
+    const tmp = a;
+    a = b;
+    b = tmp;
   }
-  return matrix[b.length][a.length];
+
+  const bLen = b.length;
+  let prevRow = new Int32Array(bLen + 1);
+  let currRow = new Int32Array(bLen + 1);
+
+  for (let j = 0; j <= bLen; j++) {
+    prevRow[j] = j;
+  }
+
+  for (let i = 1; i <= a.length; i++) {
+    currRow[0] = i;
+    const charA = a.charCodeAt(i - 1);
+    for (let j = 1; j <= bLen; j++) {
+      const cost = charA === b.charCodeAt(j - 1) ? 0 : 1;
+      currRow[j] = Math.min(
+        prevRow[j] + 1,
+        currRow[j - 1] + 1,
+        prevRow[j - 1] + cost
+      );
+    }
+    const temp = prevRow;
+    prevRow = currRow;
+    currRow = temp;
+  }
+  return prevRow[bLen];
 }
 
 /**
@@ -273,7 +301,7 @@ function httpPost(path, payload, timeoutMs = 30000) {
     }, (res) => {
       const chunks = [];
       res.on('data', chunk => { chunks.push(chunk); });
-      res.on('end', () => {
+      res.on('end', async () => {
         if (isSettled) return;
         isSettled = true;
         clearTimeout(timer);
@@ -281,9 +309,9 @@ function httpPost(path, payload, timeoutMs = 30000) {
           let buffer = Buffer.concat(chunks);
           const encoding = res.headers['content-encoding'];
           if (encoding === 'gzip') {
-            buffer = zlib.gunzipSync(buffer);
+            buffer = await gunzipAsync(buffer);
           } else if (encoding === 'deflate') {
-            buffer = zlib.inflateSync(buffer);
+            buffer = await inflateAsync(buffer);
           }
           const json = JSON.parse(buffer.toString('utf8'));
           resolve(json);
@@ -652,7 +680,7 @@ function buildIndexedDatabase(raw, defaultNum) {
   }
 
   return {
-    raw,
+    raw: null, // Freed from heap memory; available on-demand from disk cache/Redis
     defaultNum,
     fetchedAt: Date.now(),
     classesById,
@@ -1130,7 +1158,13 @@ async function warmUpCache() {
 
 async function getTimetableData(forceRefresh = false) {
   const db = await getOrFetchIndexedData(forceRefresh);
-  return db.raw;
+  if (db?.raw) return db.raw;
+  if (fs.existsSync(DISK_CACHE_PATH)) {
+    try {
+      return JSON.parse(await fs.promises.readFile(DISK_CACHE_PATH, 'utf8'));
+    } catch {}
+  }
+  return null;
 }
 
 async function getIndexedDatabase(forceRefresh = false) {

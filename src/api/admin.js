@@ -4,12 +4,24 @@ const express = require('express');
 const { URLSearchParams } = require('url');
 const { z } = require('zod');
 const { supabase } = require('../lib/supabase');
-const { isAdmin } = require('../core/utils');
+const { isAdmin, TTLMap } = require('../core/utils');
 const { validateTelegramInitData } = require('../socket/auth');
 const crypto = require('crypto');
 const logger = require('../core/logger');
 
 const router = express.Router();
+const adminRateLimitMap = new TTLMap(60 * 1000, 5000); // 1 minute window, max 5000 tracked IPs
+
+function adminRateLimiter(req, res, next) {
+  const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+  const current = (adminRateLimitMap.get(ip) || 0) + 1;
+  adminRateLimitMap.set(ip, current);
+  if (current > 60) {
+    logger.warn('Admin API rate limit exceeded', { ip, count: current });
+    return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+  }
+  next();
+}
 
 function safeCompare(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
@@ -32,7 +44,7 @@ function adminAuthMiddleware(req, res, next) {
   const bearerToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
   // 1. API key authentication with constant-time comparison
-  if (envAdminKey) {
+  if (envAdminKey && envAdminKey.trim().length > 0) {
     if ((apiKeyHeader && safeCompare(apiKeyHeader, envAdminKey)) || (bearerToken && safeCompare(bearerToken, envAdminKey))) {
       return next();
     }
@@ -62,6 +74,7 @@ function adminAuthMiddleware(req, res, next) {
 }
 
 // Protect all /api/admin routes
+router.use(adminRateLimiter);
 router.use(adminAuthMiddleware);
 
 const UploadPayloadSchema = z.object({

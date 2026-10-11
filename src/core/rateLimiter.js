@@ -1,7 +1,7 @@
 'use strict';
 
 const redisConnection = require('../services/redisService');
-const { ADMIN_ID } = require('../config/config');
+const { isAdmin } = require('./utils');
 const logger = require('./logger');
 
 // Rate limits per second
@@ -21,7 +21,7 @@ function rateLimiterMiddleware() {
     if (!userId) return next();
 
     // Admin bypass
-    if (userId === ADMIN_ID) return next();
+    if (isAdmin(userId)) return next();
 
     // Determine limit based on update type
     const isCallback = !!ctx.callbackQuery;
@@ -29,10 +29,15 @@ function rateLimiterMiddleware() {
     const key = `ratelimit:${userId}:${isCallback ? 'cb' : 'msg'}`;
 
     try {
-      const current = await redisConnection.incr(key);
-      if (current === 1) {
-        // First request in this window — set TTL
-        await redisConnection.pexpire(key, WINDOW_MS);
+      let current;
+      if (typeof redisConnection.multi === 'function' && !redisConnection.isDummy) {
+        const results = await redisConnection.multi().incr(key).pexpire(key, WINDOW_MS).exec();
+        current = results?.[0]?.[1] || 1;
+      } else {
+        current = await redisConnection.incr(key);
+        if (current === 1) {
+          await redisConnection.pexpire(key, WINDOW_MS);
+        }
       }
 
       if (current > limit) {

@@ -332,6 +332,7 @@ bot.on("message", async (ctx, next) => {
     [States.ADM_CREATE_CONTENT]: () => ctx.message.document ? handlers.admin.onAdmDocxContent(ctx) : handlers.admin.onAdmTextContent(ctx),
     [States.ADMIN_SEARCH_USER]: () => handlers.admin.onAdminSearchInput(ctx),
     [States.ADMIN_BROADCAST]: () => handlers.admin.onBroadcastMessage(ctx),
+    [States.ADMIN_BROADCAST_CONFIRM]: () => handlers.admin.onBroadcastConfirmInput(ctx),
     [States.ADMIN_REPLY]: () => handlers.admin.onReplyMessage(ctx),
     [States.ADMIN_WARNING]: () => handlers.contact.onAdminWarningInput && handlers.contact.onAdminWarningInput(ctx),
 
@@ -644,7 +645,8 @@ async function main() {
     next();
   });
 
-  app.use(cors());
+  const corsOrigin = process.env.FRONTEND_URL || (process.env.NODE_ENV === "production" ? false : "*");
+  app.use(cors({ origin: corsOrigin }));
   app.use(express.json({ limit: "2mb" }));
   app.use("/api/admin", adminRouter);
   app.get("/", (_, res) => res.send("Bot 100% aktiv va ishlab turibdi! 🚀"));

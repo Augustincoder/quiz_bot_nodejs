@@ -2,7 +2,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const logger = require('../core/logger');
 const { TIMETABLE_STORAGE_CHANNEL_ID } = require('../config/config');
 const { escapeHtml } = require('../core/utils');

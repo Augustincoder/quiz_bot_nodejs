@@ -9,12 +9,17 @@ if (!process.env.REDIS_URL) {
   const EventEmitter = require('events');
   const dummy = new EventEmitter();
   dummy.isDummy = true;
-  dummy.get = async () => null;
-  dummy.getBuffer = async () => null;
-  dummy.set = async () => 'OK';
-  dummy.del = async () => 1;
-  dummy.incr = async () => 1;
+  const inMemoryStore = new Map();
+  dummy.get = async (k) => inMemoryStore.get(k) ?? null;
+  dummy.getBuffer = async (k) => inMemoryStore.get(k) ?? null;
+  dummy.set = async (k, v) => { inMemoryStore.set(k, String(v)); return 'OK'; };
+  dummy.del = async (k) => { const has = inMemoryStore.has(k); inMemoryStore.delete(k); return has ? 1 : 0; };
+  dummy.incr = async (k) => { const val = (Number(inMemoryStore.get(k)) || 0) + 1; inMemoryStore.set(k, String(val)); return val; };
   dummy.pexpire = async () => 1;
+  dummy.mget = async (...keys) => {
+    const flat = Array.isArray(keys[0]) ? keys[0] : keys;
+    return flat.map(k => inMemoryStore.get(k) ?? null);
+  };
   dummy.quit = async () => 'OK';
   dummy.ping = async () => 'PONG';
   dummy.createWorkerConnection = () => null;
@@ -31,7 +36,8 @@ if (!process.env.REDIS_URL) {
   };
 
   if (isSecureRedis) {
-    baseOptions.tls = { rejectUnauthorized: false };
+    const rejectUnauthorized = process.env.REDIS_TLS_REJECT_UNAUTHORIZED !== 'false';
+    baseOptions.tls = { rejectUnauthorized };
   }
 
   // Primary connection for caching, sessions, and rate-limiting

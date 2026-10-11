@@ -8,6 +8,12 @@ module.exports = {
     "parserOptions": {
         "ecmaVersion": "latest"
     },
+    "globals": {
+        "setInterval": "readonly",
+        "clearInterval": "readonly",
+        "setTimeout": "readonly",
+        "clearTimeout": "readonly"
+    },
     "rules": {
         "no-unused-vars": "warn",
         "no-console": "off",

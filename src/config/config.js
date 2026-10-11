@@ -37,12 +37,14 @@ const QUESTIONS_PER_TEST_ENV = envInt('QUESTIONS_PER_TEST', QUESTIONS_PER_TEST);
 
 const SUPABASE_URL = env('SUPABASE_URL', '');
 const SUPABASE_KEY = env('SUPABASE_KEY', '');
-const rawAdminId = env('ADMIN_IDS') || env('ADMIN_ID', '2014973670');
-const ADMIN_IDS = String(rawAdminId)
-  .split(',')
-  .map((id) => parseInt(id.trim(), 10))
-  .filter((id) => !Number.isNaN(id) && id > 0);
-const ADMIN_ID = ADMIN_IDS[0] || 2014973670;
+const rawAdminId = env('ADMIN_IDS') || env('ADMIN_ID', '');
+const ADMIN_IDS = rawAdminId
+  ? String(rawAdminId)
+      .split(',')
+      .map((id) => parseInt(id.trim(), 10))
+      .filter((id) => !Number.isNaN(id) && id > 0)
+  : [];
+const ADMIN_ID = ADMIN_IDS[0] || null;
 const GEMINI_API_KEY = env('GEMINI_API_KEY', '');
 const TIMETABLE_STORAGE_CHANNEL_ID = env('TIMETABLE_STORAGE_CHANNEL_ID') ||
   env('CHANNEL_ID') ||
