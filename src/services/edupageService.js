@@ -59,7 +59,7 @@ const DEFAULT_HEADERS = {
 
 // Internal cache state
 let cachedDefaultNum = FALLBACK_DEFAULT_NUM;
-let cachedDefaultNumTime = 0;
+let cachedDefaultNumTime = Date.now();
 
 let l1IndexedDatabase = null;
 let l1CacheTime = 0;
