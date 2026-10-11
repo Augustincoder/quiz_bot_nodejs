@@ -160,12 +160,12 @@ function buildRoomPageKb(periodNum, currentBino, currentPage, totalPages, studen
     }
   } else {
     const DEFAULT_BINOS = [
-      { id: 'asosiy', label: '🏛 Asosiy' },
-      { id: '1', label: '1-bino' },
-      { id: '2', label: '2-bino' },
-      { id: '3', label: '3-bino' },
       { id: '4', label: '4-bino' },
       { id: '5', label: '5-bino' },
+      { id: '8', label: '8-bino' },
+      { id: '10', label: '10-bino' },
+      { id: '7', label: '7-bino' },
+      { id: '3', label: '3-bino' },
     ];
     const defBtns = DEFAULT_BINOS.map(b => {
       const isActive = b.id === currentBino;

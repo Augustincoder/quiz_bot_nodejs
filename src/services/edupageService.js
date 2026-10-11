@@ -436,26 +436,64 @@ const roomLocationCache = new Map();
  */
 function parseRoomLocation(xona) {
   const clean = (xona || '').trim();
-  if (!clean) return { bino: 'Asosiy bino', qavat: '1-qavat' };
-  const cached = roomLocationCache.get(clean);
-  if (cached) return cached;
-  if (roomLocationCache.size > 1000) roomLocationCache.clear();
-  const bochkaMatch = clean.match(/^(\d+)-bochka/i);
-  if (bochkaMatch) return { bino: `${bochkaMatch[1]}-bochka`, qavat: '1-qavat' };
+  if (!clean || clean === '?' || clean === '-' || clean === '--' || clean === '---') return null;
+  if (/online/i.test(clean)) return null;
 
-  const multiSlashMatch = clean.match(/^(\d+)\/+(\d+)/);
-  if (multiSlashMatch) {
-    const bNum = multiSlashMatch[1];
-    return { bino: bNum === '1' ? '4-bino' : `${bNum}-bino`, qavat: `${multiSlashMatch[2].charAt(0)}-qavat` };
+  const cached = roomLocationCache.get(clean);
+  if (cached !== undefined) return cached;
+  if (roomLocationCache.size > 1000) roomLocationCache.clear();
+
+  let res = null;
+
+  const bochkaMatch = clean.match(/^(\d+)-bochka/i);
+  if (bochkaMatch) {
+    const qMatch = clean.match(/(\d)\d{2}/);
+    res = { bino: `${bochkaMatch[1]}-bochka`, qavat: `${qMatch ? qMatch[1] : '1'}-qavat` };
+  } else {
+    // e.g. 4-bino Test markazi 1-30, 2-bino/210, etc.
+    const binoPrefixMatch = clean.match(/^(\d+)-bino/i);
+    if (binoPrefixMatch) {
+      const qMatch = clean.match(/(\d)(?:\d{2}|-\d+)/);
+      res = { bino: `${binoPrefixMatch[1]}-bino`, qavat: `${qMatch ? qMatch[1] : '1'}-qavat` };
+    } else {
+      // e.g. 1/111, 4//1-250, 7/labaratoriya, 2/leksionniy-1
+      const slashMatch = clean.match(/^(\d+)\/+(.*)/);
+      if (slashMatch) {
+        const bNum = slashMatch[1];
+        const bino = bNum === '1' ? '4-bino' : `${bNum}-bino`;
+        const rest = slashMatch[2];
+        const qMatch = rest.match(/(\d)(?:\d{2}|-\d+)/) || rest.match(/(\d)/);
+        const qNum = qMatch ? qMatch[1] : '1';
+        res = { bino, qavat: `${qNum || '1'}-qavat` };
+      } else {
+        // e.g. 8-101, 8-201-68, 2-M2
+        const dashMatch = clean.match(/^(\d+)-(.*)/);
+        if (dashMatch) {
+          const bNum = dashMatch[1];
+          const rest = dashMatch[2];
+          const qMatch = rest.match(/(\d)(?:\d{2}|-\d+)/) || rest.match(/(\d)/);
+          const qNum = qMatch ? qMatch[1] : '1';
+          res = { bino: `${bNum}-bino`, qavat: `${qNum || '1'}-qavat` };
+        } else {
+          // e.g. 1 korpus 211 xona
+          const korpusMatch = clean.match(/^(\d+)\s*korpus\s*(\d)(\d{2})/i);
+          if (korpusMatch) {
+            const bNum = korpusMatch[1] === '1' ? '4-bino' : `${korpusMatch[1]}-bino`;
+            res = { bino: bNum, qavat: `${korpusMatch[2]}-qavat` };
+          } else if (/^litsey/i.test(clean)) {
+            const qMatch = clean.match(/(\d)[A-Za-z]/);
+            res = { bino: 'Litsey', qavat: `${qMatch ? qMatch[1] : '1'}-qavat` };
+          } else if (/rektorat/i.test(clean) || /1[24]etaj/i.test(clean) || /xitoy\s*tili/i.test(clean)) {
+            const qMatch = clean.match(/(\d+)/);
+            res = { bino: 'Rektorat', qavat: `${qMatch ? qMatch[1] : '1'}-qavat` };
+          } else if (/asosiy/i.test(clean)) {
+            res = { bino: 'Asosiy bino', qavat: `${clean.charAt(0) || '1'}-qavat` };
+          }
+        }
+      }
+    }
   }
 
-  const dashMatch = clean.match(/^(\d+)-.*?(\d)(\d{2})/);
-  if (dashMatch) return { bino: `${dashMatch[1]}-bino`, qavat: `${dashMatch[2]}-qavat` };
-
-  const normalMatch = clean.match(/^(\d)(\d{2})/);
-  if (normalMatch) return { bino: 'Asosiy bino', qavat: `${normalMatch[1]}-qavat` };
-
-  const res = { bino: 'Asosiy bino', qavat: `${clean.charAt(0) || '1'}-qavat` };
   roomLocationCache.set(clean, res);
   return res;
 }
@@ -488,8 +526,10 @@ async function getGroupBuildings(className) {
         if (!Array.isArray(lessons)) continue;
         for (const l of lessons) {
           if (l.room && l.room !== '?' && !l.room.toLowerCase().includes('online')) {
-            const loc = parseRoomLocation(l.room);
-            if (loc && loc.bino) binos.add(loc.bino);
+            for (const r of l.room.split(',')) {
+              const loc = parseRoomLocation(r.trim());
+              if (loc && loc.bino) binos.add(loc.bino);
+            }
           }
         }
       }
@@ -617,8 +657,10 @@ function buildIndexedDatabase(raw, defaultNum) {
         if (!Array.isArray(lessons)) continue;
         for (const l of lessons) {
           if (l.room && l.room !== '?' && !l.room.toLowerCase().includes('online')) {
-            const loc = parseRoomLocation(l.room);
-            if (loc && loc.bino) binos.add(loc.bino);
+            for (const r of l.room.split(',')) {
+              const loc = parseRoomLocation(r.trim());
+              if (loc && loc.bino) binos.add(loc.bino);
+            }
           }
         }
       }
@@ -655,7 +697,7 @@ function buildIndexedDatabase(raw, defaultNum) {
     }
   }
 
-  const roomEntries = Object.entries(rooms).filter(([, name]) => /^\d/.test((name || '').trim()));
+  const roomEntries = Object.entries(rooms).filter(([, name]) => parseRoomLocation(name) !== null);
   const emptyRoomsMatrix = new Map();
   for (let d = 0; d < 6; d++) {
     for (let p = 1; p <= 8; p++) {
@@ -1025,7 +1067,7 @@ async function getEmptyRoomsText(className, dayIdx, periodNum, offsetDays = 0, b
         const binoSet = new Set(studentBinos.map(b => b.toLowerCase()));
         emptyRooms = emptyRooms.filter(xona => {
           const loc = parseRoomLocation(xona);
-          return binoSet.has(loc.bino.toLowerCase());
+          return Boolean(loc && loc.bino && binoSet.has(loc.bino.toLowerCase()));
         });
       } else {
         emptyRooms = [];
@@ -1034,6 +1076,7 @@ async function getEmptyRoomsText(className, dayIdx, periodNum, offsetDays = 0, b
       const cleanFilter = binoFilter.toLowerCase();
       emptyRooms = emptyRooms.filter(xona => {
         const loc = parseRoomLocation(xona);
+        if (!loc || !loc.bino) return false;
         const bName = loc.bino.toLowerCase();
         if (cleanFilter === 'asosiy') return bName.includes('asosiy');
         if (cleanFilter.endsWith('-bochka') || cleanFilter.endsWith('-bino')) {
@@ -1045,7 +1088,7 @@ async function getEmptyRoomsText(className, dayIdx, periodNum, offsetDays = 0, b
       const binoNum = className.slice(1);
       emptyRooms = emptyRooms.filter(xona => {
         const loc = parseRoomLocation(xona);
-        return loc.bino.includes(binoNum);
+        return Boolean(loc && loc.bino && loc.bino.includes(binoNum));
       });
     }
 
@@ -1061,7 +1104,9 @@ async function getEmptyRoomsText(className, dayIdx, periodNum, offsetDays = 0, b
 
     const grouped = {};
     for (const xona of emptyRooms) {
-      const { bino, qavat } = parseRoomLocation(xona);
+      const loc = parseRoomLocation(xona);
+      if (!loc || !loc.bino) continue;
+      const { bino, qavat } = loc;
       (grouped[bino] ??= {})[qavat] ??= [];
       grouped[bino][qavat].push(xona);
     }
