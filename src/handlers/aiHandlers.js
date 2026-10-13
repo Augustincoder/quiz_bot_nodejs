@@ -1,14 +1,14 @@
 'use strict';
 const { Markup } = require('telegraf');
 const aiService = require('../services/aiService');
-const { States, setState, safeEdit, clearState, backToMainKb, isAdmin: checkIsAdmin } = require('../core/utils');
+const { States, setState, safeEdit, clearState, backToMainKb, isAdmin: checkIsAdmin, TTLMap } = require('../core/utils');
 
 // ============================================
 // 📊 RATE LIMITING VA USAGE TRACKING
 // ============================================
 
-// User-level rate limit (har bir user uchun)
-const userRateLimit = new Map(); // { userId: { count: 0, resetTime: timestamp } }
+// User-level rate limit (har bir user uchun xotira chegaralangan TTLMap)
+const userRateLimit = new TTLMap(24 * 60 * 60 * 1000, 1000); // 24 soatlik TTL, max 1000 ta slot
 
 // Global daily usage tracker
 let dailyUsage = {

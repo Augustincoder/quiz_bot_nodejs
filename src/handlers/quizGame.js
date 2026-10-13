@@ -838,10 +838,21 @@ async function cbWmStartInline(ctx) {
   }
 }
 
+// Interaktiv inline taymerlar boshqaruvi (Memory leak va race condition oldini oladi)
+const activeWmTimers = new Map();
+
+function clearWmTimer(chatId) {
+  if (activeWmTimers.has(chatId)) {
+    clearTimeout(activeWmTimers.get(chatId));
+    activeWmTimers.delete(chatId);
+  }
+}
+
 // Interaktiv savolni ekranga chiqarish (HIMOYALANGAN VA DINAMIK MARSHRUTLI)
 async function sendNextInlineMistake(ctx) {
   try {
     const chatId = ctx.chat.id;
+    clearWmTimer(chatId);
     const redisConnection = require("../services/redisService");
 
     // Redisdan ishonchli tarzda o'qiymiz
@@ -938,7 +949,8 @@ async function sendNextInlineMistake(ctx) {
     }
 
     // Haqiqiy avto-taymer (20 soniya)
-    setTimeout(async () => {
+    const wmTimer = setTimeout(async () => {
+      activeWmTimers.delete(chatId);
       try {
         const rawState = await redisConnection.get(`wm_state:${chatId}`);
         if (!rawState) return; // O'yin allaqachon tugagan
@@ -965,6 +977,8 @@ async function sendNextInlineMistake(ctx) {
         console.error("Inline Timeout Xatosi:", err.message);
       }
     }, 20000);
+    wmTimer.unref();
+    activeWmTimers.set(chatId, wmTimer);
   } catch (error) {
     console.error(
       `[sendNextInlineMistake Xatosi - Chat: ${ctx.chat.id}]:`,
@@ -982,6 +996,7 @@ async function sendNextInlineMistake(ctx) {
 async function cbWmAns(ctx) {
   try {
     const chatId = ctx.chat.id;
+    clearWmTimer(chatId);
 
     // Redisdan o'qiymiz
     const rawState = await redisConnection.get(`wm_state:${chatId}`);
@@ -1053,6 +1068,7 @@ async function cbWmAns(ctx) {
 }
 
 async function cbWmNext(ctx) {
+  clearWmTimer(ctx.chat.id);
   await ctx.answerCbQuery().catch(() => { });
   return sendNextInlineMistake(ctx);
 }
@@ -1120,6 +1136,7 @@ async function cbAiExplainMistakes(ctx) {
 }
 
 async function cbPostMain(ctx) {
+  clearWmTimer(ctx.chat.id);
   await safeAnswerCb(ctx);
   await safeEdit(
     ctx,

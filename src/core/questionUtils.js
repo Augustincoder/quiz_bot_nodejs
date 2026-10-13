@@ -12,13 +12,8 @@ function shuffleArray(arr) {
 function prepareShuffledQuestions(rawQuestions) {
   const shuffledQ = shuffleArray(rawQuestions);
   return shuffledQ.map(q => {
-    const options     = [...q.options];
-    const correctText = options[q.correct_index];
-    shuffleArray(options);          // in-place shuffle
-    for (let i = options.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [options[i], options[j]] = [options[j], options[i]];
-    }
+    const correctText = q.options ? q.options[q.correct_index] : undefined;
+    const options     = shuffleArray(q.options || []);
     return {
       question:      q.question,
       options,

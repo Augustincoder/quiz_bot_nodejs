@@ -4,15 +4,15 @@ const { Markup } = require('telegraf');
 const aiService = require('../services/aiService');
 const dbService = require('../services/dbService');
 const { SUBJECTS } = require('../config/config');
-const { States, setState, clearState, updateData, getData, safeEdit, escapeHtml, adminGuard, parseSuffix, safeAnswerCb, downloadFile } = require('../core/utils');
+const { States, setState, clearState, updateData, getData, safeEdit, escapeHtml, adminGuard, parseSuffix, safeAnswerCb, downloadFile, TTLMap } = require('../core/utils');
 const logger = require('../core/logger');
 
 // ============================================
 // 📊 AI ADMIN RATE LIMITING
 // ============================================
 
-// Admin-specific rate limiting (kam qattiq, lekin baribir nazorat)
-const adminAIUsage = new Map(); // { adminId: { count: number, resetTime: timestamp } }
+// Admin-specific rate limiting (avtomatik tozalanuvchi TTLMap)
+const adminAIUsage = new TTLMap(24 * 60 * 60 * 1000, 200); // 24 soatlik TTL, max 200 slots
 
 const ADMIN_AI_LIMITS = {
   HOURLY_LIMIT: 250,        // Admin soatiga 20 ta AI test yarata oladi

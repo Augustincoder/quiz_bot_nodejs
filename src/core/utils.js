@@ -49,9 +49,6 @@ class TTLMap {
 }
 
 // ─── Shared In-Memory Stores ─────────────────────────────────
-const activeTests   = new Map();
-const waitingRooms  = new Map();
-const pollChatMap   = new Map();
 const userNameCache = new TTLMap(86400000); // 24 hours TTL
 const leaderboardCache = { text: null, ts: 0 };
 const LEADERBOARD_TTL  = 120_000;
@@ -355,7 +352,7 @@ const buildUserContext = (session) => {
 };
 
 module.exports = {
-  activeTests, waitingRooms, pollChatMap, userNameCache,
+  userNameCache,
   leaderboardCache, LEADERBOARD_TTL, States, STATE_LABELS, TTLMap,
   setState, clearState, updateData, getData, getState,
   navKb, backToMainKb, progressBar, safePercent, grade, parseSuffix,

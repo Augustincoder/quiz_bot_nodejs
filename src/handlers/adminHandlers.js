@@ -411,8 +411,17 @@ async function cmdRefreshAllTimetable(ctx) {
 
     // 3. Periodic real-time progress monitor
     let lastEditTime = Date.now();
+    const monitorStartTime = Date.now();
+    const MAX_MONITOR_DURATION_MS = 15 * 60 * 1000; // 15 daqiqalik xavfsizlik chegarasi
+
     const interval = setInterval(async () => {
       try {
+        if (Date.now() - monitorStartTime > MAX_MONITOR_DURATION_MS) {
+          clearInterval(interval);
+          logger.warn('cmdRefreshAllTimetable monitoring reached 15m safety ceiling; timer cleared.');
+          return;
+        }
+
         const st = timetableCdnService.getWorkerStatus();
         if (!st.isRunning) {
           clearInterval(interval);
@@ -465,6 +474,7 @@ async function cmdRefreshAllTimetable(ctx) {
         logger.error('cmdRefreshAllTimetable interval error', intervalErr);
       }
     }, 2000);
+    interval.unref();
 
   } catch (err) {
     logger.error('cmdRefreshAllTimetable', err);

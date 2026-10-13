@@ -104,11 +104,20 @@ bot.use(async (ctx, next) => {
   try {
     await next();
   } finally {
-    // Save session to Redis if modified, even if downstream handler threw an error
+    // Save session to Redis if modified, or DEL if session was cleared
     try {
-      const newSessionStr = JSON.stringify(ctx.session || { state: null, data: {} });
-      if (originalSessionStr !== newSessionStr) {
-        await redisConnection.set(key, newSessionStr, "EX", 86400);
+      const sess = ctx.session;
+      const isEmpty = !sess || (!sess.state && (!sess.data || Object.keys(sess.data).length === 0));
+
+      if (isEmpty) {
+        if (originalSessionStr !== '{"state":null,"data":{}}') {
+          await redisConnection.del(key);
+        }
+      } else {
+        const newSessionStr = JSON.stringify(sess);
+        if (originalSessionStr !== newSessionStr) {
+          await redisConnection.set(key, newSessionStr, "EX", 86400);
+        }
       }
     } catch (err) {
       logger.error("Session Redis write error:", { error: err.message });
