@@ -1,21 +1,9 @@
 'use strict';
 
-const { createClient } = require('@supabase/supabase-js');
-const { SUPABASE_URL, SUPABASE_KEY } = require('../config/config');
+const { supabase } = require('../lib/supabase');
 const { TTLMap } = require('../core/utils');
 const redis = require('./redisService');
 const logger = require('../core/logger');
-
-let supabase = null;
-try {
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-  } else {
-    logger.warn('SUPABASE_URL or SUPABASE_KEY is missing. Operating in fallback mode.');
-  }
-} catch (e) {
-  logger.error('Supabase ulanish xatosi:', { error: e.message });
-}
 
 // In-memory fallback cache for timetable CDN metadata (bounded to 1000 items)
 const fallbackTimetableCache = new TTLMap(24 * 60 * 60 * 1000, 1000);

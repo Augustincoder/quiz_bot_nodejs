@@ -1895,7 +1895,7 @@ function register(bot) {
   bot.action('admin_broadcast_confirm', adminGuard(cbBroadcastConfirm));
 
   // Reply
-  bot.action(/^reply_\d+/,             adminGuard(cbReplyStart));
+  bot.action(/^reply_\d+$/,            adminGuard(cbReplyStart));
 
   // Test creation
   bot.action('admin_add_test',         adminGuard(cbAdminAddTest));

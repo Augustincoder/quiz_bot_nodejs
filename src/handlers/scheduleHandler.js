@@ -728,5 +728,4 @@ module.exports = {
   cmdHafta,
   cmdXonalar,
   buildRoomPageKb,
-  buildRoomPageKb,
 };
