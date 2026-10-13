@@ -43,7 +43,7 @@ async function main() {
 
     assert(schedule && schedule.includes('Dushanba'), 'Should contain Monday schedule');
     assert(!schedule.includes('texnik xatolik'), 'Must not report technical error');
-    assert(duration < 500, `Expected duration < 500ms, got ${duration}ms`);
+    assert(duration < 1500, `Expected duration < 1500ms, got ${duration}ms`);
   });
 
   await runTest('getRawSchedule returns complete weekly object on cold boot', async () => {

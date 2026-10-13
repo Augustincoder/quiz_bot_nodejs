@@ -456,8 +456,13 @@ async function cbAiTestsSave(ctx) {
   }
   
   try {
-    // AI testlarni maxsus nom bilan saqlash
-    const testId = Date.now(); // Vaqt belgisi orqali noyob ID
+    // AI testlarni ketma-ket blok ID bilan saqlash (rasmiy bloklar tartibi uchun)
+    const botModule = require('../core/bot');
+    const memDb = botModule.memoryDb || {};
+    const existingTests = Object.keys(memDb[subject] || {})
+      .map(Number)
+      .filter(n => !isNaN(n) && n > 0 && n < 1000000000);
+    const testId = existingTests.length > 0 ? Math.max(...existingTests) + 1 : 1;
     const success = await dbService.saveOfficialTest(subject, testId, questions);
     
     if (!success) {
@@ -470,7 +475,7 @@ async function cbAiTestsSave(ctx) {
       `✅ <b>AI test saqlandi!</b>\n\n` +
       `📚 Fan: <b>${escapeHtml(SUBJECTS[subject] || subject)}</b>\n` +
       `🏷 Turi: <b>${type === 'text' ? 'Matn asosida' : type === 'image' ? 'Rasmdan' : 'Adaptiv'}</b>\n` +
-      `🔖 ID: <b>${testId}</b>\n` +
+      `🔖 Blok: <b>${testId}-Blok</b>\n` +
       `🔢 Savollar: <b>${questions.length} ta</b>\n\n` +
       `📊 Bugungi limitingiz: ${stats.daily.used}/${stats.daily.limit}`,
       { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Admin panel', 'admin_panel_main')]]) },

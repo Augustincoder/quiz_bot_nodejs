@@ -191,7 +191,7 @@ async function cbCtNew(ctx) {
   setState(ctx, States.CREATE_SUBJECT);
   await safeEdit(
     ctx,
-    "📍 *[1/3] Bosqich: Fan tanlash*\n\n━━━━━━━━━━━━━━━━\nYangi fan nomini kiriting.\n\n💡 _Masalan: Ona tili, Tarix 1-qism, Kardiologiya_\n\n⚠️ Uzunligi: 2–50 belgi.",
+    "📍 <b>[1/3] Bosqich: Fan tanlash</b>\n\n━━━━━━━━━━━━━━━━\nYangi fan nomini kiriting.\n\n💡 <i>Masalan: Ona tili, Tarix 1-qism, Kardiologiya</i>\n\n⚠️ Uzunligi: 2–50 belgi.",
     Markup.inlineKeyboard([
       [Markup.button.callback("🔙 Ortga (Fanlar ro'yxatiga)", "create_test")],
       [Markup.button.callback("❌ Bekor qilish", "cancel_creation")],
@@ -443,7 +443,7 @@ async function cbFmt(ctx) {
 }
 // Yangi format menyusini yuborish
 async function sendFormatSelection(ctx) {
-  const text = `📝 *Yangi savol formatini tanlang:*\n\n⬇️ Qaysi usulda savol qo'shmoqchisiz?`;
+  const text = `📝 <b>Yangi savol formatini tanlang:</b>\n\n⬇️ Qaysi usulda savol qo'shmoqchisiz?`;
   const kb = Markup.inlineKeyboard([
     [Markup.button.callback("🤖 AI Smart Quiz (Avtomatik)", "fmt_ai")],
     [Markup.button.callback("📊 Telegram Quiz", "fmt_quiz")],
@@ -455,7 +455,7 @@ async function sendFormatSelection(ctx) {
   if (ctx.callbackQuery) {
     await safeEdit(ctx, text, kb);
   } else {
-    await ctx.reply(text, { parse_mode: "Markdown", ...kb });
+    await ctx.reply(text, { parse_mode: "HTML", ...kb });
   }
 }
 
@@ -777,13 +777,15 @@ async function onDocxFile(ctx) {
     );
   }
 
-  // ─── AVTO-NOMLASH: Agar nom yozilmagan bo'lsa fayl nomidan olamiz
+  // ─── AVTO-NOMLASH: Agar nom yozilmagan bo'lsa fayl nomidan tozalab olamiz
   let bName = data.block_name;
   if (!bName) {
     bName = doc.file_name
-      .replace(".docx", "")
+      .replace(/\.docx$/i, "")
       .replace(/_/g, " ")
-      .substring(0, 50);
+      .replace(/[^\w\s\-\.\,\'\u0400-\u04FF\u0100-\u017F]/g, "")
+      .trim()
+      .substring(0, 50) || "Word Test";
     await updateData(ctx, { block_name: bName });
   }
 
@@ -797,7 +799,6 @@ async function onDocxFile(ctx) {
     const link = await ctx.telegram.getFileLink(doc.file_id);
     await downloadFile(link.href, filePath);
 
-    // ─── YANGI PARSER (xato va to'g'ri savollarni ajratadi)
     // ─── YANGI PARSER (xato va to'g'ri savollarni ajratadi)
     const parsed = await parseDocxQuestions(
       filePath,
@@ -831,13 +832,13 @@ async function onDocxFile(ctx) {
 
     // ─── AVTO-DOCX REJIMI ───
     if (data.is_auto_docx) {
-      const MAX_QUESTIONS = 350; // <--- 250 LIMIT MANA SHU YERDA!
+      const MAX_QUESTIONS = 300;
       let limitMsg = "";
 
       let finalValidQs = validQs;
       if (validQs.length > MAX_QUESTIONS) {
         finalValidQs = validQs.slice(0, MAX_QUESTIONS);
-        limitMsg = `\n\n⚠️ *Limit himoyasi:* Tizim barqarorligini saqlash maqsadida fayldan faqat dastlabki 250 ta savol qabul qilindi!`;
+        limitMsg = `\n\n⚠️ *Limit himoyasi:* Tizim barqarorligini saqlash maqsadida fayldan faqat dastlabki ${MAX_QUESTIONS} ta savol qabul qilindi!`;
       }
 
       // 25 tadan qismlarga (chunks) bo'lamiz
@@ -1289,10 +1290,11 @@ async function cbPreviewQuestion(ctx) {
 
   const q = questions[idx];
   let text = `👁 <b>Savol batafsil</b> (${idx + 1} / ${questions.length})\n\n<b>${escapeHtml(q.question)}</b>\n\n`;
-  const labels = ["A", "B", "C", "D", "E", "F"];
+  const labels = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
 
   q.options.forEach((opt, i) => {
-    text += `${i === q.correct_index ? "✅" : "❌"} <b>${labels[i]})</b> ${escapeHtml(opt)}\n`;
+    const label = labels[i] || String.fromCharCode(65 + i);
+    text += `${i === q.correct_index ? "✅" : "❌"} <b>${label})</b> ${escapeHtml(opt)}\n`;
   });
 
   const page = Math.floor(idx / 10); // Qaysi sahifaga tegishliligini hisoblaymiz
@@ -1333,8 +1335,14 @@ async function cbDeleteQuestion(ctx) {
 async function cbEditQuestionStart(ctx) {
   await ctx.answerCbQuery("✏️ Savol matni tayyorlanmoqda...").catch(() => {});
   const idx = parseInt(parseSuffix(ctx.callbackQuery.data, "edit_q_"), 10);
-  const data = await getData(ctx);
-  const q = data.questions[idx];
+  const data = (await getData(ctx)) || {};
+  const questions = data.questions || [];
+
+  if (isNaN(idx) || idx < 0 || idx >= questions.length || !questions[idx]) {
+    return cbPreviewGrid(ctx);
+  }
+
+  const q = questions[idx];
 
   let textFormat = `${q.question}\n`;
   q.options.forEach((opt, i) => {
@@ -1422,12 +1430,12 @@ async function cbFinishCreation(ctx) {
 
   const chunkMsg =
     testIds.length > 1
-      ? `\n⚠️ *Avto-bo'lish:* Savollar ko'pligi uchun tizim ularni avtomatik *${testIds.length} ta blokga* ajratdi va fanga joyladi.`
-      : `\n🔗 *Faqat shu blok:*\n\`https://t.me/${botInfo.username}?start=t_${firstTestId}\``;
+      ? `\n\n⚠️ <b>Avto-bo'lish:</b> Savollar ko'pligi uchun tizim ularni avtomatik <b>${testIds.length} ta blokga</b> ajratdi va fanga joyladi.`
+      : `\n\n🔗 <b>Faqat shu blok:</b>\n<code>https://t.me/${botInfo.username}?start=t_${firstTestId}</code>`;
 
   await safeEdit(
     ctx,
-    `🎉 *Muvaffaqiyatli saqlandi!*\n\n📚 Fan: *${subject}*\n📝 Asosiy Blok: *${baseBlockName}*\n🔢 Jami Savollar: *${questions.length} ta*${chunkMsg}\n\n🔗 *Butun fanni o'ynash (Marafon):*\n\`https://t.me/${botInfo.username}?start=s_${firstTestId}\``,
+    `🎉 <b>Muvaffaqiyatli saqlandi!</b>\n\n📚 Fan: <b>${escapeHtml(subject)}</b>\n📝 Asosiy Blok: <b>${escapeHtml(baseBlockName)}</b>\n🔢 Jami Savollar: <b>${questions.length} ta</b>${chunkMsg}\n\n🔗 <b>Butun fanni o'ynash (Marafon):</b>\n<code>https://t.me/${botInfo.username}?start=s_${firstTestId}</code>`,
     Markup.inlineKeyboard([
       [
         Markup.button.callback(
@@ -1573,7 +1581,7 @@ async function cbManageSubj(ctx) {
   buttons.push([Markup.button.callback("🔙 Mening Testlarimga", "my_tests")]);
   await safeEdit(
     ctx,
-    `📚 *Fan:* ${testData.subject}\n🔗 *Fan havolasi:*\nhttps://t.me/${botInfo.username}?start=s_${refId}\n\n📋 Bloklar:`,
+    `📚 <b>Fan:</b> ${escapeHtml(testData.subject)}\n🔗 <b>Fan havolasi:</b>\n<code>https://t.me/${botInfo.username}?start=s_${refId}</code>\n\n📋 Bloklar:`,
     Markup.inlineKeyboard(buttons),
   );
 }
@@ -1587,7 +1595,7 @@ async function cbManageTest(ctx) {
 
   await safeEdit(
     ctx,
-    `📝 * Blok Ma\'lumotlari *\n📚 Fan: ${testData.subject}\n🔖 Blok: * ${testData.block_name} *\n🔢 Savollar: *${(testData.questions || []).length} ta*\n\n🔗 *Havola:*\nhttps://t.me/${botInfo.username}?start=t_${testId}`,
+    `📝 <b>Blok Ma'lumotlari</b>\n📚 Fan: <b>${escapeHtml(testData.subject)}</b>\n🔖 Blok: <b>${escapeHtml(testData.block_name)}</b>\n🔢 Savollar: <b>${(testData.questions || []).length} ta</b>\n\n🔗 <b>Havola:</b>\n<code>https://t.me/${botInfo.username}?start=t_${testId}</code>`,
 
     Markup.inlineKeyboard([
       [
@@ -1615,7 +1623,7 @@ async function cbDeleteTest(ctx) {
   const testId = parseSuffix(ctx.callbackQuery.data, "delete_test_");
   await safeEdit(
     ctx,
-    `⚠️ *Ishonchingiz komilmi?*\n⛔ Bu amalni qaytarib bo'lmaydi!`,
+    `⚠️ <b>Ishonchingiz komilmi?</b>\n⛔ Bu amalni qaytarib bo'lmaydi!`,
     Markup.inlineKeyboard([
       [Markup.button.callback("✅ Ha, o'chiraman", `confirm_delete_${testId}`)],
       [Markup.button.callback("❌ Bekor qilish", `manage_test_${testId}`)],
@@ -1809,4 +1817,8 @@ module.exports = {
   cbFmt,
   showDraftDashboard,
   cbFinishCreation,
+  cbEditQuestionStart,
+  cbPreviewQuestion,
+  cbManageTest,
+  cbDeleteTest,
 };

@@ -301,18 +301,43 @@ function parseTextQuestions(text, mode = 'hash') {
 
     if (parts.length < 2) { invalid.push(block.trim()); continue; }
 
-    let questionText = parts[0].replace(/^\d+[\)\.]\s*/, '').trim();
+    // Birinchi variant boshlanish indeksini aniqlash (ko'p qatorli savollarni saqlash uchun)
+    let firstOptIdx = -1;
+    for (let i = 1; i < parts.length; i++) {
+      const p = parts[i];
+      if ((mode === 'hash' && p.startsWith('#')) || /^[a-zA-Z0-9][\)\.]\s*/.test(p)) {
+        firstOptIdx = i;
+        break;
+      }
+    }
+    if (firstOptIdx === -1) firstOptIdx = 1;
+
+    let questionLines = parts.slice(0, firstOptIdx);
+    let questionText = questionLines.join('\n').replace(/^\d+[\)\.]\s*/, '').trim();
+
     const opts = [];
     let correctIdx = -1;
 
-    for (let i = 1; i < parts.length; i++) {
+    for (let i = firstOptIdx; i < parts.length; i++) {
       let optText = parts[i];
-      let isCorrect = (mode === 'hash' && optText.startsWith('#')) || (mode === 'first' && i === 1);
+      let isCorrect = (mode === 'hash' && optText.startsWith('#')) || (mode === 'first' && i === firstOptIdx);
       if (mode === 'hash' && isCorrect) optText = optText.substring(1).trim();
-      optText = optText.replace(/^[a-eA-E1-5][\)\.]\s*/, '').trim();
+      optText = optText.replace(/^[a-zA-Z0-9][\)\.]\s*/, '').trim();
       if (!optText) continue;
       opts.push(optText);
       if (isCorrect) correctIdx = opts.length - 1;
+    }
+
+    // Telegram poll chegarasi: maksimal 10 ta variant
+    if (opts.length > 10) {
+      if (correctIdx >= 10) {
+        const correctOpt = opts[correctIdx];
+        opts.length = 10;
+        opts[9] = correctOpt;
+        correctIdx = 9;
+      } else {
+        opts.length = 10;
+      }
     }
 
     if (correctIdx !== -1 && opts.length >= 2) valid.push({ question: questionText, options: opts, correct_index: correctIdx });
