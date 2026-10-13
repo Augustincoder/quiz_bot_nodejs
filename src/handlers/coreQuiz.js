@@ -294,6 +294,10 @@ async function finishTest(chatId, telegram) {
         wrong: session.wrong
       }), "EX", 3600).catch(() => { });
 
+      if (Array.isArray(session.mistakes) && session.mistakes.length > 0) {
+        await lastMistakesCache.set(chatId, session.mistakes).catch(() => { });
+      }
+
       dbService
         .updateUserStats(
           chatId,

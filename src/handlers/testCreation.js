@@ -1089,8 +1089,7 @@ async function onQuestionMessage(ctx) {
 
     // Tahrir tugagach, bevosita 10 talik ro'yxatdagi to'g'ri sahifaga qaytamiz
     const page = Math.floor(updatedIdx / 10);
-    ctx.update.callback_query = { data: `preview_grid_${page}` };
-    return cbPreviewGrid(ctx);
+    return cbPreviewGrid(ctx, page);
   }
   // ─── XATONI TO'G'RILASH REJIMI (ERROR RECOVERY) ───
   if (data.fixing_error_index !== undefined) {
@@ -1132,8 +1131,7 @@ async function onQuestionMessage(ctx) {
     );
 
     // Keyingi xatoga avtomatik o'tamiz (massiv qisqargani uchun indeks o'zgarmaydi)
-    ctx.update.callback_query = { data: `fix_errors_${fixIdx}` };
-    return cbFixErrors(ctx);
+    return cbFixErrors(ctx, fixIdx);
   }
   // ─── 2. YANGI SAVOL QO'SHISH REJIMI (CONTINUOUS INPUT) ───
   const fmt = data.format;
@@ -1192,10 +1190,13 @@ async function onQuestionMessage(ctx) {
 // ─── 3. KO'RIB CHIQISH (GRID PREVIEW), TAHRIRLASH VA O'CHIRISH ──────
 
 // Asosiy 10 talik ro'yxatni chizuvchi funksiya
-async function cbPreviewGrid(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
-  const page =
-    parseInt(parseSuffix(ctx.callbackQuery.data, "preview_grid_"), 10) || 0;
+async function cbPreviewGrid(ctx, targetPage = null) {
+  if (ctx.callbackQuery) {
+    await ctx.answerCbQuery().catch(() => {});
+  }
+  const page = targetPage !== null
+    ? targetPage
+    : (parseInt(parseSuffix(ctx.callbackQuery?.data, "preview_grid_"), 10) || 0);
   const data = await getData(ctx);
   const questions = data.questions || [];
 
@@ -1673,10 +1674,13 @@ async function cbAutoDocx(ctx) {
 
 // ─── 4. XATOLARNI TO'G'RILASH (ERROR RECOVERY) ──────────────
 
-async function cbFixErrors(ctx) {
-  await ctx.answerCbQuery().catch(() => {});
-  const idx =
-    parseInt(parseSuffix(ctx.callbackQuery.data, "fix_errors_"), 10) || 0;
+async function cbFixErrors(ctx, targetIdx = null) {
+  if (ctx.callbackQuery) {
+    await ctx.answerCbQuery().catch(() => {});
+  }
+  const idx = targetIdx !== null
+    ? targetIdx
+    : (parseInt(parseSuffix(ctx.callbackQuery?.data, "fix_errors_"), 10) || 0);
   const data = await getData(ctx);
   const invalidQs = data.invalidQs || [];
 
@@ -1755,9 +1759,7 @@ function register(bot) {
     const qCount = (data.questions || []).length;
     const lastPage = Math.max(0, Math.ceil(qCount / 10) - 1);
 
-    // Soxta so'rov yasab, to'g'ridan-to'g'ri Gridning eng oxirgi sahifasini ochamiz!
-    ctx.callbackQuery.data = `preview_grid_${lastPage}`;
-    return cbPreviewGrid(ctx);
+    return cbPreviewGrid(ctx, lastPage);
   });
 
   bot.action(/^edit_q_/, cbEditQuestionStart);

@@ -40,6 +40,9 @@ class TTLMap {
     }
     this._map.clear();
   }
+  keys() {
+    return this._map.keys();
+  }
   get size() {
     return this._map.size;
   }

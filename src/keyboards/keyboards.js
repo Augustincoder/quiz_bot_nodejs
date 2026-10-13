@@ -40,11 +40,17 @@ function getMainKeyboard() {
 
 function invalidateBlocksCache(subjectKey = null) {
   if (subjectKey) {
-    // TTLMap doesn't support prefix iteration, so we clear all
-    // This is fine — cache is rebuilt on next access
-    blocksKbCache.delete(subjectKey);
+    const prefix = `${subjectKey}:`;
+    const toDelete = [];
+    for (const key of blocksKbCache.keys()) {
+      if (typeof key === 'string' && key.startsWith(prefix)) {
+        toDelete.push(key);
+      }
+    }
+    toDelete.forEach((k) => blocksKbCache.delete(k));
+  } else {
+    blocksKbCache.clear();
   }
-  // For full invalidation, we can't iterate TTLMap easily, but it auto-expires
 }
 
 /**

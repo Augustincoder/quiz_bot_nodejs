@@ -721,7 +721,7 @@ async function showUserDetails(ctx, user) {
   try {
     const stats   = await dbService.getUserStats(user.telegram_id);
     const history = Array.isArray(stats?.history) ? stats.history : [];
-    const mistakes = Array.isArray(stats?.mistakes) ? stats.mistakes : [];
+    const mistakes = history.flatMap(h => h.mistakes || []);
 
     // Single pass for avgScore
     const avgScore = history.length
@@ -1640,7 +1640,8 @@ async function onAdmTextContent(ctx) {
     );
   }
 
-  const newQs = parseTextQuestions(ctx.message.text);
+  const parsed = parseTextQuestions(ctx.message.text);
+  const newQs = parsed.valid || [];
   if (!newQs.length) {
     return ctx.reply(
       '⚠️ <b>Savol topilmadi!</b>\n\n' +
@@ -1692,7 +1693,8 @@ async function onAdmDocxContent(ctx) {
     const link  = await ctx.telegram.getFileLink(doc.file_id);
     await downloadFile(link.href, filePath);
 
-    const newQs = await parseDocxQuestions(filePath);
+    const parsed = await parseDocxQuestions(filePath);
+    const newQs = parsed.valid || [];
 
     if (!newQs.length) {
       await ctx.telegram.editMessageText(

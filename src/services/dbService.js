@@ -47,6 +47,23 @@ async function saveOfficialTest(subject, testId, questions) {
       { onConflict: 'subject,test_id' }
     );
     if (error) throw error;
+
+    // Hot-reload memoryDb and invalidate blocks pagination cache
+    try {
+      const botModule = require('../core/bot');
+      if (!botModule.memoryDb) botModule.memoryDb = {};
+      if (!botModule.memoryDb[subject]) botModule.memoryDb[subject] = {};
+      botModule.memoryDb[subject][testId] = {
+        test_id: testId,
+        range: `1-${questions?.length || 0}`,
+        questions: questions || []
+      };
+      const { invalidateBlocksCache } = require('../keyboards/keyboards');
+      invalidateBlocksCache(subject);
+    } catch (memErr) {
+      logger.warn('Failed to hot-update memoryDb on saveOfficialTest:', { error: memErr.message });
+    }
+
     return true;
   } catch (e) {
     logger.error('saveOfficialTest error:', { error: e.message });

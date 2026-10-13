@@ -62,10 +62,14 @@ async function cmdStart(ctx) {
       const folderName = session.subjectKey || "Boshqalar";
       await dbService.saveTestToShelf(ctx.from.id, folderName, {
         testId: session.testId || Date.now(),
-        testName: session.testData?.block_name || "Tugallanmagan test",
+        testName: session.blockName || session.testData?.block_name || "Tugallanmagan test",
         subject: session.subjectKey || "Noma'lum",
         questions: session.sessionQuestions,
-        progress: session.qIdx
+        progress: {
+          current_index: session.qIdx || 0,
+          correct: session.correct || 0,
+          mistakes: session.mistakes || [],
+        },
       });
       savedToShelf = true;
     }

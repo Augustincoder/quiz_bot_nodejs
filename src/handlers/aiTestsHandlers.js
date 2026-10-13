@@ -384,7 +384,7 @@ async function onAiTestsAdaptiveCount(ctx) {
   try {
     // Foydalanuvchi statistikasidan xatolarni olish
     const userStats = await dbService.getUserStats(userId);
-    const mistakes = userStats?.mistakes || [];
+    const mistakes = (userStats?.history || []).flatMap(h => h.mistakes || []);
     
     if (!mistakes.length) {
       await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, undefined,
@@ -519,7 +519,7 @@ async function cbAiTestsRegenerate(ctx) {
       return;
     } else if (type === 'adaptive') {
       const userStats = await dbService.getUserStats(data.adaptive_user_id);
-      const mistakes = userStats?.mistakes || [];
+      const mistakes = (userStats?.history || []).flatMap(h => h.mistakes || []);
       questions = await aiService.generateAdaptiveQuiz(subject, mistakes, count);
     }
     

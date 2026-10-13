@@ -6,9 +6,9 @@ const {
   setState,
   clearState,
   safeEdit,
+  escapeHtml,
 } = require("../core/utils");
 const { Markup } = require("telegraf");
-const { pendingShelfSaves } = require("../core/pendingStore");
 const logger = require("../core/logger");
 // ==========================================
 // 1. JAVONGA SAQLASH (SAVE) MANTIQI
@@ -52,7 +52,7 @@ async function cbShelfSaveInit(ctx) {
     // 4. Foydalanuvchiga muvaffaqiyatli saqlanganini bildiramiz
     await safeEdit(
       ctx,
-      `📥 <b>Muvaffaqiyatli saqlandi!</b>\n\n📚 Fan: <b>${data.subject}</b>\n🔖 Blok: <b>${data.testName}</b>\n\nSiz bu testni shaxsiy javoningizga saqladingiz. Xohlagan vaqtingiz <i>"Javon"</i> menyusi orqali qayta ishlashingiz mumkin. ✅`,
+      `📥 <b>Muvaffaqiyatli saqlandi!</b>\n\n📚 Fan: <b>${escapeHtml(data.subject)}</b>\n🔖 Blok: <b>${escapeHtml(data.testName)}</b>\n\nSiz bu testni shaxsiy javoningizga saqladingiz. Xohlagan vaqtingiz <i>"Javon"</i> menyusi orqali qayta ishlashingiz mumkin. ✅`,
       {
         parse_mode: "HTML",
         ...Markup.inlineKeyboard([
@@ -81,10 +81,13 @@ async function cbShelfNewFolder(ctx) {
     setState(ctx, States.CREATE_SHELF_FOLDER);
     await safeEdit(
       ctx,
-      `📁 *Yangi papka yaratish*\n\nPapka nomini kiriting (2–30 belgi).\n\n💡 _Masalan: "Ertangi imtihon", "Biologiya takrorlash", "Final savollar"_`,
-      Markup.inlineKeyboard([
-        [Markup.button.callback("❌ Bekor qilish", "sh_cancel")],
-      ]),
+      `📁 <b>Yangi papka yaratish</b>\n\nPapka nomini kiriting (2–30 belgi).\n\n💡 <i>Masalan: "Ertangi imtihon", "Biologiya takrorlash", "Final savollar"</i>`,
+      {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("❌ Bekor qilish", "sh_cancel")],
+        ]),
+      }
     );
   } catch (e) {
     console.error(e);
@@ -126,14 +129,14 @@ async function cbShelfSaveFolder(ctx) {
 async function executeSave(ctx, folderName, msgId) {
   try {
     const chatId = ctx.chat?.id || ctx.from?.id;
-    const pendingTest = pendingShelfSaves.get(chatId);
+    const rawPending = await redisConnection.get(`shelf_pending:${chatId}`);
 
     // Faqat inline tugma ishlatamiz (xatolik bermasligi uchun)
     const inlineMain = Markup.inlineKeyboard([
       [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
     ]);
 
-    if (!pendingTest) {
+    if (!rawPending) {
       clearState(ctx);
       return ctx.telegram
         .editMessageText(
@@ -145,6 +148,8 @@ async function executeSave(ctx, folderName, msgId) {
         )
         .catch(() => {});
     }
+
+    const pendingTest = JSON.parse(rawPending);
 
     const result = await dbService.saveTestToShelf(
       ctx.from.id,
@@ -159,19 +164,19 @@ async function executeSave(ctx, folderName, msgId) {
           chatId,
           msgId,
           undefined,
-          `⚠️ Bu test <b>${folderName}</b> papkasida allaqachon saqlangan.\n\n💡 Boshqa papka tanlang yoki yangi papka yarating.`,
+          `⚠️ Bu test <b>${escapeHtml(folderName)}</b> papkasida allaqachon saqlangan.\n\n💡 Boshqa papka tanlang yoki yangi papka yarating.`,
           { parse_mode: "HTML", ...inlineMain },
         )
         .catch(() => {});
     } else if (result === "saved") {
-      pendingShelfSaves.delete(chatId);
+      await redisConnection.del(`shelf_pending:${chatId}`).catch(() => {});
       logger.info('shelf:save', { userId: ctx.from.id, folder: folderName });
       await ctx.telegram
         .editMessageText(
           chatId,
           msgId,
           undefined,
-          `✅ Test <b>${folderName}</b> papkasiga muvaffaqiyatli saqlandi!\n\n📥 Asosiy menyudagi <b>\"Javon\"</b> bo'limidan istalgan paytda qolgan joyidan davom ettirishingiz mumkin.`,
+          `✅ Test <b>${escapeHtml(folderName)}</b> papkasiga muvaffaqiyatli saqlandi!\n\n📥 Asosiy menyudagi <b>\"Javon\"</b> bo'limidan istalgan paytda qolgan joyidan davom ettirishingiz mumkin.`,
           { parse_mode: "HTML", ...inlineMain },
         )
         .catch(() => {});
@@ -220,25 +225,21 @@ async function cbMyShelf(ctx) {
     const folders = Object.keys(shelf || {});
 
     if (folders.length === 0) {
-      const emptyText = `📥 *Javon — Sizning shaxsiy arxivingiz*
-
-📭 Hozircha bu yerda hech narsa yo'q.
-
-━━━━━━━━━━━━━━━━
-*Javon nima?*
-Javon — bu sizning testlaringiz uchun shaxsiy arxiv. Istalgan testni to'xtatib, saqlang va keyinroq qolgan joyidan davom eting.
-
-✨ *Nimalar mumkin:*
-• Testni to'xtatib, keyinroq davom ettirish
-• Testlarni papkalarga ajratib tartibga solish
-• Imtihon oldidan saqlangan testlarni qayta yechish
-
-━━━━━━━━━━━━━━━━
-💡 *Qanday saqlash mumkin?*
-Test yakunlangach yoki /stop orqali to'xtatganda "📥 Javonga saqlash" tugmasi paydo bo'ladi.`;
+      const emptyText = `📥 <b>Javon — Sizning shaxsiy arxivingiz</b>\n\n` +
+        `📭 Hozircha bu yerda hech narsa yo'q.\n\n` +
+        `━━━━━━━━━━━━━━━━\n` +
+        `<b>Javon nima?</b>\n` +
+        `Javon — bu sizning testlaringiz uchun shaxsiy arxiv. Istalgan testni to'xtatib, saqlang va keyinroq qolgan joyidan davom eting.\n\n` +
+        `✨ <b>Nimalar mumkin:</b>\n` +
+        `• Testni to'xtatib, keyinroq davom ettirish\n` +
+        `• Testlarni papkalarga ajratib tartibga solish\n` +
+        `• Imtihon oldidan saqlangan testlarni qayta yechish\n\n` +
+        `━━━━━━━━━━━━━━━━\n` +
+        `💡 <b>Qanday saqlash mumkin?</b>\n` +
+        `Test yakunlangach yoki /stop orqali to'xtatganda "📥 Javonga saqlash" tugmasi paydo bo'ladi.`;
 
       return safeEdit(ctx, emptyText, {
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
         ...Markup.inlineKeyboard([
           [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
         ]),
@@ -256,8 +257,8 @@ Test yakunlangach yoki /stop orqali to'xtatganda "📥 Javonga saqlash" tugmasi 
     });
     buttons.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
 
-    await safeEdit(ctx, `📥 *Javon — Papkalaringiz*\n\n${folders.length} ta papka mavjud. Ochish uchun tanlang:`, {
-      parse_mode: "Markdown",
+    await safeEdit(ctx, `📥 <b>Javon — Papkalaringiz</b>\n\n${folders.length} ta papka mavjud. Ochish uchun tanlang:`, {
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard(buttons),
     });
   } catch (e) {
@@ -297,8 +298,8 @@ async function cbOpenFolder(ctx) {
       Markup.button.callback("🏠 Asosiy Menyu", "back_to_main"),
     ]);
 
-    await safeEdit(ctx, `📁 *Papka:* ${folderName}\n\nSaqlangan testlar:`, {
-      parse_mode: "Markdown",
+    await safeEdit(ctx, `📁 <b>Papka:</b> ${escapeHtml(folderName)}\n\nSaqlangan testlar:`, {
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard(buttons),
     });
   } catch (e) {
@@ -335,19 +336,15 @@ async function cbViewTest(ctx) {
       resumeBtnText = "▶️ Qolgan joyidan davom etish";
     }
 
-    const text = `📝 *Test Tafsilotlari*
-
-🔖 *Test nomi:* ${test.testName}
-📚 *Fan:* ${test.subject}
-🔢 *Jami savollar:* ${qCount} ta
-
-━━━━━━━━━━━━━━━━
-📊 *Hozirgi holat:*
-${progressText}
-📅 *Saqlangan sana:* ${String(test.saved_at).slice(0, 10)}
-━━━━━━━━━━━━━━━━
-
-💡 *Maslahat:* Testni qolgan joyidan davom ettirganingizda, oldingi natijalaringiz (to'g'ri/xatolar) saqlanib qoladi va test vaqti asabingizni buzmaydi.`;
+    const text = `📝 <b>Test Tafsilotlari</b>\n\n` +
+      `🔖 <b>Test nomi:</b> ${escapeHtml(test.testName || "Noma'lum")}\n` +
+      `📚 <b>Fan:</b> ${escapeHtml(test.subject || "Noma'lum")}\n` +
+      `🔢 <b>Jami savollar:</b> ${qCount} ta\n\n` +
+      `━━━━━━━━━━━━━━━━\n` +
+      `📊 <b>Hozirgi holat:</b>\n${progressText}\n` +
+      `📅 <b>Saqlangan sana:</b> ${escapeHtml(String(test.saved_at || '').slice(0, 10))}\n` +
+      `━━━━━━━━━━━━━━━━\n\n` +
+      `💡 <b>Maslahat:</b> Testni qolgan joyidan davom ettirganingizda, oldingi natijalaringiz (to'g'ri/xatolar) saqlanib qoladi va test vaqti asabingizni buzmaydi.`;
 
     const buttons = [
       [Markup.button.callback(resumeBtnText, `sh_run_${folderName}_${idx}`)],
@@ -361,7 +358,7 @@ ${progressText}
     ];
 
     await safeEdit(ctx, text, {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard(buttons),
     });
   } catch (e) {
