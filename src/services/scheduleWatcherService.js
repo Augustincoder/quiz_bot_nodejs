@@ -102,9 +102,9 @@ function getSimplifiedSchedule(schedule) {
  * Computes deterministic SHA-256 hash of a group's weekly schedule.
  * Ignores non-essential attributes to prevent false positives.
  */
-function computeScheduleHash(schedule) {
+function computeScheduleHash(schedule, isAlreadySimplified = false) {
   if (!schedule || typeof schedule !== 'object') return 'empty';
-  const simplified = getSimplifiedSchedule(schedule);
+  const simplified = isAlreadySimplified ? schedule : getSimplifiedSchedule(schedule);
   return crypto.createHash('sha256').update(JSON.stringify(simplified)).digest('hex');
 }
 
@@ -646,6 +646,23 @@ async function checkScheduleChanges(forceOrOptions = false) {
       return { checked: false, reason: 'empty_tables' };
     }
 
+    // Fast-path: When live EduPage timetable byte payload is 100% unchanged,
+    // and baseline is established, and no force flag is set, skip re-evaluating 1,367 groups.
+    if (isBaselineReady && indexedDb.isUnchanged && !forceDeepCheck && !forceCheckAllActive && !targetNorm) {
+      lastCheckedAt = Date.now();
+      lastCheckStatus = 'ok_unchanged';
+      logger.debug('Schedule Watcher: EduPage timetable verified unchanged (0 bytes modified)', {
+        durationMs: Date.now() - t0,
+      });
+      return {
+        checked: true,
+        unchanged: true,
+        changedGroupsCount: 0,
+        changedGroups: [],
+        durationMs: Date.now() - t0,
+      };
+    }
+
     // 3. Pre-load active users and DB cached timetables for dual reconciliation
     const db = getDbService();
     let broadcastUsers = [];
@@ -743,7 +760,7 @@ async function checkScheduleChanges(forceOrOptions = false) {
       if (!norm) continue;
 
       const currentSimplified = getSimplifiedSchedule(currentRawSchedule);
-      const currentHash = computeScheduleHash(currentRawSchedule);
+      const currentHash = computeScheduleHash(currentSimplified, true);
 
       const cidStr = String(classId);
       const oldEntry = groupSnapshots.get(cidStr);

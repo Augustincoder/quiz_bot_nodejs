@@ -46,7 +46,7 @@ RUN apt-get update \
 # 2. Production Environment defaults
 ENV NODE_ENV=production \
     PORT=8080 \
-    NODE_OPTIONS="--expose-gc --max-old-space-size=384"
+    NODE_OPTIONS="--expose-gc --max-old-space-size=300"
 
 # 3. Create required runtime directory structure & permissions
 RUN mkdir -p /app/data /app/logs /home/node/.fonts \

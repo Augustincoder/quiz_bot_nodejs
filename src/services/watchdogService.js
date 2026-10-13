@@ -3,11 +3,11 @@
 const logger = require('../core/logger');
 const scheduleService = require('./scheduleService');
 
-// Render 512MB RAM safety thresholds:
-// 1. Heap threshold: 350MB V8 heap
-// 2. RSS threshold: 420MB process resident memory (Render SIGKILLs container at 512MB)
-const HEAP_THRESHOLD_BYTES = 350 * 1024 * 1024;
-const RSS_THRESHOLD_BYTES = 420 * 1024 * 1024;
+// Northflank / Render 512MB RAM safety thresholds:
+// 1. Heap threshold: 280MB V8 heap
+// 2. RSS threshold: 360MB process resident memory (Northflank/Render SIGKILLs container at 512MB)
+const HEAP_THRESHOLD_BYTES = 280 * 1024 * 1024;
+const RSS_THRESHOLD_BYTES = 360 * 1024 * 1024;
 const CHECK_INTERVAL_MS = 30 * 1000;
 
 let _timer = null;

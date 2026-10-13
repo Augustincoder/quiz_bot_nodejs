@@ -30,13 +30,15 @@ const { rateLimiterMiddleware } = require("./src/core/rateLimiter");
 const { initSocket } = require("./src/socket");
 
 // ─── Sentry Initialization ──────────────────────────────────
-Sentry.init({
-  dsn: process.env.SENTRY_DSN,
-  integrations: [nodeProfilingIntegration()],
-  tracesSampleRate: 1.0,
-  profilesSampleRate: 1.0,
-  environment: process.env.NODE_ENV || "production",
-});
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    integrations: [nodeProfilingIntegration()],
+    tracesSampleRate: 0.1,
+    profilesSampleRate: 0.1,
+    environment: process.env.NODE_ENV || "production",
+  });
+}
 
 // ─── Unhandled Error Safety Net ──────────────────────────────
 process.on("unhandledRejection", async (reason) => {

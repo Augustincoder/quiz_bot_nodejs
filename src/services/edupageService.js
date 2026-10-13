@@ -5,6 +5,7 @@ const path = require('path');
 const https = require('https');
 const zlib = require('zlib');
 const util = require('util');
+const crypto = require('crypto');
 const gunzipAsync = util.promisify(zlib.gunzip);
 const inflateAsync = util.promisify(zlib.inflate);
 const logger = require('../core/logger');
@@ -64,6 +65,7 @@ let cachedDefaultNumTime = Date.now();
 
 let l1IndexedDatabase = null;
 let l1CacheTime = 0;
+let lastRawTimetableHash = null;
 
 // Singleflight Mutex: collapses concurrent callers into a single network fetch
 let activeFetchPromise = null;
@@ -329,11 +331,27 @@ function httpPost(path, payload, timeoutMs = 45000) {
           } else if (encoding === 'deflate') {
             buffer = await inflateAsync(buffer);
           }
+
+          // Ultra-fast zero-allocation check for regularttGetData:
+          // If uncompressed payload hash is byte-for-byte identical to the last fetch,
+          // and l1IndexedDatabase is loaded, skip JSON.parse and heap allocation entirely!
+          if (path.includes('regularttGetData')) {
+            const rawHash = crypto.createHash('md5').update(buffer).digest('hex');
+            if (lastRawTimetableHash && rawHash === lastRawTimetableHash && l1IndexedDatabase) {
+              resolve({ __isUnchanged: true, _rawHash: rawHash });
+              return;
+            }
+          }
+
           const text = buffer.toString('utf8');
           if (!text || text.trim().length === 0) {
             throw new Error('Empty response body received from EduPage');
           }
           const json = JSON.parse(text);
+          if (path.includes('regularttGetData') && typeof json === 'object' && json !== null) {
+            const rawHash = crypto.createHash('md5').update(buffer).digest('hex');
+            json._rawHash = rawHash;
+          }
           resolve(json);
         } catch (e) {
           reject(new Error(`JSON parse failed for EduPage response: ${e.message}`));
@@ -978,6 +996,12 @@ async function getOrFetchIndexedData(forceRefresh = false) {
       if (canAttemptNetwork) {
         try {
           raw = await fetchRawTimetable(defaultNum);
+          if (raw?.__isUnchanged && l1IndexedDatabase) {
+            recordEduPageSuccess();
+            l1CacheTime = Date.now();
+            l1IndexedDatabase.isUnchanged = true;
+            return l1IndexedDatabase;
+          }
           if (!raw?.r?.dbiAccessorRes?.tables) {
             throw new Error('Invalid response structure from EduPage API (missing tables)');
           }
@@ -1029,7 +1053,9 @@ async function getOrFetchIndexedData(forceRefresh = false) {
       }
 
       // Index and cache in L1
+      lastRawTimetableHash = raw._rawHash || null;
       l1IndexedDatabase = buildIndexedDatabase(raw, defaultNum);
+      l1IndexedDatabase.isUnchanged = false;
       l1CacheTime = Date.now();
 
       // Async atomic write to L3 Disk Cache (guarantees zero corruption across reboots)
@@ -1424,4 +1450,6 @@ module.exports = {
   resolveDefaultNum,
   findClassId,
   hasClassLessonsOnDay,
+  getLastRawTimetableHash: () => lastRawTimetableHash,
+  resetRawTimetableHash: () => { lastRawTimetableHash = null; },
 };
