@@ -68,14 +68,30 @@ async function cbAdaptiveRun(ctx) {
   const unlock = await mutex.lock(`start_test:${chatId}`);
   try {
     const existing = await sessionService.getActiveTest(chatId);
-    if (existing) return ctx.answerCbQuery("⚠️ Avvalgi testni to'xtating: /stop", { show_alert: true }).catch(() => {});
+    if (existing) {
+      return ctx.reply(
+        "⚠️ <b>Sizda tugallanmagan test bor.</b>\n\nYangi adaptiv test boshlashdan oldin uni to'xtatishingiz kerak:",
+        {
+          parse_mode: "HTML",
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
+          ]),
+        }
+      );
+    }
 
     const stats    = await dbService.getUserStats(ctx.from.id);
     const mistakes = (stats.history || [])
       .filter(r => (r.subject === subjectKey || r.subjectKey === subjectKey) && r.mistakes?.length)
       .flatMap(r => r.mistakes);
 
-    if (!mistakes.length) return ctx.answerCbQuery("🎉 Bu fandan xatolar yo'q!", { show_alert: true }).catch(() => {});
+    if (!mistakes.length) {
+      return ctx.reply("🎉 Bu fandan xatolar topilmadi!", {
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("🔙 Fanga qaytish", `subj_${subjectKey}`)],
+        ]),
+      });
+    }
 
     const msg = await ctx.reply(
       `⏳ <i>AI "${subjName}" fanidan sizning zaif joylaringiz asosida ${count} ta maxsus savol tuzmoqda...</i> 🧠`,

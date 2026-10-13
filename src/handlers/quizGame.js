@@ -66,15 +66,22 @@ async function cbOfficialTests(ctx) {
   );
 }
 async function sendWaitingRoomMessage(ctx, chatId, subjectKey, testId, qCount) {
-  const room = await sessionService.getWaitingRoom(chatId);
-  const users = Array.from(room.readyUsers || []);
+  const room = (await sessionService.getWaitingRoom(chatId)) || {};
+  let usersList = [];
+  if (room.readyUsers) {
+    if (Array.isArray(room.readyUsers)) {
+      usersList = room.readyUsers.map((u) => (typeof u === "string" ? u : u.name || "Foydalanuvchi"));
+    } else if (typeof room.readyUsers === "object") {
+      usersList = Object.values(room.readyUsers).map((u) => (typeof u === "string" ? u : u.name || "Foydalanuvchi"));
+    }
+  }
   const text =
     `🎯 <b>Kutish Zali</b>\n\n` +
-    `📚 Fan: <b>${subjectKey}</b>\n` +
+    `📚 Fan: <b>${escapeHtml(subjectKey)}</b>\n` +
     `🔢 Savollar: <b>${qCount} ta</b>\n\n` +
-    `👥 Qatnashchilar: ${users.length}\n` +
-    (users.length
-      ? users.map((u, i) => `${i + 1}. ${u.name || "Foydalanuvchi"}`).join("\n")
+    `👥 Qatnashchilar: ${usersList.length} ta\n` +
+    (usersList.length
+      ? usersList.map((name, i) => `<b>${i + 1}.</b> ${escapeHtml(name)}`).join("\n")
       : "<i>Hali hech kim yo'q</i>");
 
   const buttons = [
@@ -245,12 +252,13 @@ async function cbStartTest(ctx) {
     await safeDelete(ctx);
 
     if (ctx.chat.type !== "private") {
+      const initiatorName = ctx.from.first_name || "Muallif";
       await sessionService.setWaitingRoom(chatId, {
         subjectKey,
         testId,
         testData,
         initiatorId: ctx.from.id,
-        readyUsers: new Set(),
+        readyUsers: { [ctx.from.id]: initiatorName },
       });
       return sendWaitingRoomMessage(
         ctx,
@@ -381,12 +389,13 @@ async function startUgcTest(ctx, testDb) {
       );
 
     if (ctx.chat?.type !== "private") {
+      const initiatorName = ctx.from.first_name || "Muallif";
       await sessionService.setWaitingRoom(chatId, {
         subjectKey: testDb.subject,
         testId: `ugc_${testDb.id}`,
         testData: testDb,
         initiatorId: ctx.from.id,
-        readyUsers: new Set(),
+        readyUsers: { [ctx.from.id]: initiatorName },
       });
       return sendWaitingRoomMessage(
         ctx,
@@ -521,6 +530,12 @@ async function cbStopTest(ctx) {
   // 🛑 UX Flow: Telegramdagi aktiv so'rovnomani (poll) to'xtatamiz va taymerni muzlatamiz
   if (session.msgId) {
     await ctx.telegram.stopPoll(chatId, session.msgId).catch(() => { });
+  }
+  try {
+    const { quizTimerQueue } = require("../jobs/queues");
+    quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then((j) => j && j.remove()).catch(() => {});
+  } catch {
+    /* silent */
   }
   session.status = "paused";
   await sessionService.setActiveTest(chatId, session);
@@ -680,7 +695,7 @@ async function cbReviewMistakes(ctx) {
   const currentMistakes = mistakes.slice(startIdx, startIdx + ITEMS_PER_PAGE);
 
   const parts = [
-    `📑 <b>Xatolar Tahlili</b> — <i>${mistakes.length} ta xato topildi</i>\n_Sahifa: ${validPage + 1} / ${totalPages}_\n`,
+    `📑 <b>Xatolar Tahlili</b> — <i>${mistakes.length} ta xato topildi</i>\n<i>Sahifa: ${validPage + 1} / ${totalPages}</i>\n`,
   ];
 
   currentMistakes.forEach((m, i) => {
@@ -715,7 +730,13 @@ async function cbReviewMistakes(ctx) {
       `ai_explain_mistakes_${validPage}`,
     ),
   ]);
-  buttons.push([Markup.button.callback("🔙 Natijaga qaytish", "post_main")]);
+
+  const metaRaw = await redisConnection.get(`mistakes_meta:${ctx.chat.id}`).catch(() => null);
+  const meta = metaRaw ? JSON.parse(metaRaw) : null;
+  const backBtn = meta?.subjectKey
+    ? Markup.button.callback("🔙 Fan menyusiga qaytish", `post_subj_${meta.subjectKey}`)
+    : Markup.button.callback("🏠 Asosiy Menyu", "post_main");
+  buttons.push([backBtn]);
 
   await safeEdit(ctx, parts.join("\n\n"), {
     parse_mode: "HTML",
@@ -913,7 +934,7 @@ async function sendNextInlineMistake(ctx) {
     // Ekranga chiziladigan matn
     let text =
       `🎯 <b>Xatolar ustida ishlash</b> (Qoldi: ${queue.length} ta)\n` +
-      `⏱ <i>Vaqt limiti: 15 soniya</i>\n━━━━━━━━━━━━━━━━\n` +
+      `⏱ <i>Vaqt limiti: 20 soniya</i>\n━━━━━━━━━━━━━━━━\n` +
       `<b>Savol:</b>\n${escapeHtml(String(qText))}\n\n`;
 
     const buttons = [];
@@ -958,8 +979,8 @@ async function sendNextInlineMistake(ctx) {
         const checkState = JSON.parse(rawState);
         // Agar foydalanuvchi hali javob bermagan bo'lsa (startTime o'zgarmagan bo'lsa)
         if (checkState.startTime === state.startTime) {
-
-          checkState.queue.push(q); // Savolni ro'yxat oxiriga qaytaramiz
+          const timedOutQ = checkState.queue.shift(); // Savolni boshidan olamiz
+          if (timedOutQ) checkState.queue.push(timedOutQ); // Va dublyajsiz oxiriga o'tkazamiz
           await redisConnection.set(`wm_state:${chatId}`, JSON.stringify(checkState), "EX", 3600);
 
           const correctText = q.correct_ans || (q.options ? q.options[q.correct_index] : "Noma'lum");
@@ -1016,9 +1037,9 @@ async function cbWmAns(ctx) {
     const isCorrect = parseSuffix(ctx.callbackQuery.data, "wm_ans_") === "1";
     const q = queue.shift();
 
-    // Taymer tekshiruvi (15 soniya)
+    // Taymer tekshiruvi (20 soniya)
     const elapsed = Date.now() - (state.startTime || Date.now());
-    const isTimeout = elapsed > 15000;
+    const isTimeout = elapsed > 20000;
 
     if (isCorrect && !isTimeout) {
       await ctx.answerCbQuery("✅ Ajoyib! To'g'ri.").catch(() => { });
@@ -1043,7 +1064,7 @@ async function cbWmAns(ctx) {
       const correctText =
         q.correct_ans || (q.options ? q.options[q.correct_index] : "Noma'lum");
       const failMsg = isTimeout
-        ? `⏳ <b>Vaqt tugadi!</b> (15 soniyadan o'tib ketdi)`
+        ? `⏳ <b>Vaqt tugadi!</b> (20 soniyadan o'tib ketdi)`
         : `❌ <b>Yana xato qildingiz!</b>`;
 
       await safeEdit(
@@ -1175,6 +1196,12 @@ async function resumeTestFromShelf(ctx, savedTest) {
       correct: 0,
       mistakes: [],
     };
+    const totalQuestions = (savedTest.questions || []).length;
+    const isCompleted = totalQuestions > 0 && (prog.current_index || 0) >= totalQuestions;
+    const currentIdx = isCompleted ? 0 : (prog.current_index || 0);
+    const correctCount = isCompleted ? 0 : (prog.correct || 0);
+    const mistakesList = isCompleted ? [] : (prog.mistakes || []);
+
     await sessionService.setActiveTest(chatId, {
       chatType: "private",
       initiatorId: ctx.from.id,
@@ -1182,13 +1209,13 @@ async function resumeTestFromShelf(ctx, savedTest) {
       testId: savedTest.testId,
       blockName: savedTest.testName,
       sessionQuestions: savedTest.questions,
-      qIdx: prog.current_index || 0,
+      qIdx: currentIdx,
       startTime: Date.now(),
       pollId: null,
       msgId: null,
-      correct: prog.correct || 0,
-      wrong: (prog.mistakes || []).length,
-      mistakes: prog.mistakes || [],
+      correct: correctCount,
+      wrong: mistakesList.length,
+      mistakes: mistakesList,
       consecutiveTimeouts: 0,
       groupScores: {},
       finished: false,
@@ -1196,16 +1223,16 @@ async function resumeTestFromShelf(ctx, savedTest) {
     });
 
     const startLabel =
-      prog.current_index > 0
-        ? `<b>${prog.current_index + 1}-savoldan davom etamiz!</b>`
-        : "<b>Test boshlanmoqda!</b>";
+      (!isCompleted && currentIdx > 0)
+        ? `<b>${currentIdx + 1}-savoldan davom etamiz!</b>\n\n💡 <i>Oldingi natijalaringiz saqlanib qolgan.</i>`
+        : "<b>Test boshidan (1-savoldan) qayta boshlanmoqda!</b>";
 
     await ctx.telegram.sendMessage(
       chatId,
       `📥 <b>Javondan test yuklandi!</b>\n\n` +
       `📚 Fan: <b>${escapeHtml(savedTest.subject)}</b>\n` +
       `📝 Test: <b>${escapeHtml(savedTest.testName)}</b>\n\n` +
-      `${startLabel}\n\n💡 <i>Oldingi natijalaringiz saqlanib qolgan.</i>`,
+      `${startLabel}`,
       { parse_mode: "HTML" },
     );
 

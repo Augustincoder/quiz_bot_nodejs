@@ -102,6 +102,28 @@ async function cmdStart(ctx) {
       }
       return ctx.reply('❌ Bu blok topilmadi yoki o\'chirilgan.', backToMainKb());
     }
+    if (param.startsWith('offt_')) {
+      const parts = param.split('_');
+      const testId = parseInt(parts.pop(), 10);
+      const subject = parts.slice(1).join('_');
+      const memDb = require('../core/bot').memoryDb || {};
+      const testData = (memDb[subject] || {})[testId];
+      if (testData) {
+        const { initAndStartTest } = require('./quizGame');
+        return initAndStartTest(chatId, ctx.telegram, subject, testId, testData, ctx.from.id, 'private');
+      }
+      return ctx.reply("❌ Rasmiy test topilmadi yoki o'chirilgan.", backToMainKb());
+    }
+    if (param.startsWith('offs_')) {
+      const subject = param.replace('offs_', '');
+      const memDb = require('../core/bot').memoryDb || {};
+      if (memDb[subject]) {
+        const { cbSubject } = require('./quizGame');
+        ctx.callbackQuery = { data: `subj_${subject}` };
+        return cbSubject(ctx);
+      }
+      return ctx.reply("❌ Bu fanda rasmiy testlar topilmadi.", backToMainKb());
+    }
   }
 
   // --- UX/UI Onboarding ---

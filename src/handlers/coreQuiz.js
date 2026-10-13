@@ -175,7 +175,7 @@ async function sendNextQuestion(chatId, telegram) {
       pollOpts = options.map((_, i) => `${labels[i] || i + 1} varianti`);
     } else {
       pollQ = qFull.slice(0, 300);
-      pollOpts = options.map((o) => String(o).slice(0, 100));
+      pollOpts = options.map((o) => (String(o).trim() || "Variant").slice(0, 100));
     }
     let msg;
     try {
@@ -188,10 +188,28 @@ async function sendNextQuestion(chatId, telegram) {
     } catch (e) {
       console.error(`sendPoll error [${chatId}]:`, e.message);
 
-      // 🛑 UX Flow: Foydalanuvchiga xabar beramiz va keyingi savolga majburan o'tkazamiz
+      session.sendErrors = (session.sendErrors || 0) + 1;
+      if (session.sendErrors >= 3) {
+        session.status = "paused";
+        await sessionService.setActiveTest(chatId, session);
+        await telegram.sendMessage(
+          chatId,
+          `⚠️ <b>Texnik xatolik:</b> Telegram savollarni yuborishda muammo yuzaga keldi. Test avtomatik pauza qilindi.\n\nIltimos, birozdan so'ng "▶️ Davom etish" tugmasini bosing.`,
+          {
+            parse_mode: "HTML",
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback("▶️ Davom etish", "pause_resume")],
+              [Markup.button.callback("🏁 Yakunlash", "pause_finish")],
+            ]),
+          }
+        ).catch(() => { });
+        return;
+      }
+
+      // 🛑 UX Flow: Foydalanuvchiga xabar beramiz va keyingi savolga xavfsiz o'tkazamiz
       await telegram.sendMessage(
         chatId,
-        `⚠️ <b>Texnik xatolik:</b> Bu savolni Telegram qabul qilmadi (variantlar uzun bo'lishi mumkin). Savol o'tkazib yuborildi.`,
+        `⚠️ <b>Texnik xatolik:</b> Bu savolni Telegram qabul qilmadi. Savol o'tkazib yuborildi.`,
         { parse_mode: "HTML" }
       ).catch(() => { });
 
@@ -207,9 +225,11 @@ async function sendNextQuestion(chatId, telegram) {
       session.qIdx++;
       await sessionService.setActiveTest(chatId, session);
 
-      // Zanjir (recursion) orqali keyingi savolni yuklash
+      // Kaskadli qulashning oldini olish uchun 1 soniya kutamiz
+      await new Promise(r => setTimeout(r, 1000));
       return sendNextQuestion(chatId, telegram);
     }
+    session.sendErrors = 0;
     session.pollId = msg.poll.id;
     session.msgId = msg.message_id;
 
@@ -621,6 +641,8 @@ async function handlePollAnswer(pollAnswer, telegram) {
 
     session.qIdx++;
     await sessionService.setActiveTest(chatId, session);
+    // 600ms pauza: foydalanuvchi to'g'ri/xato animatsiyasini ko'rishi va Telegram rate limitiga tushmaslik uchun
+    await new Promise(r => setTimeout(r, 600));
     await sendNextQuestion(chatId, telegram);
   } finally {
     unlock();
