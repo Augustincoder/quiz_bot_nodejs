@@ -77,10 +77,65 @@ function adminAuthMiddleware(req, res, next) {
 router.use(adminRateLimiter);
 router.use(adminAuthMiddleware);
 
-const UploadPayloadSchema = z.object({
-  mode: z.enum(['brain-ring', 'zakovat', 'kahoot', 'erudit']),
-  data: z.array(z.record(z.any())).min(1, "Kamida 1 ta savol/blok bo'lishi kerak").max(500, 'Maksimal 500 ta element qabul qilinadi'),
+const BrainRingItemSchema = z.object({
+  question: z.string().min(1, 'Savol matni bo\'sh bo\'lishi mumkin emas').max(2000),
+  answer: z.string().min(1, 'Javob bo\'sh bo\'lishi mumkin emas').max(500),
+  comment: z.string().max(1000).optional(),
 });
+
+const ZakovatItemSchema = z.object({
+  question: z.string().min(1, 'Savol matni bo\'sh bo\'lishi mumkin emas').max(2000),
+  answer: z.string().min(1, 'Javob bo\'sh bo\'lishi mumkin emas').max(500),
+  author: z.string().max(200).optional(),
+  comment: z.string().max(1000).optional(),
+});
+
+const SingleKahootQuestionSchema = z.object({
+  question: z.string().min(1, 'Savol matni bo\'sh bo\'lishi mumkin emas').max(2000),
+  options: z.array(z.string().min(1).max(500)).min(2, 'Kamida 2 ta variant bo\'lishi kerak').max(10),
+  correct_index: z.number().int().min(0),
+  time_limit: z.number().int().min(5).max(120).optional(),
+  explanation: z.string().max(1000).optional(),
+});
+
+const KahootItemSchema = z.union([
+  z.object({
+    topic: z.string().max(200).optional(),
+    questions: z.array(SingleKahootQuestionSchema).min(1).max(100),
+  }),
+  SingleKahootQuestionSchema,
+]);
+
+const EruditItemSchema = z.union([
+  z.object({
+    topic: z.string().max(200).optional(),
+    questions: z.array(z.record(z.any())).min(1).max(100),
+  }),
+  z.object({
+    question: z.string().min(1).max(2000),
+    answer: z.string().min(1).max(500),
+    topic: z.string().max(200).optional(),
+  }),
+]);
+
+const UploadPayloadSchema = z.discriminatedUnion('mode', [
+  z.object({
+    mode: z.literal('brain-ring'),
+    data: z.array(BrainRingItemSchema).min(1, 'Kamida 1 ta savol bo\'lishi kerak').max(500),
+  }),
+  z.object({
+    mode: z.literal('zakovat'),
+    data: z.array(ZakovatItemSchema).min(1, 'Kamida 1 ta savol bo\'lishi kerak').max(500),
+  }),
+  z.object({
+    mode: z.literal('kahoot'),
+    data: z.array(KahootItemSchema).min(1, 'Kamida 1 ta savol/blok bo\'lishi kerak').max(500),
+  }),
+  z.object({
+    mode: z.literal('erudit'),
+    data: z.array(EruditItemSchema).min(1, 'Kamida 1 ta savol/blok bo\'lishi kerak').max(500),
+  }),
+]);
 
 router.post('/upload-questions', async (req, res) => {
   if (!supabase) {
@@ -109,19 +164,35 @@ router.post('/upload-questions', async (req, res) => {
         break;
 
       case 'kahoot': {
-        const kahootRows = data.map(item => ({
-          topic: item.topic || 'Umumiy',
-          questions: item.questions || [],
-        }));
+        const kahootRows = data.map(item => {
+          if (item.questions) {
+            return {
+              topic: item.topic || 'Umumiy',
+              questions: item.questions,
+            };
+          }
+          return {
+            topic: item.topic || 'Umumiy',
+            questions: [item],
+          };
+        });
         result = await supabase.from('kahoot_questions').insert(kahootRows);
         break;
       }
 
       case 'erudit': {
-        const eruditRows = data.map(item => ({
-          topic: item.topic || 'Umumiy',
-          questions: item.questions || [],
-        }));
+        const eruditRows = data.map(item => {
+          if (item.questions) {
+            return {
+              topic: item.topic || 'Umumiy',
+              questions: item.questions,
+            };
+          }
+          return {
+            topic: item.topic || 'Umumiy',
+            questions: [item],
+          };
+        });
         result = await supabase.from('erudit_questions').insert(eruditRows);
         break;
       }

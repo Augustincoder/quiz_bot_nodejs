@@ -624,6 +624,7 @@ async function main() {
 
   // Web Server & Socket.io
   const app = express();
+  app.set("trust proxy", 1);
   const server = http.createServer(app);
   _httpServer = server;
   const adminRouter = require("./src/api/admin");

@@ -87,14 +87,37 @@ function initSocket(httpServer) {
           return socket.emit("room:error", { code: 403, message: "Faqat xona egasi o'yinni boshlay oladi" });
         }
 
+        if (room.status !== 'lobby') {
+          return socket.emit("room:error", { code: 400, message: "O'yin allaqachon boshlangan yoki tugatilgan" });
+        }
+
+        room.status = 'starting';
+        if (room.idleTimer) {
+          clearTimeout(room.idleTimer);
+          room.idleTimer = null;
+        }
+
         if (!supabase) {
+          room.status = 'lobby';
           return socket.emit("room:error", { code: 503, message: "Supabase bazasi ulanmagan yoki mavjud emas" });
         }
 
-        const { data: questions, error } = await supabase.from('kahoot_questions').select('*');
-        if (error) throw error;
+        const { data: questions, error } = await supabase
+          .from('kahoot_questions')
+          .select('*')
+          .limit(30);
+
+        if (error) {
+          room.status = 'lobby';
+          throw error;
+        }
+
+        if (!questions || questions.length === 0) {
+          room.status = 'lobby';
+          return socket.emit("room:error", { code: 404, message: "Kahoot uchun savollar topilmadi" });
+        }
         
-        room.questions = questions || [];
+        room.questions = questions;
         room.currentIndex = 0;
         
         console.log(`[room:start] Room ${roomCode}: Loaded ${room.questions.length} Kahoot questions.`);

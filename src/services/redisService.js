@@ -2,6 +2,7 @@
 
 require('dotenv').config();
 const Redis = require('ioredis');
+const logger = require('../core/logger');
 
 let redisConnection;
 
@@ -38,6 +39,9 @@ if (!process.env.REDIS_URL) {
   if (isSecureRedis) {
     const rejectUnauthorized = process.env.REDIS_TLS_REJECT_UNAUTHORIZED !== 'false';
     baseOptions.tls = { rejectUnauthorized };
+    if (!rejectUnauthorized) {
+      logger.warn('⚠️ SECURITY WARNING: REDIS_TLS_REJECT_UNAUTHORIZED=false. Redis TLS certificate verification is bypassed.');
+    }
   }
 
   // Primary connection for caching, sessions, and rate-limiting
@@ -46,9 +50,9 @@ if (!process.env.REDIS_URL) {
     maxRetriesPerRequest: 3,
   });
 
-  redisConnection.on('error', (err) => console.error('❌ Redis Xatosi:', err.message));
+  redisConnection.on('error', (err) => logger.error('❌ Redis Xatosi:', { error: err.message }));
   redisConnection.on('connect', () => {
-    console.log(`✅ Redis muvaffaqiyatli ulandi! (SSL: ${isSecureRedis ? 'Yoniq' : "O'chiq"})`);
+    logger.info(`✅ Redis muvaffaqiyatli ulandi! (SSL: ${isSecureRedis ? 'Yoniq' : "O'chiq"})`);
   });
 
   // Dedicated worker connection factory for BullMQ (requires maxRetriesPerRequest: null)

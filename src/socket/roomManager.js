@@ -4,12 +4,24 @@
  * RoomManager - Manages live game states.
  * Simplified for Kahoot-only mode.
  */
+const MAX_ROOMS = 100;
+const ROOM_LOBBY_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
 class RoomManager {
   constructor() {
     this.rooms = new Map();
   }
 
   async createRoom(roomCode, hostId) {
+    if (this.rooms.size >= MAX_ROOMS) {
+      throw new Error("Maksimal xonalar soni chegarasiga yetildi (100). Yangi xona ochishdan oldin mavjud xonalar tugashini kuting.");
+    }
+
+    const idleTimer = setTimeout(() => {
+      this.deleteRoom(roomCode);
+    }, ROOM_LOBBY_TTL_MS);
+    idleTimer.unref();
+
     const room = {
       roomCode,
       mode: 'kahoot',
@@ -21,8 +33,10 @@ class RoomManager {
       readTimer: null,
       actionTimer: null,
       cooldownTimer: null,
+      idleTimer,
       kahootAnswers: new Map(),
       leaderboardAcks: new Set(),
+      createdAt: Date.now(),
     };
     
     this.rooms.set(roomCode, room);
@@ -71,6 +85,7 @@ class RoomManager {
       if (room.readTimer) clearTimeout(room.readTimer);
       if (room.actionTimer) clearTimeout(room.actionTimer);
       if (room.cooldownTimer) clearTimeout(room.cooldownTimer);
+      if (room.idleTimer) clearTimeout(room.idleTimer);
       this.rooms.delete(roomCode);
     }
   }

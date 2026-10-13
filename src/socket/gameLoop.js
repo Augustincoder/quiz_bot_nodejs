@@ -99,6 +99,12 @@ async function handleGameEnd(roomCode, room) {
     }
 
     io.to(roomCode).emit('game:end', { finalLeaderboard, mmrDelta: [] });
+
+    // 5 daqiqadan so'ng yakunlangan xonani xotiradan avtomatik tozalaymiz
+    const endTimer = setTimeout(() => {
+        roomManager.deleteRoom(roomCode);
+    }, 5 * 60 * 1000);
+    endTimer.unref();
 }
 
 module.exports = { advanceQuestion };
