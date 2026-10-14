@@ -1,9 +1,11 @@
 'use strict';
 
-// Bir vaqtda kelgan so'rovlarni qat'iy FIFO navbatiga tizuvchi va deadlocklardan himoyalangan "Qulf" (Lock) tizimi
+// Bir vaqtda kelgan so'rovlarni qat'iy FIFO navbatiga tizuvchi,
+// xotira tozalanishi kafolatlangan va deadlocklardan himoyalangan "Qulf" (Lock) tizimi
 class Mutex {
-  constructor() {
+  constructor(defaultTimeoutMs = 15000) {
     this._locks = new Map();
+    this.defaultTimeoutMs = defaultTimeoutMs;
   }
 
   /**
@@ -11,19 +13,22 @@ class Mutex {
    * Qat'iy FIFO promise zanjiridan foydalanadi va deadlocklarning oldini olish uchun
    * xavfsizlik taymeriga (default: 15 soniya) ega.
    *
-   * @param {string} key - Qulflanuvchi resurs identifikatori (masalan, `chatId`).
+   * @param {string|number} key - Qulflanuvchi resurs identifikatori (masalan, `chatId`).
    * @param {number} [timeoutMs=15000] - Navbatda kutish yoki ushlab turish maksimal vaqti (ms).
    * @returns {Promise<() => void>} Qulfni bo'shatuvchi (unlock) funksiya.
    */
-  async lock(key, timeoutMs = 15000) {
-    const prev = this._locks.get(key) || Promise.resolve();
+  async lock(key, timeoutMs = this.defaultTimeoutMs) {
+    const lockKey = String(key);
+    const prevEntry = this._locks.get(lockKey) || { promise: Promise.resolve(), count: 0 };
+    prevEntry.count += 1;
 
     let release;
-    const next = new Promise((resolve) => {
+    const nextPromise = new Promise((resolve) => {
       release = resolve;
     });
 
-    this._locks.set(key, next);
+    const chainedPromise = prevEntry.promise.catch(() => {}).then(() => nextPromise);
+    this._locks.set(lockKey, { promise: chainedPromise, count: prevEntry.count });
 
     let released = false;
     let holdTimer = null;
@@ -32,8 +37,12 @@ class Mutex {
       if (released) return;
       released = true;
       if (holdTimer) clearTimeout(holdTimer);
-      if (this._locks.get(key) === next) {
-        this._locks.delete(key);
+      const entry = this._locks.get(lockKey);
+      if (entry) {
+        entry.count -= 1;
+        if (entry.count <= 0) {
+          this._locks.delete(lockKey);
+        }
       }
       release();
     };
@@ -41,10 +50,10 @@ class Mutex {
     let waitTimer = null;
     try {
       await Promise.race([
-        prev.catch(() => {}),
+        prevEntry.promise.catch(() => {}),
         new Promise((_, reject) => {
           waitTimer = setTimeout(() => {
-            reject(new Error(`Mutex queue timeout for key: ${key}`));
+            reject(new Error(`Mutex queue timeout for key: ${lockKey}`));
           }, timeoutMs);
         }),
       ]);
@@ -60,6 +69,39 @@ class Mutex {
     }, timeoutMs);
 
     return doRelease;
+  }
+
+  /**
+   * Berilgan kalit bo'yicha eksklyuziv lock olib, funksiyani bajaradi va
+   * bajarilgach (hatto xatolik yuz bersa ham) qulfni kafolatli bo'shatadi.
+   *
+   * @param {string|number} key - Qulflanuvchi resurs identifikatori.
+   * @param {() => Promise<any>} fn - Eksklyuziv bajariluvchi asinxron funksiya.
+   * @param {number} [timeoutMs=15000] - Maksimal kutish vaqti (ms).
+   * @returns {Promise<any>}
+   */
+  async runExclusive(key, fn, timeoutMs = this.defaultTimeoutMs) {
+    const unlock = await this.lock(key, timeoutMs);
+    let execTimer;
+    const timeoutPromise = new Promise((_, reject) => {
+      execTimer = setTimeout(() => {
+        reject(new Error(`Mutex execution timeout exceeded (${timeoutMs}ms) for key: ${key}`));
+      }, timeoutMs);
+    });
+
+    try {
+      return await Promise.race([Promise.resolve().then(fn), timeoutPromise]);
+    } finally {
+      if (execTimer) clearTimeout(execTimer);
+      unlock();
+    }
+  }
+
+  /**
+   * Test va monitoring uchun: ayni paytda faol qulflar soni.
+   */
+  get size() {
+    return this._locks.size;
   }
 }
 

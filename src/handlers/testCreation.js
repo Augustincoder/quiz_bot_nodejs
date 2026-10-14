@@ -1486,6 +1486,7 @@ async function cbCancelCreation(ctx) {
 }
 
 async function cbMyTests(ctx) {
+  clearState(ctx);
   await ctx.answerCbQuery("📂 Testlaringiz yuklanmoqda...").catch(() => {});
 
   let page = 0;
@@ -1821,4 +1822,5 @@ module.exports = {
   cbPreviewQuestion,
   cbManageTest,
   cbDeleteTest,
+  cbMyTests,
 };

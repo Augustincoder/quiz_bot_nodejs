@@ -7,6 +7,7 @@ const dbService         = require('../services/dbService');
 const aiService         = require('../services/aiService');
 const sessionService    = require('../services/sessionService');
 const { safeEdit, parseSuffix } = require('../core/utils');
+const { shuffleArray }   = require('../core/questionUtils');
 
 async function cbAdaptiveTest(ctx) {
  await ctx.answerCbQuery().catch(() => {});
@@ -98,7 +99,7 @@ async function cbAdaptiveRun(ctx) {
       { parse_mode: 'HTML' },
     );
 
-    const shuffled  = mistakes.sort(() => 0.5 - Math.random());
+    const shuffled  = shuffleArray(mistakes);
     const questions = await aiService.generateAdaptiveQuiz(subjName, shuffled, count);
 
     if (!questions?.length) {

@@ -137,6 +137,7 @@ function incrementGlobalUsage() {
 // ============================================
 
 async function cbAiTutorMenu(ctx) {
+    clearState(ctx);
     try {
         await ctx.answerCbQuery().catch(() => { });
 

@@ -21,6 +21,7 @@ const {
   parseSuffix,
   escapeHtml,
   safeAnswerCb,
+  clearState,
 } = require("../core/utils");
 
 const {
@@ -43,6 +44,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // ─── OFFICIAL TEST SELECTION ─────────────────────────────────
 
 async function cbOfficialTests(ctx) {
+  clearState(ctx);
   await safeAnswerCb(ctx);
   const memDb = require("../core/bot").memoryDb;
   const buttons = Object.entries(SUBJECTS).map(([k, v]) => {
@@ -1360,4 +1362,5 @@ module.exports = {
   resumeTestFromShelf,
   sendNextQuestion,
   initAndStartTest,
+  cbOfficialTests,
 };

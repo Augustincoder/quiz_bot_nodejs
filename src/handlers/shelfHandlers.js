@@ -219,6 +219,7 @@ async function cbShCancel(ctx) {
 // 2. MENING JAVONIM (DASHBOARD) MANTIQI
 // ==========================================
 async function cbMyShelf(ctx) {
+  clearState(ctx);
   try {
     await ctx.answerCbQuery().catch(() => {});
     const shelf = await dbService.getUserShelf(ctx.from.id);
@@ -443,4 +444,4 @@ function register(bot) {
   bot.action(/^sh_run_/, cbRunTest);
 }
 
-module.exports = { register, onNewFolderInput };
+module.exports = { register, onNewFolderInput, cbMyShelf };

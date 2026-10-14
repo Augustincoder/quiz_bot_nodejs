@@ -9,6 +9,7 @@ const {
   progressBar,
   escapeHtml,
   safeAnswerCb,
+  clearState,
 } = require("../core/utils");
 
 const ITEMS_PER_PAGE = 5;
@@ -16,6 +17,7 @@ const ITEMS_PER_PAGE = 5;
 // ─── 1. STATS DASHBOARD ──────────────────────────────────────
 
 async function cbStatsMenu(ctx) {
+  clearState(ctx);
   await safeAnswerCb(ctx);
   try {
     const stats = await dbService.getUserStats(ctx.from.id);

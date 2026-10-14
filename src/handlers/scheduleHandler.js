@@ -5,7 +5,7 @@ const dbService = require('../services/dbService');
 const scheduleService = require('../services/scheduleService');
 const edupageService = require('../services/edupageService');
 const { getTimetableInlineKeyboard } = require('../keyboards/keyboards');
-const { TTLMap, escapeHtml, safeAnswerCb, safeEdit } = require('../core/utils');
+const { TTLMap, escapeHtml, safeAnswerCb, safeEdit, clearState } = require('../core/utils');
 const logger = require('../core/logger');
 
 const roomsPaginationCache = new TTLMap(5 * 60 * 1000, 200); // 5-minute TTL, max 200 slots
@@ -429,6 +429,7 @@ async function cbSwitchScheduleTheme(ctx) {
 }
 
 async function cmdTimetable(ctx) {
+  clearState(ctx);
   await safeAnswerCb(ctx);
   const rawClass = await dbService.getUserClass(ctx.from.id);
   const className = rawClass ? (edupageService.getCanonicalGroupName(rawClass) || rawClass) : null;
