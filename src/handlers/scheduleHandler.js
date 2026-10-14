@@ -5,7 +5,7 @@ const dbService = require('../services/dbService');
 const scheduleService = require('../services/scheduleService');
 const edupageService = require('../services/edupageService');
 const { getTimetableInlineKeyboard } = require('../keyboards/keyboards');
-const { TTLMap, escapeHtml, safeAnswerCb, safeEdit, clearState, getTashkentDate, getTashkentDayOfWeek } = require('../core/utils');
+const { TTLMap, escapeHtml, safeAnswerCb, safeEdit, clearState, getTashkentDate, getTashkentDayOfWeek, safeCallbackData } = require('../core/utils');
 const logger = require('../core/logger');
 
 const roomsPaginationCache = new TTLMap(5 * 60 * 1000, 200); // 5-minute TTL, max 200 slots
@@ -62,7 +62,7 @@ function getPeriodNowAndNext() {
   if (dayOfWeek === 6) {
     return {
       current: { periodNum: 1, dayIdx: 0, offsetDays: 1, isAfterHours: true },
-      next: { periodNum: 2, dayIdx: 0, offsetDays: 1, isAfterHours: true },
+      next: { periodNum: 1, dayIdx: 0, offsetDays: 1, isAfterHours: true },
     };
   }
 
@@ -71,7 +71,7 @@ function getPeriodNowAndNext() {
     const nextDay = dayOfWeek === 5 ? 0 : dayOfWeek + 1;
     return {
       current: { periodNum: 1, dayIdx: nextDay, offsetDays: nextOffset, isAfterHours: true },
-      next: { periodNum: 2, dayIdx: nextDay, offsetDays: nextOffset, isAfterHours: true },
+      next: { periodNum: 1, dayIdx: nextDay, offsetDays: nextOffset, isAfterHours: true },
     };
   }
 
@@ -153,7 +153,7 @@ function buildRoomPageKb(periodNum, currentBino, currentPage, totalPages, studen
       const bId = toBinoId(binoName);
       const isActive = currentBino === bId || currentBino === binoName;
       const label = isActive ? `• ${binoName} •` : binoName;
-      return Markup.button.callback(label, `rm_${periodNum}_${bId}_0`);
+      return Markup.button.callback(label, safeCallbackData(`rm_${periodNum}_${bId}_0`));
     });
     for (let i = 0; i < binoButtons.length; i += 3) {
       rows.push(binoButtons.slice(i, i + 3));
@@ -170,7 +170,7 @@ function buildRoomPageKb(periodNum, currentBino, currentPage, totalPages, studen
     const defBtns = DEFAULT_BINOS.map(b => {
       const isActive = b.id === currentBino;
       const label = isActive ? `• ${b.label} •` : b.label;
-      return Markup.button.callback(label, `rm_${periodNum}_${b.id}_0`);
+      return Markup.button.callback(label, safeCallbackData(`rm_${periodNum}_${b.id}_0`));
     });
     rows.push(defBtns.slice(0, 3));
     rows.push(defBtns.slice(3, 6));
@@ -180,11 +180,11 @@ function buildRoomPageKb(periodNum, currentBino, currentPage, totalPages, studen
   if (totalPages > 1) {
     const nav = [];
     if (currentPage > 0) {
-      nav.push(Markup.button.callback('⬅️ Oldingi', `rm_${periodNum}_${currentBino}_${currentPage - 1}`));
+      nav.push(Markup.button.callback('⬅️ Oldingi', safeCallbackData(`rm_${periodNum}_${currentBino}_${currentPage - 1}`)));
     }
     nav.push(Markup.button.callback(`${currentPage + 1} / ${totalPages}`, 'ignore'));
     if (currentPage < totalPages - 1) {
-      nav.push(Markup.button.callback('Keyingi ➡️', `rm_${periodNum}_${currentBino}_${currentPage + 1}`));
+      nav.push(Markup.button.callback('Keyingi ➡️', safeCallbackData(`rm_${periodNum}_${currentBino}_${currentPage + 1}`)));
     }
     rows.push(nav);
   }
@@ -781,4 +781,5 @@ module.exports = {
   cmdHafta,
   cmdXonalar,
   buildRoomPageKb,
+  getPeriodNowAndNext,
 };

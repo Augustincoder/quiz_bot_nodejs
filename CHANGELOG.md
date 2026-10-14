@@ -4,6 +4,40 @@ Barcha muhim o'zgarishlar, yangilanishlar va xavfsizlik yaxshilanishlari ushbu h
 
 ---
 
+## [1.2.1] — 2026-10-15
+
+### 📅 55 Bugs Simulyatsiyasi: 2-Bosqich — Dars Jadvali, EduPage Parsing va Sanity (Bugs 19–27, 33–37)
+* **Kritik: 2 Paralik Darslar (`durationperiods > 1`) To'liq Kengaytirildi (SCHED-SIM-01 / Bug 19):**
+  - `buildIndexedDatabase` va `occupiedBySlot` da `durationperiods` hisobga olinib, 1-parada boshlangan dars 2-paraga ham to'liq indekslandi (`isContinuation: true`). 2-parada dars bo'sh ko'rinishi va "Hozir dars yo'q" xatosi yo'qotildi.
+* **Kritik: Kichik Guruhlarga Bo'lingan Darslar (`divideto` / `groupids`) Saqlandi (SCHED-SIM-02 / Bug 20):**
+  - `groups` jadvali indekslanib, 1- va 2-kichik guruhlar darslari bitta katakka yozilayotganda bir-birining ustidan yozilib ketishi to'xtatildi; har ikkala kichik guruh o'z xonasi va o'qituvchisi bilan to'liq saqlanib Telegram matnida aks etadi.
+* **Kritik: Vaqt Solishtirishdagi String ASCII Xatosi Bartaraf Etildi (SCHED-SIM-03 / Bug 21):**
+  - `"09:10" >= "8:30"` kabi ASCII string solishtirish xatosini yo'qotish uchun `timeToMinutes(timeStr)` ($h \times 60 + m$), `compareTimes` va `isTimeBetween` funksiyalari joriy qilindi.
+* **Kritik: Kirill Guruh Nomlarida Telegram 64-Bayt Callback Xatosi (SCHED-SIM-04 / Bug 22):**
+  - `safeCallbackData(data, 64)` yordamchi funksiyasi qo'shildi. UTF-8 bayt chegaralarini buzmasdan uzun va kirillcha nomli guruh tugmalarida Telegram `400 Bad Request: BUTTON_DATA_INVALID` xatosi oldi olindi.
+* **Yuqori: EduPage ID Churn Bo'yicha Diff Sezgirligi va Barqarorligi (SCHED-SIM-05 / Bug 23):**
+  - Jadval solishtirish `card.id` va `lesson.id` larga emas, fan nomi, xona va o'qituvchi asosidagi deterministik kanonik xeshga asoslandi; soxta xabarnomalar bo'roni to'xtatildi.
+* **Yuqori: EduPage Bo'sh / Chala JSON Sanity Tekshiruvi (SCHED-SIM-06 / Bug 24):**
+  - `saveDiskCache` diskka yozishdan oldin `validateTimetablePayload(raw)` orqali sinovdan o'tkazilishi shart qilindi; diskdagi haqiqiy kesh bo'sh JSON bilan ustidan yozilishi xavfi yo'qotildi.
+* **Yuqori: Kesh va Bildirishnoma Yo'qolishi (At-Most-Once Failure) Oldi Olindi (SCHED-SIM-06 / Bug 25):**
+  - Server qayta yonganda DB keshi eskirgan faol guruhlar uchun bazaviy xesh sun'iy yozib yuborilmaydi (`!isDbCacheStale` tekshiruvi qo'shildi); uzilib qolgan yoki kechiktirilgan xabarnomalar talabalarga yetkazilishi kafolatlandi.
+* **Yuqori: Obunachilarga Xabar Yuborishda 403 Bloklangan Foydalanuvchilar (SCHED-SIM-06 / Bug 26):**
+  - Botni bloklagan yoki o'chirib yuborgan bitta foydalanuvchi butun guruh yoki ommaviy siklni to'xtatib qo'ymasligi uchun terminal xato sifatida belgilanib, sikl keyingi talabaga uzluksiz davom etishi ta'minlandi.
+* **Yuqori: Toq va Juft Hafta (`weeks` Bitmask) Filtrlash (SCHED-SIM-07 / Bug 27):**
+  - `weeks` bitmaski (`"10"` - toq, `"01"` - juft) parsing qilinib, jadval matnida `[Toq hafta]` va `[Juft hafta]` teglari bilan ko'rsatilishi yo'lga qo'yildi.
+* **Yuqori: Xona Nomlarida Kirill Harflari Normalizatsiyasi (SCHED-SIM-10 / Bug 33):**
+  - `parseRoomLocation` funksiyasining boshida `transliterateCyrillic` chaqirilib, `А-204`, `В-301`, `105-С` kabi kirillcha yozilgan xonalar to'g'ri binolarga ajratildi va jim yo'qolib ketishi to'xtatildi.
+* **Yuqori: Bir Vaqtda Ko'p Xonali Darslar (SCHED-SIM-10 / Bug 34):**
+  - `classroomids` massividagi barcha xonalar barcha para muddatlari bo'yicha `occupiedBySlot` da band qilinishi ta'minlandi; 2-xona bo'sh deb xato ko'rsatilishi bartaraf etildi.
+* **Yuqori: UTC va Toshkent Vaqti Siljishi (SCHED-SIM-11 / Bug 35):**
+  - `getTashkentDate` va `getTashkentDayOfWeek` orqali server qayerda joylashganidan qat'i nazar Toshkent vaqti (+05:00) qat'iy qo'llanilishi unifikatsiya qilindi.
+* **Yuqori: Shanba Kechasi va Yakshanba "Keyingi Dars" Siljishi (SCHED-SIM-11 / Bug 36):**
+  - `getPeriodNowAndNext` da yakshanba va darsdan keyingi vaqtlarda `next.periodNum = 1` qilib belgilandi (oldingi `2` bo'lib dushanba 1-parasini o'tkazib yuborish xatosi tuzatildi).
+* **Yuqori: Atomik Fayl Yozish va `.bak` Zaxiralash (INFRA-SIM-04 / Bug 37):**
+  - `saveTimetableCacheAtomically` `.tmp` fayl orqali atomik rename bilan diskka yozadi va avtomatik `.bak` zaxirasini yaratadi; parallel o'qishda `JSON.parse` buzilishi oldi olindi.
+
+---
+
 ## [1.2.0] — 2026-10-15
 
 ### 🧠 55 Bugs Simulyatsiyasi: 1-Bosqich — Quiz Tizimi va Guruh Concurrency (Bugs 1–18)

@@ -400,6 +400,38 @@ function getTashkentDayOfWeek(date = new Date()) {
   return (tzDate.getDay() + 6) % 7;
 }
 
+/**
+ * Parses time string like "8:30", "08:30", "14:15" into minutes from midnight (0..1439).
+ * Returns -1 if invalid.
+ */
+function timeToMinutes(timeStr) {
+  if (!timeStr || typeof timeStr !== 'string') return -1;
+  const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return -1;
+  const hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return -1;
+  return hours * 60 + minutes;
+}
+
+/**
+ * Truncates a string so that its UTF-8 byte length does not exceed maxBytes (default 64).
+ * Prevents Telegram API 400 Bad Request: BUTTON_DATA_INVALID.
+ * Guarantees no multi-byte character boundary corruption.
+ */
+function safeCallbackData(data, maxBytes = 64) {
+  if (data === undefined || data === null) return '';
+  const str = String(data);
+  if (Buffer.byteLength(str, 'utf8') <= maxBytes) return str;
+
+  const buf = Buffer.from(str, 'utf8');
+  let truncated = buf.subarray(0, maxBytes).toString('utf8');
+  while (Buffer.byteLength(truncated, 'utf8') > maxBytes || truncated.endsWith('\uFFFD')) {
+    truncated = truncated.slice(0, -1);
+  }
+  return truncated;
+}
+
 module.exports = {
   userNameCache,
   leaderboardCache, LEADERBOARD_TTL, States, STATE_LABELS, TTLMap,
@@ -411,6 +443,7 @@ module.exports = {
   truncateText, splitMessage,
   downloadFile, isAdmin, adminGuard, buildUserContext,
   getTashkentDate, getTashkentDayOfWeek,
+  timeToMinutes, safeCallbackData,
 };
 
 

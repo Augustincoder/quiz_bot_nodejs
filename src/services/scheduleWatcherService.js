@@ -796,7 +796,7 @@ async function checkScheduleChanges(forceOrOptions = false) {
       }
 
       // If active group has no recorded baseline in Redis yet (first time initialization), seed it so we don't spam
-      if (hasActiveUsers && !lastAlertedHash && !isTargetGroup && !forceCheckAllActive) {
+      if (hasActiveUsers && !lastAlertedHash && !isDbCacheStale && !isTargetGroup && !forceCheckAllActive) {
         alertedHashesMap.set(norm, currentHash);
         if (redis) {
           redis.set(`cache:schedule:last_alerted_hash:${norm}`, currentHash, 'EX', 86400 * 30).catch(() => {});

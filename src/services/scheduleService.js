@@ -10,8 +10,43 @@ const {
   getGroupBuildings,
 } = require('./edupageService');
 const { generateScheduleImage } = require('./imageService');
-const { TTLMap, getTashkentDayOfWeek } = require('../core/utils');
+const { TTLMap, getTashkentDayOfWeek, getTashkentDate, timeToMinutes } = require('../core/utils');
 const logger = require('../core/logger');
+
+/**
+ * Period boundaries in minutes from midnight (Bug 21 fix)
+ */
+const PERIOD_INTERVALS = [
+  { period: 1, startMins: 8 * 60, endMins: 9 * 60 + 20 },
+  { period: 2, startMins: 9 * 60 + 30, endMins: 10 * 60 + 50 },
+  { period: 3, startMins: 11 * 60, endMins: 12 * 60 + 20 },
+  { period: 4, startMins: 13 * 60, endMins: 14 * 60 + 20 },
+  { period: 5, startMins: 14 * 60 + 30, endMins: 15 * 60 + 50 },
+  { period: 6, startMins: 16 * 60, endMins: 17 * 60 + 20 },
+  { period: 7, startMins: 17 * 60 + 30, endMins: 18 * 60 + 50 },
+  { period: 8, startMins: 19 * 60, endMins: 20 * 60 + 20 },
+];
+
+/**
+ * Compares two times safely using minutes from midnight (resolves ASCII '09:10' vs '8:30' bug).
+ * Returns: <0 if t1 < t2, 0 if equal, >0 if t1 > t2
+ */
+function compareTimes(t1, t2) {
+  const m1 = typeof t1 === 'number' ? t1 : timeToMinutes(t1);
+  const m2 = typeof t2 === 'number' ? t2 : timeToMinutes(t2);
+  return m1 - m2;
+}
+
+/**
+ * Checks if target time falls within [startTime, endTime] using minute arithmetic.
+ */
+function isTimeBetween(targetTime, startTime, endTime) {
+  const target = typeof targetTime === 'number' ? targetTime : timeToMinutes(targetTime);
+  const start = typeof startTime === 'number' ? startTime : timeToMinutes(startTime);
+  const end = typeof endTime === 'number' ? endTime : timeToMinutes(endTime);
+  if (target === -1 || start === -1 || end === -1) return false;
+  return target >= start && target <= end;
+}
 
 // L1 in-memory cache for rendered weekly PNG images (15 minutes TTL, max 15 items ~25-30MB)
 const imageMemoryCache = new TTLMap(15 * 60 * 1000, 15);
@@ -195,4 +230,7 @@ module.exports = {
   invalidateImageCache,
   warmUpCache,
   clearImageMemoryCache,
+  compareTimes,
+  isTimeBetween,
+  PERIOD_INTERVALS,
 };

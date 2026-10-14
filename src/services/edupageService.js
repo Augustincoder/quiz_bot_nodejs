@@ -478,9 +478,11 @@ const roomLocationCache = new Map();
  * Parses building and floor information from classroom code
  */
 function parseRoomLocation(xona) {
-  const clean = (xona || '').trim();
+  let clean = (xona || '').trim();
   if (!clean || clean === '?' || clean === '-' || clean === '--' || clean === '---') return null;
   if (/online/i.test(clean)) return null;
+
+  clean = transliterateCyrillic(clean);
 
   const cached = roomLocationCache.get(clean);
   if (cached !== undefined) return cached;
@@ -622,6 +624,8 @@ function buildIndexedDatabase(raw, defaultNum) {
   const periods = Object.fromEntries(findRows('periods').map(p => [p.id, p]));
   const teachers = Object.fromEntries(findRows('teachers').map(t => [t.id, t.name || t.short || '?']));
   const rawClasses = findRows('classes');
+  const rawGroups = findRows('groups');
+  const groupMap = Object.fromEntries(rawGroups.map(g => [g.id, g]));
   const lessonMap = Object.fromEntries(findRows('lessons').map(l => [l.id, l]));
   const cards = findRows('cards');
 
@@ -681,6 +685,27 @@ function buildIndexedDatabase(raw, defaultNum) {
     const pNum = parseInt(pObj.period, 10);
     if (Number.isNaN(pNum)) continue;
 
+    // Handle durationperiods (Bug 19): 2-period / 3-period lessons
+    const duration = parseInt(card.durationperiods || lesson.durationperiods || 1, 10) || 1;
+
+    // Handle weeks bitmask (Bug 27): "10" (odd / toq), "01" (even / juft), "11" or "" (all)
+    const weeksBitmask = (card.weeks || lesson.weeks || '').trim();
+    let weekParity = 'all';
+    if (weeksBitmask === '10') weekParity = 'toq';
+    else if (weeksBitmask === '01') weekParity = 'juft';
+
+    // Subgroup resolution (Bug 20)
+    let subgroupName = '';
+    if (Array.isArray(lesson.groupids) && lesson.groupids.length > 0) {
+      const parts = lesson.groupids
+        .map(gid => groupMap[gid])
+        .filter(g => g && !g.entireclass && g.name && !/весь класс|butun/i.test(g.name))
+        .map(g => g.name);
+      if (parts.length > 0) subgroupName = parts.join(', ');
+    } else if (Array.isArray(lesson.groupnames) && lesson.groupnames.length > 0) {
+      subgroupName = lesson.groupnames.join(', ');
+    }
+
     const daysStr = card.days || '';
     for (const cid of lesson.classids) {
       let classSchedule = schedulesByClassId.get(cid);
@@ -692,16 +717,27 @@ function buildIndexedDatabase(raw, defaultNum) {
       for (let d = 0; d < 6; d++) {
         if (daysStr[d] !== '1') continue;
         classSchedule[d] = classSchedule[d] || {};
-        classSchedule[d][pNum] = classSchedule[d][pNum] || [];
 
-        const subjData = subjects[lesson.subjectid] || { name: '?', color: '#CCCCCC', weight: 1 };
-        classSchedule[d][pNum].push({
-          subject: subjData.name,
-          color: subjData.color,
-          weight: subjData.weight,
-          teacher: (lesson.teacherids || []).filter(Boolean).map(t => teachers[t] || t).join(', ') || '?',
-          room: (card.classroomids || []).filter(Boolean).map(r => rooms[r] || r).join(', ') || '?',
-        });
+        for (let offset = 0; offset < duration; offset++) {
+          const currentP = pNum + offset;
+          if (currentP > 8) break;
+
+          classSchedule[d][currentP] = classSchedule[d][currentP] || [];
+
+          const subjData = subjects[lesson.subjectid] || { name: '?', color: '#CCCCCC', weight: 1 };
+          classSchedule[d][currentP].push({
+            subject: subjData.name,
+            color: subjData.color,
+            weight: subjData.weight,
+            teacher: (lesson.teacherids || []).filter(Boolean).map(t => teachers[t] || t).join(', ') || '?',
+            room: (card.classroomids || []).filter(Boolean).map(r => rooms[r] || r).join(', ') || '?',
+            subgroup: subgroupName,
+            weekParity,
+            weeks: weeksBitmask,
+            duration,
+            isContinuation: offset > 0,
+          });
+        }
       }
     }
   }
@@ -752,15 +788,22 @@ function buildIndexedDatabase(raw, defaultNum) {
     const roomIds = card.classroomids || [];
     if (roomIds.length === 0) continue;
 
+    const lesson = lessonMap[card.lessonid];
+    const duration = parseInt(card.durationperiods || lesson?.durationperiods || 1, 10) || 1;
+
     for (let d = 0; d < 6; d++) {
       if (daysStr[d] === '1') {
-        const key = `${d}:${pNum}`;
-        let set = occupiedBySlot.get(key);
-        if (!set) {
-          set = new Set();
-          occupiedBySlot.set(key, set);
+        for (let offset = 0; offset < duration; offset++) {
+          const currentP = pNum + offset;
+          if (currentP > 8) break;
+          const key = `${d}:${currentP}`;
+          let set = occupiedBySlot.get(key);
+          if (!set) {
+            set = new Set();
+            occupiedBySlot.set(key, set);
+          }
+          for (const rid of roomIds) set.add(rid);
         }
-        for (const rid of roomIds) set.add(rid);
       }
     }
   }
@@ -939,6 +982,10 @@ async function saveTimetableCacheAtomically(filePath, data) {
 async function saveDiskCache(raw) {
   if (!raw?.r?.dbiAccessorRes?.tables || !Array.isArray(raw.r.dbiAccessorRes.tables) || raw.r.dbiAccessorRes.tables.length < 5) {
     logger.warn('saveDiskCache aborted: invalid or incomplete raw structure');
+    return;
+  }
+  if (!validateTimetablePayload(raw)) {
+    logger.warn('saveDiskCache aborted: payload failed validateTimetablePayload sanity check');
     return;
   }
   await saveTimetableCacheAtomically(DISK_CACHE_PATH, raw).catch((err) => {
@@ -1236,7 +1283,10 @@ function formatTimetableText(schedule, dayIdx) {
         const cleanSubj = escapeHtml(l.subject || 'Noma\'lum fan');
         const cleanTeacher = escapeHtml(l.teacher || '?');
         const cleanRoom = escapeHtml(l.room || '?');
-        parts.push(`  📖 ${cleanSubj}\n  👨‍🏫 ${cleanTeacher}\n  🚪 ${cleanRoom}`);
+        const subgroupTag = l.subgroup ? ` <i>(${escapeHtml(l.subgroup)})</i>` : '';
+        const weekTag = l.weekParity === 'toq' ? ' <i>[Toq hafta]</i>' : (l.weekParity === 'juft' ? ' <i>[Juft hafta]</i>' : '');
+        const contTag = l.isContinuation ? ' <i>(davomi)</i>' : '';
+        parts.push(`  📖 ${cleanSubj}${subgroupTag}${weekTag}${contTag}\n  👨‍🏫 ${cleanTeacher}\n  🚪 ${cleanRoom}`);
       }
     }
   }
@@ -1552,6 +1602,7 @@ module.exports = {
   hasClassLessonsOnDay,
   validateTimetablePayload,
   saveTimetableCacheAtomically,
+  buildIndexedDatabase,
   getLastRawTimetableHash: () => lastRawTimetableHash,
   resetRawTimetableHash: () => { lastRawTimetableHash = null; },
 };
