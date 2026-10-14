@@ -12,6 +12,7 @@ const {
   grade,
   progressBar,
   escapeHtml,
+  truncateText,
 } = require("../core/utils");
 const redisConnection = require("../services/redisService");
 
@@ -172,9 +173,10 @@ async function sendNextQuestion(chatId, telegram) {
               `<b>${labels[i] || i + 1})</b> ${escapeHtml(String(opt))}`,
           )
           .join("\n");
-      if (text.length > 4000)
-        text = text.slice(0, 3900) + "\n<i>...(matn kesildi)</i>";
-      await telegram.sendMessage(chatId, text, { parse_mode: "HTML" }).catch(() => {});
+      text = truncateText(text, 4000);
+      const splitOpts = { parse_mode: "HTML" };
+      if (session.messageThreadId) splitOpts.message_thread_id = session.messageThreadId;
+      await telegram.sendMessage(chatId, text, splitOpts).catch(() => {});
       pollQ = `${progress} To'g'ri variantni belgilang:`.slice(0, 300);
       pollOpts = options.map((_, i) => `${labels[i] || i + 1} varianti`);
     } else {
@@ -183,16 +185,29 @@ async function sendNextQuestion(chatId, telegram) {
     }
     let msg;
     try {
-      msg = await telegram.sendPoll(chatId, pollQ, pollOpts, {
+      const pollExtra = {
         type: "quiz",
         correct_option_id: correctIndex,
         is_anonymous: false,
         open_period: 30,
-      });
+      };
+      if (session.messageThreadId) {
+        pollExtra.message_thread_id = session.messageThreadId;
+      }
+      if (q.explanation) {
+        let exp = escapeHtml(String(q.explanation).trim());
+        if (exp.length > 200) {
+          exp = exp.slice(0, 197) + "...";
+        }
+        pollExtra.explanation = exp;
+        pollExtra.explanation_parse_mode = "HTML";
+      }
+      msg = await telegram.sendPoll(chatId, pollQ, pollOpts, pollExtra);
     } catch (e) {
       console.error(`sendPoll error [${chatId}]:`, e.message);
 
       const errMsg = String(e?.message || '');
+      const migrateTo = e?.parameters?.migrate_to_chat_id || e?.response?.parameters?.migrate_to_chat_id;
       const isFatalChatError =
         errMsg.includes('bot was kicked') ||
         errMsg.includes('not a member') ||
@@ -200,10 +215,11 @@ async function sendNextQuestion(chatId, telegram) {
         errMsg.includes('chat not found') ||
         errMsg.includes('TOPIC_CLOSED') ||
         errMsg.includes('chat write forbidden') ||
-        errMsg.includes('group chat was upgraded');
+        errMsg.includes('group chat was upgraded') ||
+        !!migrateTo;
 
       if (isFatalChatError) {
-        console.warn(`[coreQuiz] Fatal chat error detected for chatId ${chatId}: ${errMsg}. Force stopping session.`);
+        console.warn(`[coreQuiz] Fatal chat error detected for chatId ${chatId}: ${errMsg} (migrateTo: ${migrateTo}). Force stopping session.`);
         await sessionService.deleteActiveTest(chatId).catch(() => {});
         await sessionService.deleteWaitingRoom(chatId).catch(() => {});
         if (session?.pollId) {
@@ -217,6 +233,9 @@ async function sendNextQuestion(chatId, telegram) {
       }
 
       session.sendErrors = (session.sendErrors || 0) + 1;
+      const errSendOpts = { parse_mode: "HTML" };
+      if (session.messageThreadId) errSendOpts.message_thread_id = session.messageThreadId;
+
       if (session.sendErrors >= 3) {
         session.status = "paused";
         await sessionService.setActiveTest(chatId, session);
@@ -224,7 +243,7 @@ async function sendNextQuestion(chatId, telegram) {
           chatId,
           `⚠️ <b>Texnik xatolik:</b> Telegram savollarni yuborishda muammo yuzaga keldi. Test avtomatik pauza qilindi.\n\nIltimos, birozdan so'ng "▶️ Davom etish" tugmasini bosing.`,
           {
-            parse_mode: "HTML",
+            ...errSendOpts,
             ...Markup.inlineKeyboard([
               [Markup.button.callback("▶️ Davom etish", "pause_resume")],
               [Markup.button.callback("🏁 Yakunlash", "pause_finish")],
@@ -238,7 +257,7 @@ async function sendNextQuestion(chatId, telegram) {
       await telegram.sendMessage(
         chatId,
         `⚠️ <b>Texnik xatolik:</b> Bu savolni Telegram qabul qilmadi. Savol o'tkazib yuborildi.`,
-        { parse_mode: "HTML" }
+        errSendOpts
       ).catch(() => { });
 
       // O'tkazib yuborilgan savolni xato (wrong) deb belgilaymiz
@@ -292,6 +311,7 @@ async function sendNextQuestion(chatId, telegram) {
   } catch (e) {
     console.error(`sendNextQuestion fatal [${chatId}]:`, e.message);
     const errMsg = String(e?.message || '');
+    const migrateTo = e?.parameters?.migrate_to_chat_id || e?.response?.parameters?.migrate_to_chat_id;
     const isFatalChatError =
       errMsg.includes('bot was kicked') ||
       errMsg.includes('not a member') ||
@@ -299,10 +319,11 @@ async function sendNextQuestion(chatId, telegram) {
       errMsg.includes('chat not found') ||
       errMsg.includes('TOPIC_CLOSED') ||
       errMsg.includes('chat write forbidden') ||
-      errMsg.includes('group chat was upgraded');
+      errMsg.includes('group chat was upgraded') ||
+      !!migrateTo;
 
     if (isFatalChatError) {
-      console.warn(`[coreQuiz] Fatal chat error detected for chatId ${chatId}: ${errMsg}. Force stopping session.`);
+      console.warn(`[coreQuiz] Fatal chat error detected for chatId ${chatId}: ${errMsg} (migrateTo: ${migrateTo}). Force stopping session.`);
       await sessionService.deleteActiveTest(chatId).catch(() => {});
       await sessionService.deleteWaitingRoom(chatId).catch(() => {});
       if (session?.pollId) {
@@ -314,6 +335,27 @@ async function sendNextQuestion(chatId, telegram) {
       } catch {}
       return;
     }
+
+    // Kutilmagan boshqa xatoliklarda sessiya qotib qolmasligi uchun pause holatiga o'tkazamiz
+    try {
+      if (session) {
+        session.status = "paused";
+        await sessionService.setActiveTest(chatId, session);
+        const errOpts = {
+          parse_mode: "HTML",
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback("▶️ Davom etish", "pause_resume")],
+            [Markup.button.callback("🏁 Yakunlash", "pause_finish")],
+          ]),
+        };
+        if (session.messageThreadId) errOpts.message_thread_id = session.messageThreadId;
+        await telegram.sendMessage(
+          chatId,
+          `⚠️ <b>Texnik xatolik:</b> Savol yuklashda kutilmagan nosozlik yuz berdi. Test vaqtincha to'xtatildi.\n\n"▶️ Davom etish" orqali davom ettirishingiz yoki "🏁 Yakunlash" ni bosishingiz mumkin.`,
+          errOpts
+        ).catch(() => {});
+      }
+    } catch {}
   }
 }
 
@@ -323,8 +365,9 @@ async function finishTest(chatId, telegram) {
   let session;
   try {
     session = await sessionService.getActiveTest(chatId);
-    if (!session || session.finished) return;
+    if (!session || session.finished || session.isFinished) return;
     session.finished = true;
+    session.isFinished = true;
     session.questionState = "FINISHED";
     await sessionService.setActiveTest(chatId, session);
   } finally {
@@ -515,8 +558,9 @@ async function finishTest(chatId, telegram) {
         await sessionService.setActiveTest(chatId, session);
 
         text = `🏁 <b>${session.currentBlockIdx}-Blok Yakunlandi!</b>\n\n🏆 <b>Bu blok bo'yicha oraliq natijalar:</b>\n${body}\n\n⏳ <i>Keyingi navbat: <b>${escapeHtml(nextBlock.block_name)}</b></i>`;
+        text = truncateText(text, 4000);
 
-        await telegram.sendMessage(chatId, text, {
+        const interOpts = {
           parse_mode: "HTML",
           reply_markup: {
             inline_keyboard: [
@@ -528,7 +572,9 @@ async function finishTest(chatId, telegram) {
               ],
             ],
           },
-        });
+        };
+        if (session.messageThreadId) interOpts.message_thread_id = session.messageThreadId;
+        await telegram.sendMessage(chatId, text, interOpts);
 
         return; // Sessiyani o'chirmaymiz
       } else {
@@ -569,14 +615,14 @@ async function finishTest(chatId, telegram) {
       }
     }
 
-    if (text.length > 4000) {
-      text = text.slice(0, 3950) + "\n\n<i>...(matn qisqartirildi)</i>";
-    }
-
-    await telegram.sendMessage(chatId, text, {
+    text = truncateText(text, 4000);
+    const finishOpts = {
       parse_mode: "HTML",
       ...Markup.inlineKeyboard(buttons),
-    });
+    };
+    if (session.messageThreadId) finishOpts.message_thread_id = session.messageThreadId;
+
+    await telegram.sendMessage(chatId, text, finishOpts);
   } catch (e) {
     console.error(`finishTest send error [${chatId}]:`, e.message);
   } finally {
@@ -600,7 +646,9 @@ async function handlePollAnswer(pollAnswer, telegram) {
     
     const unlockGroup = await mutex.lock(`group_poll:${chatId}`);
     try {
-      const uId = pollAnswer.user.id;
+      const voter = pollAnswer.user || pollAnswer.voter_chat;
+      if (!voter) return;
+      const uId = voter.id;
       // Guruh testida bitta foydalanuvchi bir savolga faqat 1 marta ovoz berishi mumkin (dublyajni oldini olish)
       const added = await redisConnection.sadd(`poll_voters:${pollId}`, String(uId)).catch(() => 1);
       if (added === 0) {
@@ -609,10 +657,11 @@ async function handlePollAnswer(pollAnswer, telegram) {
       redisConnection.expire(`poll_voters:${pollId}`, 600).catch(() => {});
 
       const isCorrect = pollAnswer.option_ids[0] === correct_index;
-      const uName =
-        [pollAnswer.user.first_name, pollAnswer.user.last_name]
-          .filter(Boolean)
-          .join(" ") || "Talaba";
+      const uName = pollAnswer.user
+        ? [pollAnswer.user.first_name, pollAnswer.user.last_name]
+            .filter(Boolean)
+            .join(" ") || "Talaba"
+        : (pollAnswer.voter_chat?.title || "Kanal");
       userNameCache.set(uId, uName);
 
       let groupEntry = await groupTestCache.get(chatId);
@@ -655,7 +704,7 @@ async function handlePollAnswer(pollAnswer, telegram) {
   const unlock = await mutex.lock(`poll:${chatId}`);
   try {
     const session = await sessionService.getActiveTest(chatId);
-    if (!session || session.finished || session.pollId !== pollId || session.chatType !== "private")
+    if (!session || session.finished || session.isFinished || session.pollId !== pollId || session.chatType !== "private")
       return;
 
     // Race condition guard: agar savol allaqachon keyingisiga o'tgan bo'lsa yoki o'tish jarayonida bo'lsa
@@ -668,11 +717,13 @@ async function handlePollAnswer(pollAnswer, telegram) {
 
     const qData = session.sessionQuestions[session.qIdx];
     const isCorrect = pollAnswer.option_ids[0] === qData.correct_index;
-    const uId = pollAnswer.user.id;
-    const uName =
-      [pollAnswer.user.first_name, pollAnswer.user.last_name]
-        .filter(Boolean)
-        .join(" ") || "Talaba";
+    const voter = pollAnswer.user || pollAnswer.voter_chat;
+    const uId = voter ? voter.id : chatId;
+    const uName = pollAnswer.user
+      ? [pollAnswer.user.first_name, pollAnswer.user.last_name]
+          .filter(Boolean)
+          .join(" ") || "Talaba"
+      : (pollAnswer.voter_chat?.title || "Talaba");
     userNameCache.set(uId, uName);
 
     session.consecutiveTimeouts = 0;
@@ -720,7 +771,7 @@ async function questionTimeout(chatId, expectedIdx, pollId, telegram) {
   const unlock = await mutex.lock(`poll:${chatId}`);
   try {
     const session = await sessionService.getActiveTest(chatId);
-    if (!session || session.finished || session.qIdx !== expectedIdx || session.pollId !== pollId)
+    if (!session || session.finished || session.isFinished || session.qIdx !== expectedIdx || session.pollId !== pollId)
       return;
     // 🛑 Taymer ishlaganda test pauzada bo'lsa, jarayonni e'tiborsiz qoldiramiz (Ignore)
     if (session.status === "paused") return;

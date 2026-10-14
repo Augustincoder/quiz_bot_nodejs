@@ -13,6 +13,7 @@ const {
 const {
   prepareShuffledQuestions,
   shuffleArray,
+  deepClone,
 } = require("../core/questionUtils");
 const {
   safeEdit,
@@ -229,15 +230,16 @@ async function cbStartTest(ctx) {
 
     if (isMock) {
       subjectKey = parseSuffix(ctx.callbackQuery.data, "mock_");
-      const allQs = Object.values(memDb[subjectKey] || {}).flatMap(
+      const allRaw = Object.values(memDb[subjectKey] || {}).flatMap(
         (t) => t.questions || [],
       );
-      if (!allQs.length)
+      if (!allRaw.length)
         return ctx
           .answerCbQuery("❌ Bu fanda savollar yo'q!", {
             show_alert: true,
           })
           .catch(() => { });
+      const allQs = deepClone(allRaw);
       shuffleArray(allQs);
       testData = { questions: allQs.slice(0, 25), block_name: "Aralash Test" };
       testId = "mock";
@@ -1187,6 +1189,7 @@ async function cbPostSubj(ctx) {
 
 async function resumeTestFromShelf(ctx, savedTest) {
   const chatId = ctx.chat.id;
+  const unlock = await mutex.lock(`start_test:${chatId}`);
   try {
     const existing = await sessionService.getActiveTest(chatId);
     if (existing)
@@ -1246,6 +1249,8 @@ async function resumeTestFromShelf(ctx, savedTest) {
     await sendNextQuestion(chatId, ctx.telegram);
   } catch (e) {
     console.error("resumeTestFromShelf error:", e.message);
+  } finally {
+    unlock();
   }
 }
 // ─── MAJBURIY TO'XTATISH (FORCE FINISH) ───

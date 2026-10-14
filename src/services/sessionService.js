@@ -20,7 +20,10 @@ async function getActiveTest(chatId) {
 
 async function setActiveTest(chatId, data) {
   try {
-    await redis.set(`activeTest:${chatId}`, JSON.stringify(data), 'EX', TTL);
+    if (!data || typeof data !== 'object') return;
+    const safeData = { ...data };
+    if (safeData.timer) delete safeData.timer;
+    await redis.set(`activeTest:${chatId}`, JSON.stringify(safeData), 'EX', TTL);
   } catch (err) {
     logger.error('sessionService.setActiveTest failed', { chatId, error: err.message });
   }

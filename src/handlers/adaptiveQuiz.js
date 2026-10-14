@@ -102,14 +102,18 @@ async function cbAdaptiveRun(ctx) {
     const shuffled  = shuffleArray(mistakes);
     const questions = await aiService.generateAdaptiveQuiz(subjName, shuffled, count);
 
-    if (!questions?.length) {
-      await ctx.telegram.editMessageText(chatId, msg.message_id, undefined, '❌ AI test tuzishda xatolik yuz berdi.').catch(() => {});
+    const validQuestions = (questions || []).filter(q =>
+      q && q.question && Array.isArray(q.options) && q.options.length >= 2
+    );
+
+    if (!validQuestions.length) {
+      await ctx.telegram.editMessageText(chatId, msg.message_id, undefined, '❌ AI test tuzishda xatolik yuz berdi. Iltimos, qayta urinib ko\'ring.').catch(() => {});
       return;
     }
 
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
     const { initAndStartTest } = require('./quizGame');
-    await initAndStartTest(chatId, ctx.telegram, subjectKey, 'adaptive', { questions, block_name: '🎯 Shaxsiy Adaptiv Test' }, ctx.from.id, 'private');
+    await initAndStartTest(chatId, ctx.telegram, subjectKey, 'adaptive', { questions: validQuestions, block_name: '🎯 Shaxsiy Adaptiv Test' }, ctx.from.id, 'private');
   } catch (e) {
     console.error('cbAdaptiveRun error:', e.message);
   } finally {

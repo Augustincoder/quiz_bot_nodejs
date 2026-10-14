@@ -46,18 +46,19 @@ async function renderLobby(ctx, chatId, room, messageId = null) {
       }
     });
   } else {
-    // Yangi xabar yuboramiz
-    await ctx.telegram.sendMessage(chatId, text, {
+    const sendOpts = {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard(buttons)
-    }).catch((err) => console.error('renderLobby send error:', err.message));
+    };
+    if (room.messageThreadId) sendOpts.message_thread_id = room.messageThreadId;
+    await ctx.telegram.sendMessage(chatId, text, sendOpts).catch((err) => console.error('renderLobby send error:', err.message));
   }
 }
 
 // 1. Kutish zalini yaratish (startgroup dan kelganda)
-// 1. Kutish zalini yaratish (startgroup dan kelganda)
 async function createLobby(ctx, param) {
   const chatId = ctx.chat.id;
+  const messageThreadId = ctx.message?.message_thread_id || ctx.callbackQuery?.message?.message_thread_id || null;
   let testData = null;
   let mode = '';
   let isOfficial = false;
@@ -105,6 +106,7 @@ async function createLobby(ctx, param) {
     testData: testData,
     mode: mode,
     isOfficial: isOfficial, // Rasmiy ekanligini belgilab qo'yamiz
+    messageThreadId: messageThreadId,
     readyUsers: {} 
   };
   
@@ -165,11 +167,13 @@ async function cbRoomStart(ctx) {
     let testId = '';
     let blockName = '';
 
-    const { prepareShuffledQuestions } = require('../core/questionUtils');
+    const { prepareShuffledQuestions, deepClone } = require('../core/questionUtils');
     const dbService = require('../services/dbService');
     const { memoryDb: memDb } = require('../core/bot');
 
-  if (room.mode === 'marathon') {
+    const messageThreadId = room.messageThreadId || ctx.message?.message_thread_id || ctx.callbackQuery?.message?.message_thread_id || null;
+
+    if (room.mode === 'marathon') {
       const subjectKey = room.testData.subject;
       
       if (room.isOfficial) {
@@ -178,13 +182,17 @@ async function cbRoomStart(ctx) {
         marathonBlocks = Object.values(blocksInfo).map(b => ({
              test_id: b.test_id,
              block_name: `${b.test_id}-Blok`,
-             questions: b.questions
+             questions: deepClone(b.questions || [])
         })).sort((a, b) => parseInt(a.test_id) - parseInt(b.test_id));
       } else {
         // UGC (Foydalanuvchi) testlar marafoni
         const tests = await dbService.getUserCreatedTests(room.testData.creator_id);
         marathonBlocks = tests
             .filter(t => t.subject === subjectKey)
+            .map(t => ({
+              ...t,
+              questions: deepClone(t.questions || [])
+            }))
             .sort((a, b) => a.id - b.id);
       }
           
@@ -194,7 +202,7 @@ async function cbRoomStart(ctx) {
       testId = marathonBlocks[0].test_id || marathonBlocks[0].id; // Rasmiy va UGC IDlari
       blockName = marathonBlocks[0].block_name;
     } else {
-      sessionQ = prepareShuffledQuestions(room.testData.questions);
+      sessionQ = prepareShuffledQuestions(deepClone(room.testData.questions || []));
       testId = room.param.split('_').pop(); 
       blockName = room.testData.block_name;
     }
@@ -206,6 +214,7 @@ async function cbRoomStart(ctx) {
       subjectKey: room.testData.subject,
       testId: testId,
       blockName: blockName,
+      messageThreadId: messageThreadId,
       sessionQuestions: sessionQ,
       qIdx: 0,
       startTime: Date.now(),
@@ -230,10 +239,13 @@ async function cbRoomStart(ctx) {
 
     const modeLabel = room.mode === 'marathon' ? `🏆 MARAFON: ${marathonBlocks.length} ta blok ketma-ket` : `📝 Bitta Blok: ${blockName}`;
     
+    const startMsgOpts = { parse_mode: 'HTML' };
+    if (messageThreadId) startMsgOpts.message_thread_id = messageThreadId;
+
     const msg = await ctx.telegram.sendMessage(
       chatId,
       `🚀 <b>Musobaqa boshlanmoqda!</b>\n\n👥 <b>Qatnashchilar:</b> ${Object.keys(room.readyUsers).length} ta\n${modeLabel}\n\n<b>3️⃣</b>`,
-      { parse_mode: 'HTML' }
+      startMsgOpts
     );
 
     // Sanoq
@@ -292,7 +304,9 @@ async function cbRoomNextBlock(ctx) {
      await safeDelete(ctx); // Tugmali xabarni o'chiramiz
 
      const nextBlock = session.marathonBlocks[session.currentBlockIdx];
-     await ctx.telegram.sendMessage(chatId, `🚀 <b>${session.currentBlockIdx + 1}-Blok (${nextBlock.block_name}) boshlanmoqda!</b>\n\nDiqqatni jamlang!`, { parse_mode: "HTML" });
+     const nextBlockOpts = { parse_mode: "HTML" };
+     if (session.messageThreadId) nextBlockOpts.message_thread_id = session.messageThreadId;
+     await ctx.telegram.sendMessage(chatId, `🚀 <b>${session.currentBlockIdx + 1}-Blok (${nextBlock.block_name}) boshlanmoqda!</b>\n\nDiqqatni jamlang!`, nextBlockOpts);
      
      const { sendNextQuestion } = require('./coreQuiz');
      await sendNextQuestion(chatId, ctx.telegram);

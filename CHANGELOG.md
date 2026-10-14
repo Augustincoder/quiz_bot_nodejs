@@ -4,6 +4,38 @@ Barcha muhim o'zgarishlar, yangilanishlar va xavfsizlik yaxshilanishlari ushbu h
 
 ---
 
+## [1.2.0] — 2026-10-15
+
+### 🧠 55 Bugs Simulyatsiyasi: 1-Bosqich — Quiz Tizimi va Guruh Concurrency (Bugs 1–18)
+* **Kritik: Cross-Question Answer Bleed Oldi Olindi (QUIZ-SIM-01):**
+  - `handlePollAnswer` kelgan `poll_id` aynan sessiyaning `activePollId` siga teng bo'lmasa javobni keyingi savolga qo'shishdan himoyalandi.
+* **Kritik: Double-Finish va Statistikani Ikkilantirish Poygasi (QUIZ-SIM-02):**
+  - `finishTest` ga `finish:${chatId}` mutex va `isFinished` / `finished` bayrog'i mustahkamlandi; parallel chaqiruvlarda ballar bazaga ikki barobar yozilishi to'liq bartaraf etildi.
+* **Kritik: Ghost Timer Bug va Faol Taymerlarni Tozalash (QUIZ-SIM-03):**
+  - `/start` va yangi test boshlanganda eski sessiyaning BullMQ `timeout:${chatId}:${qIdx}` jobi va faol Telegram polli darhol bekor qilinadi.
+* **Yuqori: Node.js Timeout Circular Serializatsiya Himoyasi (QUIZ-SIM-04):**
+  - `sessionService.setActiveTest` saqlashdan oldin `timer` maydonlarini xavfsiz tozalab, Redis JSON stringify crash xavfini yo'qotdi.
+* **Yuqori: SendPoll Muzlab Qolishining Oldini Olish (QUIZ-SIM-05):**
+  - `sendNextQuestion` xatoliklarida sessiya qotib qolmasligi uchun pause holatiga va tiklanish tugmalariga yo'naltirildi.
+* **Yuqori: HTML Teglari va Izoh Chegaralari (QUIZ-SIM-06 & 07):**
+  - Katta savollar va leaderboard matnlari `truncateText` bilan avtomatik yopiladigan HTML teglari bilan formatlandi. Telegram Poll `explanation` 200 belgi bilan qat'iy chegaralandi.
+* **Yuqori: Savollar Keshi Immutabilligi (QUIZ-SIM-08):**
+  - `quizGame.js` va `groupQuizLogic.js` da savollar `deepClone` orqali xavfsiz nusxalanib, global `memoryDb` mutatsiyasi to'xtatildi.
+* **Yuqori: Guruhda Kanal / Anonim Ovoz Beruvchilar Crash Himoyasi (QUIZ-SIM-10):**
+  - `pollAnswer.user` bo'lmaganda `voter_chat` obyektidan kanal ma'lumotlari xavfsiz olindi; `TypeError: Cannot read properties of undefined` crash bartaraf etildi.
+* **Yuqori: Supergroup Forum Topics (message_thread_id) Yo'naltirish (QUIZ-SIM-12):**
+  - Mavzuli (Topics) guruhlarda dars va savollar umumiy (`General`) topikka emas, o'yin boshlangan topikka to'g'ri yetkazilishi ta'minlandi.
+* **Yuqori: Guruh Supergroup'ga O'tganda va Bot Kick Bo'lganda Tozalash (QUIZ-SIM-13 & 14):**
+  - `migrate_to_chat_id` va 403 bot kicked xatolarida zombie sessiya va taymerlar xavfsiz o'chirildi.
+* **O'rta: Adaptiv Test Bo'sh Savollar va NaN Reyting Himoyasi (QUIZ-SIM-15 & 16):**
+  - AI savollari boshlanishidan oldin 2 tadan kam variantli savollar filtrlandi, `safePercent(0, 0)` bilan `NaN` paydo bo'lishi to'xtatildi.
+* **O'rta: Javondan Test Tiklashda Double-Click Poygasi (QUIZ-SIM-17):**
+  - `resumeTestFromShelf` funksiyasi `start_test:${chatId}` muteksi bilan himoyalanib, ketma-ket bosishdagi dublikat sessiyalar to'xtatildi.
+* **O'rta: Poll Xaritasi Ishonchliligi (QUIZ-SIM-18):**
+  - `activePollsCache` va `setPollChat` orqali bot qayta ishga tushganda ham ovozlar xaritasi saqlanib qolinadi.
+
+---
+
 ## [1.1.6] — 2026-09-26
 
 ### 🛡 Katta Audit va Xatoliklarni Bartaraf Etish (Audit Fixes & System Hardening)

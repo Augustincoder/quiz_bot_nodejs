@@ -55,7 +55,16 @@ async function cmdStart(ctx) {
   }
   const session = await sessionService.getActiveTest(chatId);
   if (session) {
-    if (session.pollId) await sessionService.deletePollChat(session.pollId);
+    if (session.msgId) {
+      await ctx.telegram.stopPoll(chatId, session.msgId).catch(() => {});
+    }
+    if (session.pollId) {
+      await sessionService.deletePollChat(session.pollId).catch(() => {});
+    }
+    try {
+      const { quizTimerQueue } = require('../jobs/queues');
+      await quizTimerQueue.getJob(`timeout:${chatId}:${session?.qIdx}`).then(j => j && j.remove()).catch(() => {});
+    } catch {}
     
     // Testni o'chirish o'rniga javonga saqlaymiz
     if (session.sessionQuestions && session.sessionQuestions.length > 0 && session.qIdx < session.sessionQuestions.length) {
