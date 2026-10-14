@@ -133,6 +133,8 @@ async function initAndStartTest(
     groupScores: {},
     finished: false,
     status: "preparing",
+    transitionLock: null,
+    questionState: "PREPARING",
   });
 
   if (chatType === "private") {
@@ -1222,6 +1224,8 @@ async function resumeTestFromShelf(ctx, savedTest) {
       groupScores: {},
       finished: false,
       status: "running",
+      transitionLock: null,
+      questionState: "RUNNING",
     });
 
     const startLabel =

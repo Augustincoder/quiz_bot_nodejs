@@ -130,12 +130,16 @@ function buildFinishButtons(tId, subjectKey, mistakesCount = 0) {
 }
 
 async function sendNextQuestion(chatId, telegram) {
+  let session;
   try {
-    const session = await sessionService.getActiveTest(chatId);
+    session = await sessionService.getActiveTest(chatId);
     if (!session) return;
     if (session.status === "paused" || session.finished) return;
     if (session.qIdx >= session.sessionQuestions.length)
       return finishTest(chatId, telegram);
+
+    session.transitionLock = null;
+    session.questionState = "ACTIVE";
 
     const q = session.sessionQuestions[session.qIdx];
     const progress = `[${session.qIdx + 1}/${session.sessionQuestions.length}]`;
@@ -187,6 +191,30 @@ async function sendNextQuestion(chatId, telegram) {
       });
     } catch (e) {
       console.error(`sendPoll error [${chatId}]:`, e.message);
+
+      const errMsg = String(e?.message || '');
+      const isFatalChatError =
+        errMsg.includes('bot was kicked') ||
+        errMsg.includes('not a member') ||
+        errMsg.includes('bot was blocked') ||
+        errMsg.includes('chat not found') ||
+        errMsg.includes('TOPIC_CLOSED') ||
+        errMsg.includes('chat write forbidden') ||
+        errMsg.includes('group chat was upgraded');
+
+      if (isFatalChatError) {
+        console.warn(`[coreQuiz] Fatal chat error detected for chatId ${chatId}: ${errMsg}. Force stopping session.`);
+        await sessionService.deleteActiveTest(chatId).catch(() => {});
+        await sessionService.deleteWaitingRoom(chatId).catch(() => {});
+        if (session?.pollId) {
+          await sessionService.deletePollChat(session.pollId).catch(() => {});
+        }
+        try {
+          const { quizTimerQueue } = require("../jobs/queues");
+          await quizTimerQueue.getJob(`timeout:${chatId}:${session?.qIdx}`).then(j => j && j.remove()).catch(() => {});
+        } catch {}
+        return;
+      }
 
       session.sendErrors = (session.sendErrors || 0) + 1;
       if (session.sendErrors >= 3) {
@@ -244,6 +272,10 @@ async function sendNextQuestion(chatId, telegram) {
       }
     }
 
+    session.pollId = msg.poll.id;
+    session.msgId = msg.message_id;
+    session.transitionLock = null;
+    session.questionState = "ACTIVE";
     await sessionService.setActiveTest(chatId, session);
     await sessionService.setPollChat(msg.poll.id, String(chatId));
 
@@ -259,6 +291,29 @@ async function sendNextQuestion(chatId, telegram) {
     );
   } catch (e) {
     console.error(`sendNextQuestion fatal [${chatId}]:`, e.message);
+    const errMsg = String(e?.message || '');
+    const isFatalChatError =
+      errMsg.includes('bot was kicked') ||
+      errMsg.includes('not a member') ||
+      errMsg.includes('bot was blocked') ||
+      errMsg.includes('chat not found') ||
+      errMsg.includes('TOPIC_CLOSED') ||
+      errMsg.includes('chat write forbidden') ||
+      errMsg.includes('group chat was upgraded');
+
+    if (isFatalChatError) {
+      console.warn(`[coreQuiz] Fatal chat error detected for chatId ${chatId}: ${errMsg}. Force stopping session.`);
+      await sessionService.deleteActiveTest(chatId).catch(() => {});
+      await sessionService.deleteWaitingRoom(chatId).catch(() => {});
+      if (session?.pollId) {
+        await sessionService.deletePollChat(session.pollId).catch(() => {});
+      }
+      try {
+        const { quizTimerQueue } = require("../jobs/queues");
+        await quizTimerQueue.getJob(`timeout:${chatId}:${session?.qIdx}`).then(j => j && j.remove()).catch(() => {});
+      } catch {}
+      return;
+    }
   }
 }
 
@@ -270,6 +325,7 @@ async function finishTest(chatId, telegram) {
     session = await sessionService.getActiveTest(chatId);
     if (!session || session.finished) return;
     session.finished = true;
+    session.questionState = "FINISHED";
     await sessionService.setActiveTest(chatId, session);
   } finally {
     unlock();
@@ -599,8 +655,16 @@ async function handlePollAnswer(pollAnswer, telegram) {
   const unlock = await mutex.lock(`poll:${chatId}`);
   try {
     const session = await sessionService.getActiveTest(chatId);
-    if (!session || session.pollId !== pollId || session.chatType !== "private")
+    if (!session || session.finished || session.pollId !== pollId || session.chatType !== "private")
       return;
+
+    // Race condition guard: agar savol allaqachon keyingisiga o'tgan bo'lsa yoki o'tish jarayonida bo'lsa
+    if (session.transitionLock === session.qIdx || session.questionState === "TRANSITIONING") {
+      return;
+    }
+    session.transitionLock = session.qIdx;
+    session.questionState = "TRANSITIONING";
+    await sessionService.setActiveTest(chatId, session);
 
     const qData = session.sessionQuestions[session.qIdx];
     const isCorrect = pollAnswer.option_ids[0] === qData.correct_index;
@@ -617,6 +681,8 @@ async function handlePollAnswer(pollAnswer, telegram) {
     } catch {
       /* silent */
     }
+
+    await sessionService.deletePollChat(pollId).catch(() => {});
 
     // Pending savol taymerini BullMQ navbatidan bekor qilamiz
     try {
@@ -654,15 +720,26 @@ async function questionTimeout(chatId, expectedIdx, pollId, telegram) {
   const unlock = await mutex.lock(`poll:${chatId}`);
   try {
     const session = await sessionService.getActiveTest(chatId);
-    if (!session || session.qIdx !== expectedIdx || session.pollId !== pollId)
+    if (!session || session.finished || session.qIdx !== expectedIdx || session.pollId !== pollId)
       return;
     // 🛑 Taymer ishlaganda test pauzada bo'lsa, jarayonni e'tiborsiz qoldiramiz (Ignore)
     if (session.status === "paused") return;
+
+    // Race condition guard: agar savol allaqachon javob berilib keyingisiga o'tgan bo'lsa
+    if (session.transitionLock === expectedIdx || session.questionState === "TRANSITIONING") {
+      return;
+    }
+    session.transitionLock = expectedIdx;
+    session.questionState = "TRANSITIONING";
+    await sessionService.setActiveTest(chatId, session);
+
     try {
       await telegram.stopPoll(chatId, session.msgId);
     } catch {
       /* silent */
     }
+
+    await sessionService.deletePollChat(pollId).catch(() => {});
 
     const qData = session.sessionQuestions[expectedIdx];
     session.qIdx++;

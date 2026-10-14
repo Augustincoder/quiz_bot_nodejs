@@ -218,6 +218,8 @@ async function cbRoomStart(ctx) {
       groupScores: {},
       finished: false,
       status: 'running',
+      transitionLock: null,
+      questionState: 'RUNNING',
       
       // Marafon uchun maxsus xotira
       isMarathon: room.mode === 'marathon',

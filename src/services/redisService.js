@@ -17,6 +17,36 @@ if (!process.env.REDIS_URL) {
   dummy.del = async (k) => { const has = inMemoryStore.has(k); inMemoryStore.delete(k); return has ? 1 : 0; };
   dummy.incr = async (k) => { const val = (Number(inMemoryStore.get(k)) || 0) + 1; inMemoryStore.set(k, String(val)); return val; };
   dummy.pexpire = async () => 1;
+  dummy.expire = async () => 1;
+  dummy.exists = async (k) => inMemoryStore.has(k) ? 1 : 0;
+  dummy.sadd = async (k, ...members) => {
+    let set = inMemoryStore.get(k);
+    if (!(set instanceof Set)) {
+      set = new Set();
+      inMemoryStore.set(k, set);
+    }
+    let added = 0;
+    for (const m of members) {
+      if (!set.has(String(m))) {
+        set.add(String(m));
+        added++;
+      }
+    }
+    return added;
+  };
+  dummy.srem = async (k, ...members) => {
+    const set = inMemoryStore.get(k);
+    if (!(set instanceof Set)) return 0;
+    let removed = 0;
+    for (const m of members) {
+      if (set.delete(String(m))) removed++;
+    }
+    return removed;
+  };
+  dummy.smembers = async (k) => {
+    const set = inMemoryStore.get(k);
+    return set instanceof Set ? Array.from(set) : [];
+  };
   dummy.mget = async (...keys) => {
     const flat = Array.isArray(keys[0]) ? keys[0] : keys;
     return flat.map(k => inMemoryStore.get(k) ?? null);

@@ -4,6 +4,8 @@ const logger = require('../core/logger');
 
 // 1 kun (86400 soniya) saqlanadi
 const TTL = 86400; 
+// Poll vaqtinchalik xaritasi uchun 1 soatlik TTL (xotira to'lishini oldini olish)
+const POLL_TTL = 3600; 
 
 // ─── Active Tests ────────────────────────────────────────────
 async function getActiveTest(chatId) {
@@ -44,7 +46,7 @@ async function getPollChat(pollId) {
 
 async function setPollChat(pollId, chatId) {
   try {
-    await redis.set(`pollMap:${pollId}`, chatId, 'EX', TTL);
+    await redis.set(`pollMap:${pollId}`, chatId, 'EX', POLL_TTL);
   } catch (err) {
     logger.error('sessionService.setPollChat failed', { pollId, error: err.message });
   }
