@@ -376,6 +376,23 @@ const buildUserContext = (session) => {
   return parts.join('\n');
 };
 
+/**
+ * Resolves current Date in Asia/Tashkent (+05:00) timezone safely across any environment
+ */
+function getTashkentDate(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date);
+  const tzStr = d.toLocaleString('en-US', { timeZone: 'Asia/Tashkent' });
+  return new Date(tzStr);
+}
+
+/**
+ * Returns Tashkent day of week: 0=Monday, 1=Tuesday, ..., 5=Saturday, 6=Sunday
+ */
+function getTashkentDayOfWeek(date = new Date()) {
+  const tzDate = getTashkentDate(date);
+  return (tzDate.getDay() + 6) % 7;
+}
+
 module.exports = {
   userNameCache,
   leaderboardCache, LEADERBOARD_TTL, States, STATE_LABELS, TTLMap,
@@ -386,5 +403,7 @@ module.exports = {
   escapeHtml, sanitizeForTelegram,
   truncateText, splitMessage,
   downloadFile, isAdmin, adminGuard, buildUserContext,
+  getTashkentDate, getTashkentDayOfWeek,
 };
+
 

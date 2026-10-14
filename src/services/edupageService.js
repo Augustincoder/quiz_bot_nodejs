@@ -509,28 +509,48 @@ function parseRoomLocation(xona) {
         const qNum = qMatch ? qMatch[1] : '1';
         res = { bino, qavat: `${qNum || '1'}-qavat` };
       } else {
-        // e.g. 8-101, 8-201-68, 2-M2
-        const dashMatch = clean.match(/^(\d+)-(.*)/);
-        if (dashMatch) {
-          const bNum = dashMatch[1];
-          const rest = dashMatch[2];
-          const qMatch = rest.match(/(\d)(?:\d{2}|-\d+)/) || rest.match(/(\d)/);
-          const qNum = qMatch ? qMatch[1] : '1';
-          res = { bino: `${bNum}-bino`, qavat: `${qNum || '1'}-qavat` };
+        // e.g. 204-A, 301-B (3-digit room followed by letter building)
+        const roomLetterMatch = clean.match(/^(\d)(\d{2})[-\s]*([A-Za-z])$/);
+        if (roomLetterMatch) {
+          res = { bino: `${roomLetterMatch[3].toUpperCase()}-bino`, qavat: `${roomLetterMatch[1]}-qavat` };
         } else {
-          // e.g. 1 korpus 211 xona
-          const korpusMatch = clean.match(/^(\d+)\s*korpus\s*(\d)(\d{2})/i);
-          if (korpusMatch) {
-            const bNum = korpusMatch[1] === '1' ? '4-bino' : `${korpusMatch[1]}-bino`;
-            res = { bino: bNum, qavat: `${korpusMatch[2]}-qavat` };
-          } else if (/^litsey/i.test(clean)) {
-            const qMatch = clean.match(/(\d)[A-Za-z]/);
-            res = { bino: 'Litsey', qavat: `${qMatch ? qMatch[1] : '1'}-qavat` };
-          } else if (/rektorat/i.test(clean) || /1[24]etaj/i.test(clean) || /xitoy\s*tili/i.test(clean)) {
-            const qMatch = clean.match(/(\d+)/);
-            res = { bino: 'Rektorat', qavat: `${qMatch ? qMatch[1] : '1'}-qavat` };
-          } else if (/asosiy/i.test(clean)) {
-            res = { bino: 'Asosiy bino', qavat: `${clean.charAt(0) || '1'}-qavat` };
+          // e.g. 8-101, 8-201-68, 2-M2
+          const dashMatch = clean.match(/^(\d+)-(.*)/);
+          if (dashMatch) {
+            const bNum = dashMatch[1];
+            const rest = dashMatch[2];
+            const qMatch = rest.match(/(\d)(?:\d{2}|-\d+)/) || rest.match(/(\d)/);
+            const qNum = qMatch ? qMatch[1] : '1';
+            res = { bino: `${bNum}-bino`, qavat: `${qNum || '1'}-qavat` };
+          } else {
+            // e.g. A-204, B-301
+            const letterDashMatch = clean.match(/^([A-Za-z])-(\d)(?:\d{2}|-\d+)/);
+            if (letterDashMatch) {
+              res = { bino: `${letterDashMatch[1].toUpperCase()}-bino`, qavat: `${letterDashMatch[2]}-qavat` };
+            } else {
+              // e.g. B bino 301
+              const letterBinoMatch = clean.match(/^([A-Za-z])\s*bino\s*(\d)(?:\d{2}|-\d+)/i);
+              if (letterBinoMatch) {
+                res = { bino: `${letterBinoMatch[1].toUpperCase()}-bino`, qavat: `${letterBinoMatch[2]}-qavat` };
+              } else {
+                // e.g. 1 korpus 211 xona
+                const korpusMatch = clean.match(/^(\d+)\s*korpus\s*(\d)(\d{2})/i);
+                if (korpusMatch) {
+                  const bNum = korpusMatch[1] === '1' ? '4-bino' : `${korpusMatch[1]}-bino`;
+                  res = { bino: bNum, qavat: `${korpusMatch[2]}-qavat` };
+                } else if (/^litsey/i.test(clean)) {
+                  const qMatch = clean.match(/(\d)[A-Za-z]/);
+                  res = { bino: 'Litsey', qavat: `${qMatch ? qMatch[1] : '1'}-qavat` };
+                } else if (/rektorat/i.test(clean) || /1[24]etaj/i.test(clean) || /xitoy\s*tili/i.test(clean)) {
+                  const qMatch = clean.match(/(\d+)/);
+                  res = { bino: 'Rektorat', qavat: `${qMatch ? qMatch[1] : '1'}-qavat` };
+                } else if (/sport\s*zal/i.test(clean)) {
+                  res = { bino: 'Sportzal', qavat: '1-qavat' };
+                } else if (/asosiy/i.test(clean)) {
+                  res = { bino: 'Asosiy bino', qavat: `${clean.charAt(0) || '1'}-qavat` };
+                }
+              }
+            }
           }
         }
       }
@@ -779,6 +799,9 @@ function buildIndexedDatabase(raw, defaultNum) {
     schedulesByClassId,
     buildingsByClassId,
     emptyRoomsMatrix,
+    _cardCount: cards.length,
+    _classCount: rawClasses.length,
+    _lessonCount: Object.keys(lessonMap).length,
   };
 }
 
@@ -840,24 +863,87 @@ async function fetchRawTimetable(defaultNum) {
   return httpPost('/timetable/server/regulartt.js?__func=regularttGetData', payload, 45000);
 }
 
+/**
+ * Senior-Grade Sanity Guard: Validates that live EduPage payload is structurally complete
+ * and has not dropped more than 50% of classes/cards compared to previous cache.
+ */
+function validateTimetablePayload(newData, oldDataOrDb = null) {
+  if (!newData || typeof newData !== 'object') return false;
+
+  const tables = newData?.r?.dbiAccessorRes?.tables;
+  if (!Array.isArray(tables) || tables.length < 5) return false;
+
+  const findRows = (tid) => tables.find((t) => t.id === tid)?.data_rows ?? [];
+  const classes = findRows('classes');
+  const lessons = findRows('lessons');
+  const cards = findRows('cards');
+
+  // Defense-in-depth: Minimum viable dataset thresholds
+  if (classes.length < 50 || cards.length < 100 || lessons.length < 50) {
+    logger.warn(`validateTimetablePayload failed: classes=${classes.length}, cards=${cards.length}, lessons=${lessons.length}`);
+    return false;
+  }
+
+  // Relative drop check against previous snapshot (if oldData/oldDb exists)
+  let prevCardCount = 0;
+  if (oldDataOrDb?._cardCount) {
+    prevCardCount = oldDataOrDb._cardCount;
+  } else if (oldDataOrDb?.r?.dbiAccessorRes?.tables) {
+    const oldTables = oldDataOrDb.r.dbiAccessorRes.tables;
+    const oldCards = oldTables.find((t) => t.id === 'cards')?.data_rows ?? [];
+    prevCardCount = oldCards.length;
+  }
+
+  if (prevCardCount > 50 && cards.length < prevCardCount * 0.5) {
+    logger.warn(`validateTimetablePayload rejected partial dataset: prevCards=${prevCardCount}, newCards=${cards.length} (< 50% threshold)`);
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * POSIX Atomic File Writer with Windows-resilient rename fallback & automatic .bak rotation
+ */
+async function saveTimetableCacheAtomically(filePath, data) {
+  const dir = path.dirname(filePath);
+  await fs.promises.mkdir(dir, { recursive: true });
+
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
+  const bakPath = `${filePath}.bak`;
+  const serialized = typeof data === 'string' ? data : JSON.stringify(data);
+
+  try {
+    await fs.promises.writeFile(tmpPath, serialized, 'utf8');
+    if (fs.existsSync(filePath)) {
+      await fs.promises.copyFile(filePath, bakPath).catch(() => {});
+    }
+    try {
+      await fs.promises.rename(tmpPath, filePath);
+    } catch (renameErr) {
+      // Windows fallback if target file is locked or cross-device
+      if (renameErr.code === 'EPERM' || renameErr.code === 'EEXIST' || renameErr.code === 'EBUSY') {
+        await fs.promises.copyFile(tmpPath, filePath);
+        await fs.promises.unlink(tmpPath).catch(() => {});
+      } else {
+        throw renameErr;
+      }
+    }
+  } catch (err) {
+    logger.warn('Failed to atomically write cache file', { path: filePath, error: err.message });
+    await fs.promises.unlink(tmpPath).catch(() => {});
+    throw err;
+  }
+}
+
 async function saveDiskCache(raw) {
   if (!raw?.r?.dbiAccessorRes?.tables || !Array.isArray(raw.r.dbiAccessorRes.tables) || raw.r.dbiAccessorRes.tables.length < 5) {
     logger.warn('saveDiskCache aborted: invalid or incomplete raw structure');
     return;
   }
-  const tmpPath = `${DISK_CACHE_PATH}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
-  const bakPath = `${DISK_CACHE_PATH}.bak`;
-  try {
-    await fs.promises.mkdir(path.dirname(DISK_CACHE_PATH), { recursive: true });
-    await fs.promises.writeFile(tmpPath, JSON.stringify(raw), 'utf8');
-    if (fs.existsSync(DISK_CACHE_PATH)) {
-      await fs.promises.copyFile(DISK_CACHE_PATH, bakPath).catch(() => {});
-    }
-    await fs.promises.rename(tmpPath, DISK_CACHE_PATH);
-  } catch (err) {
-    logger.warn('Failed to atomically write EduPage L3 Disk Cache', { error: err.message });
-    await fs.promises.unlink(tmpPath).catch(() => {});
-  }
+  await saveTimetableCacheAtomically(DISK_CACHE_PATH, raw).catch((err) => {
+    logger.warn('Failed to save EduPage L3 Disk Cache', { error: err.message });
+  });
 }
 
 async function readDiskCacheSafe() {
@@ -1004,6 +1090,20 @@ async function getOrFetchIndexedData(forceRefresh = false) {
           }
           if (!raw?.r?.dbiAccessorRes?.tables) {
             throw new Error('Invalid response structure from EduPage API (missing tables)');
+          }
+          const existingSnapshot = l1IndexedDatabase || (await readDiskCacheSafe());
+          if (!validateTimetablePayload(raw, existingSnapshot)) {
+            logger.warn('Live EduPage response failed sanity validation (incomplete/partial). Using existing cache fallback.');
+            if (l1IndexedDatabase) {
+              l1IndexedDatabase.isUnchanged = true;
+              return l1IndexedDatabase;
+            }
+            if (existingSnapshot && existingSnapshot.r) {
+              l1IndexedDatabase = buildIndexedDatabase(existingSnapshot, existingSnapshot._defaultNum || defaultNum || FALLBACK_DEFAULT_NUM);
+              l1IndexedDatabase.isUnchanged = true;
+              return l1IndexedDatabase;
+            }
+            throw new Error('Incomplete EduPage dataset failed sanity validation');
           }
           recordEduPageSuccess();
         } catch (networkErr) {
@@ -1450,6 +1550,8 @@ module.exports = {
   resolveDefaultNum,
   findClassId,
   hasClassLessonsOnDay,
+  validateTimetablePayload,
+  saveTimetableCacheAtomically,
   getLastRawTimetableHash: () => lastRawTimetableHash,
   resetRawTimetableHash: () => { lastRawTimetableHash = null; },
 };

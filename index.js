@@ -1,5 +1,7 @@
 "use strict";
+process.env.TZ = process.env.TZ || "Asia/Tashkent";
 require("dotenv").config();
+
 
 // Enforce libvips/sharp limits to stay safely within Render 512MB RAM
 const sharp = require("sharp");

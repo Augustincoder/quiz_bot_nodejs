@@ -91,8 +91,8 @@ function getSimplifiedSchedule(schedule) {
       simplified[d][p] = (schedule[d][p] || []).map(l => ({
         subject: (l.subject || '').trim(),
         teacher: (l.teacher || '').trim(),
-        room: (l.room || '').trim(),
-      })).sort((a, b) => (a.subject + a.room + a.teacher).localeCompare(b.subject + b.room + b.teacher));
+        room: (l.room || l.classroom || '').trim(),
+      })).sort((a, b) => `${a.subject}:${a.room}:${a.teacher}`.localeCompare(`${b.subject}:${b.room}:${b.teacher}`));
     }
   }
   return simplified;
@@ -640,7 +640,7 @@ async function checkScheduleChanges(forceOrOptions = false) {
     deepChecksCount++;
     lastDeepCheckAt = Date.now();
     const indexedDb = await edupageService.getIndexedDatabase(true);
-    if (!indexedDb?.schedulesByClassId || !indexedDb?.classesById) {
+    if (!indexedDb?.schedulesByClassId || !indexedDb?.classesById || indexedDb.classesById.size < 50) {
       isChecking = false;
       lastCheckStatus = 'error_empty_tables';
       return { checked: false, reason: 'empty_tables' };

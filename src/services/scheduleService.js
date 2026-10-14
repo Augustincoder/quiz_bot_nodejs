@@ -10,7 +10,7 @@ const {
   getGroupBuildings,
 } = require('./edupageService');
 const { generateScheduleImage } = require('./imageService');
-const { TTLMap } = require('../core/utils');
+const { TTLMap, getTashkentDayOfWeek } = require('../core/utils');
 const logger = require('../core/logger');
 
 // L1 in-memory cache for rendered weekly PNG images (15 minutes TTL, max 15 items ~25-30MB)
@@ -43,14 +43,9 @@ async function fetchTodaySchedule(className, specificDayIdx = null) {
   if (specificDayIdx !== null && specificDayIdx !== undefined) {
     dayOfWeek = Number(specificDayIdx);
   } else {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'Asia/Tashkent',
-      weekday: 'short',
-    }).formatToParts(new Date());
-    const weekdayStr = parts.find((p) => p.type === 'weekday')?.value || 'Mon';
-    const dayMap = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
-    dayOfWeek = dayMap[weekdayStr] ?? ((new Date().getUTCDay() + 6) % 7);
+    dayOfWeek = getTashkentDayOfWeek();
   }
+
 
   // Sunday (6) is a day off
   if (dayOfWeek === 6) {
@@ -67,18 +62,18 @@ async function fetchTodaySchedule(className, specificDayIdx = null) {
  * @param {string} theme Theme name: 'dark' | 'light' | 'vibrant' (defaults to 'dark')
  * @returns {Promise<Buffer|null>} PNG image Buffer
  */
-async function fetchWeeklyScheduleImage(className, theme = 'dark') {
-  if (!className) return null;
+function fetchWeeklyScheduleImage(className, theme = 'dark') {
+  if (!className) return Promise.resolve(null);
   const canonical = getCanonicalGroupName(className) || className;
   const normalized = normalizeGroupName(canonical);
-  if (!normalized) return null;
+  if (!normalized) return Promise.resolve(null);
 
   const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
   const memKey = `${normalized}:${validTheme}`;
 
   // 1. L1 In-Memory Cache Hit (Instant sync return)
   if (imageMemoryCache.has(memKey)) {
-    return imageMemoryCache.get(memKey);
+    return Promise.resolve(imageMemoryCache.get(memKey));
   }
 
   // 2. Singleflight: if a fetch/generation is already in-flight for this key, join it!

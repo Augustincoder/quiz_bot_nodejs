@@ -5,7 +5,7 @@ const dbService = require('../services/dbService');
 const scheduleService = require('../services/scheduleService');
 const edupageService = require('../services/edupageService');
 const { getTimetableInlineKeyboard } = require('../keyboards/keyboards');
-const { TTLMap, escapeHtml, safeAnswerCb, safeEdit, clearState } = require('../core/utils');
+const { TTLMap, escapeHtml, safeAnswerCb, safeEdit, clearState, getTashkentDate, getTashkentDayOfWeek } = require('../core/utils');
 const logger = require('../core/logger');
 
 const roomsPaginationCache = new TTLMap(5 * 60 * 1000, 200); // 5-minute TTL, max 200 slots
@@ -55,8 +55,8 @@ function fromBinoId(binoId) {
  * Resolves current and next class periods according to Asia/Tashkent time
  */
 function getPeriodNowAndNext() {
-  const tzDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
-  let dayOfWeek = (tzDate.getDay() + 6) % 7; // 0=Mon .. 5=Sat, 6=Sun
+  const tzDate = getTashkentDate();
+  let dayOfWeek = getTashkentDayOfWeek();
   const nowMins = tzDate.getHours() * 60 + tzDate.getMinutes();
 
   if (dayOfWeek === 6) {
@@ -210,8 +210,8 @@ async function cmdJadval(ctx) {
   }
   const className = edupageService.getCanonicalGroupName(rawClass) || rawClass;
 
-  const tzDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
-  let dayOfWeek = (tzDate.getDay() + 6) % 7;
+  const currentDay = getTashkentDayOfWeek();
+  let dayOfWeek = currentDay;
   let isSunday = false;
   if (dayOfWeek === 6) {
     dayOfWeek = 0; // Sunday defaults to Monday
@@ -251,8 +251,7 @@ async function cbScheduleDay(ctx) {
   const data = ctx.callbackQuery.data;
   let targetDay;
   if (data === 'sched_day_today') {
-    const tzDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
-    targetDay = (tzDate.getDay() + 6) % 7;
+    targetDay = getTashkentDayOfWeek();
     if (targetDay === 6) targetDay = 0;
   } else {
     targetDay = parseInt(data.replace('sched_day_', ''), 10);
@@ -332,16 +331,51 @@ async function cmdHafta(ctx) {
       ? "\n\n🔔 <b>DIQQAT:</b> Guruhingiz dars jadvalida o'zgarishlar aniqlanganligi sababli jadval yangilandi!"
       : '';
 
-    await ctx.replyWithPhoto(
-      media,
-      {
-        caption: `🎓 <b>Haftalik Jadval: ${escapeHtml(className)}</b>\n<i>🎨 Mavzu: ${themeLabel}</i>${changeNotice}`,
-        parse_mode: 'HTML',
-        ...kb,
+    try {
+      await ctx.replyWithPhoto(
+        media,
+        {
+          caption: `🎓 <b>Haftalik Jadval: ${escapeHtml(className)}</b>\n<i>🎨 Mavzu: ${themeLabel}</i>${changeNotice}`,
+          parse_mode: 'HTML',
+          ...kb,
+        }
+      );
+      if (msg?.message_id) {
+        await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(() => {});
       }
-    );
-    if (msg?.message_id) {
-      await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(() => {});
+    } catch (sendErr) {
+      const errStr = String(sendErr?.message || sendErr);
+      const isFileIdError =
+        errStr.includes('wrong file identifier') ||
+        errStr.includes('wrong remote file') ||
+        errStr.includes('FILE_ID_INVALID') ||
+        errStr.includes('failed to get HTTP URL content');
+
+      if (isFileIdError && photoResult?.fileId) {
+        logger.warn(`[scheduleHandler] Detected stale/invalid CDN file_id for ${className}. Triggering self-healing fallback...`, { error: errStr });
+        await scheduleService.invalidateImageCache(className);
+        const freshBuffer = await scheduleService.fetchWeeklyScheduleImage(className, userTheme);
+        if (freshBuffer) {
+          await ctx.replyWithPhoto(
+            { source: freshBuffer },
+            {
+              caption: `🎓 <b>Haftalik Jadval: ${escapeHtml(className)}</b>\n<i>🎨 Mavzu: ${themeLabel}</i>${changeNotice}`,
+              parse_mode: 'HTML',
+              ...kb,
+            }
+          );
+          if (msg?.message_id) {
+            await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(() => {});
+          }
+          // Non-blocking CDN re-warm in background
+          try {
+            const timetableCdnService = require('../services/timetableCdnService');
+            timetableCdnService.getOrGenerateTimetablePhoto(ctx.telegram, className, userTheme).catch(() => {});
+          } catch {}
+          return;
+        }
+      }
+      throw sendErr;
     }
   } catch (err) {
     logger.error('cmdHafta error', { error: err.message, className });
@@ -416,6 +450,24 @@ async function cbSwitchScheduleTheme(ctx) {
       );
     } catch (editErr) {
       if (editErr?.message?.includes('message is not modified')) return;
+
+      const errStr = String(editErr?.message || editErr);
+      const isFileIdError =
+        errStr.includes('wrong file identifier') ||
+        errStr.includes('wrong remote file') ||
+        errStr.includes('FILE_ID_INVALID');
+
+      if (isFileIdError && photoResult?.fileId) {
+        logger.warn(`[scheduleHandler] Detected stale/invalid CDN file_id in theme switch for ${className}. Self-healing...`, { error: errStr });
+        await scheduleService.invalidateImageCache(className);
+        const freshBuffer = await scheduleService.fetchWeeklyScheduleImage(className, theme);
+        if (freshBuffer) {
+          await ctx.deleteMessage().catch(() => {});
+          await ctx.replyWithPhoto({ source: freshBuffer }, { caption, parse_mode: 'HTML', ...kb }).catch(() => {});
+          return;
+        }
+      }
+
       // Fallback if media cannot be edited in-place
       await ctx.deleteMessage().catch(() => {});
       await ctx.replyWithPhoto(media, { caption, parse_mode: 'HTML', ...kb }).catch(() => {});
@@ -434,7 +486,7 @@ async function cmdTimetable(ctx) {
   const rawClass = await dbService.getUserClass(ctx.from.id);
   const className = rawClass ? (edupageService.getCanonicalGroupName(rawClass) || rawClass) : null;
   
-  const tzDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
+  const tzDate = getTashkentDate();
   const timeStr = `${String(tzDate.getHours()).padStart(2, '0')}:${String(tzDate.getMinutes()).padStart(2, '0')}`;
   
   let header = `🎓 <b>Dars Jadvali Markazi</b>\n━━━━━━━━━━━━━━━━━━━━\n`;
@@ -478,8 +530,8 @@ async function cmdXonalar(ctx) {
 }
 
 async function renderRoomView(ctx, periodNum, requestedBinoId = 'all', pageIdx = 0, explicitDayIdx = null, explicitOffsetDays = null, explicitTimeMode = null) {
-  const tzDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
-  let dayIdx = explicitDayIdx !== null ? explicitDayIdx : (tzDate.getDay() + 6) % 7;
+  const tzDate = getTashkentDate();
+  let dayIdx = explicitDayIdx !== null ? explicitDayIdx : getTashkentDayOfWeek();
   let offsetDays = explicitOffsetDays !== null ? explicitOffsetDays : 0;
 
   if (explicitDayIdx === null) {
