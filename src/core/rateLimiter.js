@@ -16,7 +16,11 @@ const WINDOW_MS      = 1000; // 1-second sliding window
  */
 function rateLimiterMiddleware() {
   return async (ctx, next) => {
-    // Skip updates without a user (e.g., channel posts)
+    // Bug 54 fix: Poll answers in group quizzes are timed and must never be throttled or dropped
+    if (ctx.pollAnswer || ctx.update?.poll_answer) return next();
+
+    // Skip updates without a specific user (e.g., channel posts, anonymous admin posts)
+    // Ensures group chats are NEVER throttled collectively by chat.id
     const userId = ctx.from?.id;
     if (!userId) return next();
 

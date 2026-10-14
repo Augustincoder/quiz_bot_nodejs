@@ -4,6 +4,24 @@ Barcha muhim o'zgarishlar, yangilanishlar va xavfsizlik yaxshilanishlari ushbu h
 
 ---
 
+## [1.2.3] — 2026-10-15
+
+### 🧪 55 Bugs Simulyatsiyasi: 4-Bosqich — Test Yaratish, AI, UX va Xavfsizlik (Bugs 43–45, 48, 54, 55)
+* **Kritik: >4096 Belgili Test Matnida Multi-Chunk Race va Savol Yo'qolishi Oldi Olindi (CREATE-SIM-01 / Bug 43):**
+  - Foydalanuvchi katta matn paste qilganda Telegram uni bir nechta xabarga bo'lib yuboradi. `testCreation.js` da in-memory debounced buffer (`userTextChunks`) joriy etildi. 400ms ichida kelgan barcha bo'laklar bitta yaxlit matnga birlashtirilib, savollar kesilmasdan to'liq qabul qilinishi kafolatlandi.
+* **Kritik: AI Savollarida Noto'g'ri Indeks, Chegaralar va Takroriy Variantlar Xatosi (CREATE-SIM-02 / Bug 44):**
+  - `testValidators.js` va `aiService.js` da `sanitizeQuizQuestions` joriy qilindi. 1-indeksli javoblar 0-indeksga o'giriladi, variantlar takrorlanishi filtrlanadi, savol (<=300 belgi) va variantlar (<=100 belgi) Telegram Poll qoidalariga moslashtirilib, runtime crash yo'qotildi.
+* **Yuqori: AI So'rovlarida In-Flight Lock va Kvota Saqlanishi (AI-SIM-01 / Bug 45):**
+  - `aiHandlers.js` va `aiTestsHandlers.js` da `activeAiUsers` va `activeAdminAiUsers` Set-locklari o'rnatildi. Bitta so'rov davom etayotganda tugmani takroriy bosish orqali limitni yeb qo'yish yoki duplicate yaratish to'xtatildi.
+* **Yuqori: Dialogdan Chiqib Boshqa Menyu Yoki Buyruqqa O'tganda Stale State Bleed Tuzatildi (INFRA-SIM-03 / Bug 48):**
+  - `index.js` global xabar yo'naltiruvchisida va `contactAdmin.js` da foydalanuvchi slash-buyruq (`/start`, `/jadval`) yoki asosiy menyu tugmalarini bosganda avvalgi yakunlanmagan dialog holati darhol tozalanadi; guruh nomi adminga xabar bo'lib ketishi to'xtatildi.
+* **Yuqori: Guruh Quizi Paytida Rate Limiter Noto'g'ri Bloklashi Oldi Olindi (SEC-SIM-02 / Bug 54):**
+  - `rateLimiter.js` da guruh chatlarida `chat.id` emas, har bir talaba `userId` bo'yicha alohida cheklandi hamda `poll_answer` hodisalari rate limitordan to'liq ozod qilindi.
+* **Yuqori: Og'ir Operatsiyalardan So'ng `answerCbQuery` 10s Timeout Xatosi Bartaraf Etildi (INFRA-SIM-06 / Bug 55):**
+  - `index.js` da global xavfsiz middleware o'rnatildi: 10 soniyadan oshgan callback so'rovlarda Telegram `query is too old` xatosi botni to'xtatmaydi yoki unhandled rejection chiqarmaydi.
+
+---
+
 ## [1.2.2] — 2026-10-15
 
 ### 🎨 55 Bugs Simulyatsiyasi: 3-Bosqich — Rasmlar, CDN va WebSocket Kahoot (Bugs 28–32, 38–42)

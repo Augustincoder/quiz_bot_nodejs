@@ -80,6 +80,25 @@ const handlers = {
 // ═══ MIDDLEWARE STACK ═════════════════════════════════════════
 bot.use(rateLimiterMiddleware());
 
+// Bug 55 fix: Prevent Telegram "query is too old" (10s timeout) or "query ID is invalid" unhandled rejections
+bot.use(async (ctx, next) => {
+  if (ctx.callbackQuery && typeof ctx.answerCbQuery === "function") {
+    const origAnswerCb = ctx.answerCbQuery.bind(ctx);
+    ctx.answerCbQuery = async (...args) => {
+      try {
+        return await origAnswerCb(...args);
+      } catch (err) {
+        const msg = String(err?.message || err);
+        if (msg.includes("query is too old") || msg.includes("query ID is invalid")) {
+          return false;
+        }
+        throw err;
+      }
+    };
+  }
+  return next();
+});
+
 bot.use(async (ctx, next) => {
   const ignoredUpdates = ["poll_answer", "poll", "my_chat_member", "chat_member"];
   if (ignoredUpdates.includes(ctx.updateType)) return next();
@@ -313,6 +332,21 @@ bot.command("prewarm_stop", async (ctx) => {
 bot.on("message", async (ctx, next) => {
   const state = getState(ctx);
   if (!state) return next();
+
+  const text = (ctx.message?.text || '').trim();
+  const isCommand = text.startsWith('/');
+  const isMainMenuButton = [
+    '📅 Dars jadvali', '🧪 Testlar', '🤖 AI Yordamchi', '👤 Profil', '📊 Statistika',
+    '🔍 Guruh qidirish', '🏢 Bo\'sh xonalar', '📚 Rasmiy Testlar', '📝 O\'z Testlarim',
+    '🔙 Ortga', '🏠 Asosiy Menyu', '❌ Bekor qilish', '🏠 Bosh menyu'
+  ].some(btn => text.includes(btn));
+
+  // Bug 48 fix: Stale wizard state bleed prevention
+  // If user enters a command or menu button, immediately clear pending wizard state and let command/menu run
+  if (isCommand || isMainMenuButton) {
+    clearState(ctx);
+    return next();
+  }
 
   const userId = ctx.from?.id;
 

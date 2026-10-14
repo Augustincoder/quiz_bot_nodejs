@@ -13,6 +13,8 @@ const logger = require('../core/logger');
 
 // Admin-specific rate limiting (avtomatik tozalanuvchi TTLMap)
 const adminAIUsage = new TTLMap(24 * 60 * 60 * 1000, 200); // 24 soatlik TTL, max 200 slots
+// In-flight active request lock to prevent duplicate concurrent AI test generations (Bug 45)
+const activeAdminAiUsers = new Set();
 
 const ADMIN_AI_LIMITS = {
   HOURLY_LIMIT: 250,        // Admin soatiga 20 ta AI test yarata oladi
@@ -204,6 +206,11 @@ async function onAiTestsText(ctx) {
     return ctx.reply(limitCheck.message, { parse_mode: 'HTML' });
   }
   
+  if (activeAdminAiUsers.has(adminId)) {
+    return ctx.reply("⏳ Sizning AI test generatsiyangiz allaqachon bajarilmoqda, iltimos biroz kuting...");
+  }
+  activeAdminAiUsers.add(adminId);
+
   let count = 'auto';
   if (text.toLowerCase() === 'auto') {
     // AI o'zi belgilaydi
@@ -245,6 +252,8 @@ async function onAiTestsText(ctx) {
     console.error('onAiTestsText error:', e.message);
     await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, undefined, "❌ Xatolik yuz berdi.");
     clearState(ctx);
+  } finally {
+    activeAdminAiUsers.delete(adminId);
   }
 }
 
@@ -504,6 +513,12 @@ async function cbAiTestsRegenerate(ctx) {
     return safeAnswerCb(ctx, '❌ Ma\'lumotlar yetishmaydi!', { show_alert: true });
   }
   
+  const adminId = ctx.from.id;
+  if (activeAdminAiUsers.has(adminId)) {
+    return ctx.answerCbQuery("⏳ AI test qayta yaratilmoqda, iltimos kuting...", { show_alert: true }).catch(() => {});
+  }
+  activeAdminAiUsers.add(adminId);
+
   const status = await ctx.reply(
     `⏳ <b>AI test qayta yaratilmoqda...</b>\n\n📊 Qolgan limit: ${limitCheck.remaining}/${ADMIN_AI_LIMITS.DAILY_LIMIT}`,
     { parse_mode: 'HTML' }
@@ -549,6 +564,8 @@ async function cbAiTestsRegenerate(ctx) {
   } catch (e) {
     console.error('cbAiTestsRegenerate error:', e.message);
     await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, undefined, "❌ Xatolik yuz berdi.");
+  } finally {
+    activeAdminAiUsers.delete(adminId);
   }
 }
 
@@ -608,4 +625,5 @@ module.exports = {
   cbAiTestsRegenerate,
   cbAdminAiStats,
   getAdminAIStats, // Export for potential monitoring
+  _activeAdminAiUsers: activeAdminAiUsers,
 };

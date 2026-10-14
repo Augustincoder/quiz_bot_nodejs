@@ -1051,6 +1051,51 @@ async function cbPreviewChunk(ctx) {
   });
 }
 
+// In-memory queue to debounce and coalesce multi-chunk pastes (>4096 chars split by Telegram) (Bug 43 fix)
+const userTextChunks = new Map();
+
+async function processBatchedTextQuestions(ctx, fullText) {
+  const data = await getData(ctx);
+  let questions = [...(data.questions || [])];
+  const parsed = parseTextQuestions(
+    fullText,
+    data.parse_mode || "hash",
+  );
+  const newQs = parsed.valid || [];
+
+  if (newQs.length > 0) {
+    questions = [...questions, ...newQs];
+    const format_added = (data.format_added || 0) + newQs.length;
+    await updateData(ctx, { questions, format_added });
+
+    // 🤖 AQLLI MARSHRUT
+    const finishAction = data.is_editing
+      ? "back_to_edit_dash"
+      : "back_to_dashboard";
+    const finishText = data.is_editing
+      ? "🔙 Tahrirlash paneliga (Yakunlash)"
+      : "🔙 Panelga qaytish (Yakunlash)";
+
+    await ctx.reply(
+      `✅ *${newQs.length} ta savol qo'shildi!*\n\nYana savol yuborishingiz mumkin.\n_Joriy formatda yig'ilganlar: ${format_added} ta_`,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback(
+              `👁 Shu ${format_added} tasini ko'rib chiqish`,
+              "preview_local_0",
+            ),
+          ],
+          [Markup.button.callback(finishText, finishAction)],
+        ]),
+      },
+    );
+  } else {
+    await ctx.reply("❌ Matndan savollar ajratib olinmadi. Iltimos, formatingizni tekshirib qayta yuboring (To'g'ri javob oldiga # qo'ying).");
+  }
+}
+
 async function onQuestionMessage(ctx) {
   const data = await getData(ctx);
 
@@ -1134,19 +1179,32 @@ async function onQuestionMessage(ctx) {
     // Keyingi xatoga avtomatik o'tamiz (massiv qisqargani uchun indeks o'zgarmaydi)
     return cbFixErrors(ctx, fixIdx);
   }
+
   // ─── 2. YANGI SAVOL QO'SHISH REJIMI (CONTINUOUS INPUT) ───
   const fmt = data.format;
   let newQs = [];
 
   if (fmt === "text") {
     if (!ctx.message.text) return;
-    const parsed = parseTextQuestions(
-      ctx.message.text,
-      data.parse_mode || "hash",
-    );
-    newQs = parsed.valid || [];
+    const userId = ctx.from?.id;
+    if (!userId) return;
 
-    // Kelajakda (2-bosqichda) bu yerga xato (invalidQs) matnlarni saqlash mantiqini qo'shamiz
+    let chunkState = userTextChunks.get(userId);
+    if (!chunkState) {
+      chunkState = { text: '', timer: null, ctx };
+      userTextChunks.set(userId, chunkState);
+    }
+    chunkState.text += (chunkState.text ? '\n\n' : '') + ctx.message.text;
+    chunkState.ctx = ctx;
+
+    if (chunkState.timer) clearTimeout(chunkState.timer);
+
+    // 400ms debounce ensures all consecutive Telegram chunks (>4096 chars) merge before parsing
+    chunkState.timer = setTimeout(async () => {
+      userTextChunks.delete(userId);
+      await processBatchedTextQuestions(chunkState.ctx, chunkState.text);
+    }, 400);
+    return;
   } else if (fmt === "quiz") {
     const poll = ctx.message.poll;
     if (!poll || poll.type !== "quiz") return;
@@ -1157,7 +1215,7 @@ async function onQuestionMessage(ctx) {
     });
   }
 
-  // Agar yangi savollar muvaffaqiyatli o'qilsa
+  // Agar yangi savollar muvaffaqiyatli o'qilsa (masalan, Telegram quiz orqali)
   if (newQs.length > 0) {
     questions = [...questions, ...newQs];
     const format_added = (data.format_added || 0) + newQs.length;
@@ -1823,4 +1881,6 @@ module.exports = {
   cbManageTest,
   cbDeleteTest,
   cbMyTests,
+  processBatchedTextQuestions,
+  _userTextChunks: userTextChunks,
 };

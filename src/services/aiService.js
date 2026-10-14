@@ -4,6 +4,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { GEMINI_API_KEY }     = require('../config/config');
 const { GoogleAIFileManager } = require("@google/generative-ai/server");
 const logger                 = require('../core/logger');
+const { sanitizeQuizQuestions } = require('../validators/testValidators');
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
@@ -263,9 +264,10 @@ async function generateQuizFromText(text, count) {
         Struktura: [{"question": "Savol?", "options": ["A", "B", "C", "D"], "correct_index": 0}]\n\nMatn:\n${text}`;
         
         const result = await model.generateContent(prompt);
-        const questions = extractJSON(result.response.text());
+        const rawQuestions = extractJSON(result.response.text());
+        const questions = sanitizeQuizQuestions(rawQuestions);
         
-        incrementAIUsage('generateQuiz', questions !== null);
+        incrementAIUsage('generateQuiz', questions !== null && questions.length > 0);
         logger.info('ai:generate', { type: 'text', count: questions?.length || 0 });
         
         return questions;
@@ -290,9 +292,10 @@ async function generateOptionsForQuestions(questionsText) {
         Struktura: [{"question": "Savol?", "options": ["A", "B", "C", "D"], "correct_index": 0}]\n\nSavollar:\n${questionsText}`;
         
         const result = await model.generateContent(prompt);
-        const questions = extractJSON(result.response.text());
+        const rawQuestions = extractJSON(result.response.text());
+        const questions = sanitizeQuizQuestions(rawQuestions);
         
-        incrementAIUsage('generateQuiz', questions !== null);
+        incrementAIUsage('generateQuiz', questions !== null && questions.length > 0);
         
         return questions;
     } catch (e) { 
@@ -350,18 +353,14 @@ async function generateQuizFromImage(localFilePath, mimeType, count) {
         
         let questions = null;
         try {
-            const result = await model.generateContent([
-                { fileData: { mimeType: uploadResponse.file.mimeType, fileUri: uploadResponse.file.uri } },
-                { text: prompt }
-            ]);
-            
-            questions = extractJSON(result.response.text());
+            const rawQuestions = extractJSON(result.response.text());
+            questions = sanitizeQuizQuestions(rawQuestions);
         } finally {
             // Memory/Storage leak ni oldini olish uchun faylni Google API'dan o'chiramiz
             await fileManager.deleteFile(uploadResponse.file.name).catch(e => logger.error('ai:file_delete_error', { error: e.message }));
         }
         
-        incrementAIUsage('generateFromImage', questions !== null);
+        incrementAIUsage('generateFromImage', questions !== null && questions.length > 0);
         logger.info('ai:generate', { type: 'image', count: questions?.length || 0 });
         
         return questions;
@@ -394,9 +393,10 @@ async function generateAdaptiveQuiz(subject, mistakes, count) {
         Struktura: [{"question": "Yangi savol?", "options": ["A", "B", "C", "D"], "correct_index": 0}]`;
 
         const result = await model.generateContent(prompt);
-        const questions = extractJSON(result.response.text());
+        const rawQuestions = extractJSON(result.response.text());
+        const questions = sanitizeQuizQuestions(rawQuestions);
         
-        incrementAIUsage('adaptiveQuiz', questions !== null);
+        incrementAIUsage('adaptiveQuiz', questions !== null && questions.length > 0);
         logger.info('ai:generate', { type: 'adaptive', count: questions?.length || 0 });
         
         return questions;

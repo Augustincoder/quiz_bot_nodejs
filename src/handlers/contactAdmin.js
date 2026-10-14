@@ -109,6 +109,20 @@ async function handleContactMessages(ctx, next) {
 
   if (state !== States.USER_CONTACT) return next();
 
+  const rawText = (ctx.message.text || '').trim();
+  const isCommand = rawText.startsWith('/');
+  const isMenuButton = [
+    '📅 Dars jadvali', '🧪 Testlar', '🤖 AI Yordamchi', '👤 Profil', '📊 Statistika',
+    '🔍 Guruh qidirish', '🏢 Bo\'sh xonalar', '📚 Rasmiy Testlar', '📝 O\'z Testlarim',
+    '🔙 Ortga', '🏠 Asosiy Menyu', '❌ Bekor qilish'
+  ].some(btn => rawText.includes(btn));
+
+  // Bug 48 fix: Stale wizard state bleed prevention
+  if (isCommand || isMenuButton) {
+    clearState(ctx);
+    return next();
+  }
+
   // Clear state immediately
   clearState(ctx);
 

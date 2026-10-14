@@ -9,6 +9,8 @@ const { States, setState, safeEdit, clearState, backToMainKb, isAdmin: checkIsAd
 
 // User-level rate limit (har bir user uchun xotira chegaralangan TTLMap)
 const userRateLimit = new TTLMap(24 * 60 * 60 * 1000, 1000); // 24 soatlik TTL, max 1000 ta slot
+// In-flight active request lock to prevent duplicate concurrent AI executions (Bug 45)
+const activeAiUsers = new Set();
 
 // Global daily usage tracker
 let dailyUsage = {
@@ -222,86 +224,95 @@ async function onEssayInput(ctx) {
     const text = ctx.message?.text?.trim();
     const userId = ctx.from?.id;
     if (!userId) return;
+
+    if (activeAiUsers.has(userId)) {
+        return ctx.reply("⏳ Sizning oldingi AI tahlil so'rovingiz bajarilmoqda, iltimos biroz kuting...");
+    }
+    activeAiUsers.add(userId);
     
-    const isAdminUser = checkIsAdmin(userId);
-    const isPremium = false; // Premium statusni DB dan olish kerak
-
-    // Matn uzunligini tekshirish
-    if (!text || text.length < 15) {
-        return ctx.reply("⚠️ Matn juda qisqa.\n\nSifatli tahlil uchun kamida 2–3 gapdan iborat matn yuboring. Uzunroq matn — batafsilroq natija!");
-    }
-    if (text.length > 5000) {
-        return ctx.reply("⚠️ Matn juda uzun.\n\nMaksimal 5000 ta belgi yuborishingiz mumkin.");
-    }
-
-    // 🔒 Global limitni tekshirish
-    const globalCheck = checkGlobalLimit();
-    if (!globalCheck.allowed) {
-        if (globalCheck.reason === 'daily_limit') {
-            return ctx.reply(
-                "⚠️ *Kunlik limit to'ldi!*\n\n" +
-                "Tizim bugun maksimal so'rovlar soniga yetdi. Iltimos, ertaga qayta urinib ko'ring.\n\n" +
-                "Premium foydalanuvchilar uchun: @AvazovM",
-                { parse_mode: 'Markdown' }
-            );
-        } else if (globalCheck.reason === 'monthly_limit') {
-            return ctx.reply(
-                "⚠️ *Oylik limit to'ldi!*\n\nKeyingi oy uchun admindan yangi kvota so'rang: @AvazovM",
-                { parse_mode: 'Markdown' }
-            );
-        }
-    }
-
-    // 🔒 User-level limitni tekshirish
-    const userCheck = checkUserLimit(userId, isPremium, isAdminUser);
-    if (!userCheck.allowed) {
-        if (userCheck.reason === 'hourly_limit') {
-            return ctx.reply(
-                `⏳ *Soatlik limit tugadi!*\n\n` +
-                `Keyingi so'rovni ${userCheck.minutesLeft} daqiqadan keyin yuborishingiz mumkin.\n\n` +
-                `💎 Ko'proq limit uchun: @AvazovM`,
-                { parse_mode: 'Markdown' }
-            );
-        } else if (userCheck.reason === 'daily_user_limit') {
-            return ctx.reply(
-                `📊 *Bugungi limitingiz tugadi!*\n\n` +
-                `Keyingi tekshiruvni ${userCheck.hoursLeft} soatdan keyin amalga oshirishingiz mumkin.\n\n` +
-                `💎 Premium foydalanuvchilar kuniga 50 tagacha tekshiruv oladi: @AvazovM`,
-                { parse_mode: 'Markdown' }
-            );
-        }
-    }
-
-    const msg = await ctx.reply("⏳ <i>AI Tutor matningizni tekshirmoqda...</i>", { parse_mode: 'HTML' });
-
     try {
-        const analysis = await aiService.analyzeEssay(text);
+        const isAdminUser = checkIsAdmin(userId);
+        const isPremium = false; // Premium statusni DB dan olish kerak
 
-        // ✅ Muvaffaqiyatli so'rov — global usageni oshiramiz
-        incrementGlobalUsage();
+        // Matn uzunligini tekshirish
+        if (!text || text.length < 15) {
+            return ctx.reply("⚠️ Matn juda qisqa.\n\nSifatli tahlil uchun kamida 2–3 gapdan iborat matn yuboring. Uzunroq matn — batafsilroq natija!");
+        }
+        if (text.length > 5000) {
+            return ctx.reply("⚠️ Matn juda uzun.\n\nMaksimal 5000 ta belgi yuborishingiz mumkin.");
+        }
 
-        const remaining = userCheck.remaining !== undefined ? userCheck.remaining : '∞';
-        const footer = `\n\n📊 Qolgan limitingiz: ${remaining}\n${AI_WARNING_TEXT}`;
+        // 🔒 Global limitni tekshirish
+        const globalCheck = checkGlobalLimit();
+        if (!globalCheck.allowed) {
+            if (globalCheck.reason === 'daily_limit') {
+                return ctx.reply(
+                    "⚠️ *Kunlik limit to'ldi!*\n\n" +
+                    "Tizim bugun maksimal so'rovlar soniga yetdi. Iltimos, ertaga qayta urinib ko'ring.\n\n" +
+                    "Premium foydalanuvchilar uchun: @AvazovM",
+                    { parse_mode: 'Markdown' }
+                );
+            } else if (globalCheck.reason === 'monthly_limit') {
+                return ctx.reply(
+                    "⚠️ *Oylik limit to'ldi!*\n\nKeyingi oy uchun admindan yangi kvota so'rang: @AvazovM",
+                    { parse_mode: 'Markdown' }
+                );
+            }
+        }
 
-        await ctx.telegram.editMessageText(
-            ctx.chat.id,
-            msg.message_id,
-            undefined,
-            `${analysis}${footer}`,
-            { parse_mode: 'HTML', ...backToMainKb() }
-        );
-    } catch (e) {
-        console.error("AI tahlil xatosi:", e.message);
-        await ctx.telegram.editMessageText(
-            ctx.chat.id,
-            msg.message_id,
-            undefined,
-            "❌ Xatolik yuz berdi. Iltimos, keyinroq urinib ko'ring.\n\nAdmin: @AvazovM",
-            backToMainKb()
-        );
+        // 🔒 User-level limitni tekshirish
+        const userCheck = checkUserLimit(userId, isPremium, isAdminUser);
+        if (!userCheck.allowed) {
+            if (userCheck.reason === 'hourly_limit') {
+                return ctx.reply(
+                    `⏳ *Soatlik limit tugadi!*\n\n` +
+                    `Keyingi so'rovni ${userCheck.minutesLeft} daqiqadan keyin yuborishingiz mumkin.\n\n` +
+                    `💎 Ko'proq limit uchun: @AvazovM`,
+                    { parse_mode: 'Markdown' }
+                );
+            } else if (userCheck.reason === 'daily_user_limit') {
+                return ctx.reply(
+                    `📊 *Bugungi limitingiz tugadi!*\n\n` +
+                    `Keyingi tekshiruvni ${userCheck.hoursLeft} soatdan keyin amalga oshirishingiz mumkin.\n\n` +
+                    `💎 Premium foydalanuvchilar kuniga 50 tagacha tekshiruv oladi: @AvazovM`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
+        }
+
+        const msg = await ctx.reply("⏳ <i>AI Tutor matningizni tekshirmoqda...</i>", { parse_mode: 'HTML' });
+
+        try {
+            const analysis = await aiService.analyzeEssay(text);
+
+            // ✅ Muvaffaqiyatli so'rov — global usageni oshiramiz
+            incrementGlobalUsage();
+
+            const remaining = userCheck.remaining !== undefined ? userCheck.remaining : '∞';
+            const footer = `\n\n📊 Qolgan limitingiz: ${remaining}\n${AI_WARNING_TEXT}`;
+
+            await ctx.telegram.editMessageText(
+                ctx.chat.id,
+                msg.message_id,
+                undefined,
+                `${analysis}${footer}`,
+                { parse_mode: 'HTML', ...backToMainKb() }
+            );
+        } catch (e) {
+            console.error("AI tahlil xatosi:", e.message);
+            await ctx.telegram.editMessageText(
+                ctx.chat.id,
+                msg.message_id,
+                undefined,
+                "❌ Xatolik yuz berdi. Iltimos, keyinroq urinib ko'ring.\n\nAdmin: @AvazovM",
+                backToMainKb()
+            );
+        }
+
+        clearState(ctx);
+    } finally {
+        activeAiUsers.delete(userId);
     }
-
-    clearState(ctx);
 }
 
 // ============================================
@@ -332,5 +343,6 @@ module.exports = {
     onEssayInput, 
     cbAiTutorMenu, 
     cbAiEssayInit,
-    getUsageStats  // Admin uchun statistika
+    getUsageStats,  // Admin uchun statistika
+    _activeAiUsers: activeAiUsers,
 };
