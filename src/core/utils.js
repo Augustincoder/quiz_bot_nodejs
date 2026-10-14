@@ -62,6 +62,13 @@ const clearState = (ctx) => {
   if (!ctx.session) ctx.session = {};
   ctx.session.state = null;
   ctx.session.data = {};
+  const userId = ctx.from?.id;
+  if (userId) {
+    try {
+      const { clearPendingUser } = require('./pendingStore');
+      clearPendingUser(userId);
+    } catch {}
+  }
 };
 const updateData = async (ctx, patch) => {
   if (!ctx.session) ctx.session = {};

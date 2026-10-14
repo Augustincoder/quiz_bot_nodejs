@@ -57,6 +57,9 @@ function initSocket(httpServer) {
         const room = await roomManager.getRoom(roomCode);
         if (!room) return socket.emit("room:error", { code: 404, message: "Room not found" });
 
+        const existingPlayer = room.players.get(idToJoin);
+        const wasReconnecting = existingPlayer && existingPlayer.disconnected;
+
         await roomManager.addPlayer(roomCode, idToJoin, cleanName, socket.id);
         socket.join(roomCode);
 
@@ -64,12 +67,20 @@ function initSocket(httpServer) {
           roomCode: room.roomCode,
           players: Array.from(room.players.values()),
           mode: 'kahoot',
-          status: room.status
+          status: room.status,
+          currentIndex: room.currentIndex,
         });
 
-        io.to(roomCode).emit("room:player_joined", {
-          players: Array.from(room.players.values())
-        });
+        if (wasReconnecting) {
+          io.to(roomCode).emit("room:player_reconnected", {
+            userId: idToJoin,
+            players: Array.from(room.players.values())
+          });
+        } else {
+          io.to(roomCode).emit("room:player_joined", {
+            players: Array.from(room.players.values())
+          });
+        }
       } catch (error) {
         socket.emit("room:error", { code: 500, message: error.message });
       }
@@ -169,12 +180,32 @@ function initSocket(httpServer) {
     });
 
     socket.on("disconnect", async () => {
-      console.log(`🔴 Socket disconnected: ${socket.id}`);
+      console.log(`🔴 Socket disconnected: ${socket.id} (User: ${userId})`);
       for (const room of roomManager.rooms.values()) {
-        const player = Array.from(room.players.values()).find(p => p.socketId === socket.id);
-        if (player) {
-          await roomManager.removePlayer(room.roomCode, player.userId);
-          io.to(room.roomCode).emit("room:player_left", {
+        const player = room.players.get(userId);
+        if (player && player.socketId === socket.id) {
+          player.disconnected = true;
+          player.disconnectedAt = Date.now();
+          if (player.disconnectTimer) {
+            clearTimeout(player.disconnectTimer);
+          }
+
+          // 10-second grace period for network flap / socket reconnection
+          player.disconnectTimer = setTimeout(async () => {
+            const currentRoom = await roomManager.getRoom(room.roomCode);
+            const p = currentRoom?.players.get(userId);
+            if (p && p.disconnected) {
+              console.log(`⏱️ Grace period expired for User ${userId} in Room ${room.roomCode}. Removing player.`);
+              await roomManager.removePlayer(room.roomCode, userId);
+              io.to(room.roomCode).emit("room:player_left", {
+                players: currentRoom?.players ? Array.from(currentRoom.players.values()) : []
+              });
+            }
+          }, 10000);
+          player.disconnectTimer.unref();
+
+          io.to(room.roomCode).emit("room:player_disconnected", {
+            userId,
             players: Array.from(room.players.values())
           });
         }

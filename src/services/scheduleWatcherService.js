@@ -451,16 +451,31 @@ async function dispatchGroupAlerts(groupName, diffs, usersList, currentHash = nu
   if (!queueDelivered && _botTelegram) {
     logger.info(`📢 Delivering schedule change alerts directly to ${matchingUsers.length} users of ${canonicalGroupName}...`);
     for (const u of matchingUsers) {
-      try {
-        await _botTelegram.sendMessage(u.telegram_id, message, { parse_mode: 'HTML' });
-      } catch (sendErr) {
-        const isBlocked = sendErr?.message?.includes('blocked') ||
-          sendErr?.message?.includes('deactivated') ||
-          sendErr?.response?.error_code === 403;
-        if (isBlocked) {
-          getDbService().markUserBlocked(u.telegram_id, true).catch(() => {});
-        } else {
-          logger.warn(`Direct alert send failed for user ${u.telegram_id}:`, { error: sendErr.message });
+      let maxAttempts = 3;
+      let attempt = 0;
+      let sent = false;
+      while (attempt < maxAttempts && !sent) {
+        attempt++;
+        try {
+          await _botTelegram.sendMessage(u.telegram_id, message, { parse_mode: 'HTML' });
+          sent = true;
+        } catch (sendErr) {
+          const isBlocked = sendErr?.message?.includes('blocked') ||
+            sendErr?.message?.includes('deactivated') ||
+            sendErr?.response?.error_code === 403;
+          if (isBlocked) {
+            getDbService().markUserBlocked(u.telegram_id, true).catch(() => {});
+            break;
+          }
+          const retryAfter = sendErr?.response?.parameters?.retry_after || sendErr?.parameters?.retry_after || 0;
+          if (retryAfter > 0 || String(sendErr?.message || sendErr).includes('429')) {
+            const waitTime = (retryAfter > 0 ? retryAfter + 1 : 3) * 1000;
+            logger.warn(`Telegram 429 hit during direct broadcast. Pausing for ${waitTime / 1000}s...`);
+            await new Promise(r => setTimeout(r, waitTime));
+          } else {
+            logger.warn(`Direct alert send failed for user ${u.telegram_id}:`, { error: sendErr.message });
+            break;
+          }
         }
       }
       await new Promise(r => setTimeout(r, 60)); // 60ms pacing to stay safely under Telegram limits

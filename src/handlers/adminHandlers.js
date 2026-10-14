@@ -1269,8 +1269,8 @@ async function cbBroadcastConfirm(ctx) {
           await sendToRecipient(telegramId);
           success++;
         } catch (err) {
-          if (err.parameters?.retry_after) {
-            const retrySec = err.parameters.retry_after;
+          const retrySec = err.response?.parameters?.retry_after || err.parameters?.retry_after;
+          if (retrySec) {
             logger.warn('broadcast:rate_limit_hit', { retrySec });
             await new Promise(r => setTimeout(r, (retrySec + 1) * 1000));
             try {

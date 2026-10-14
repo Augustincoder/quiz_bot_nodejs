@@ -27,8 +27,9 @@ function initWorkers(bot, scheduleService) {
           logger.info('User blocked bot or deactivated during alert, marking blocked', { userId });
           dbService.markUserBlocked(userId, true).catch(() => {});
           return; // Terminal state, complete job without retrying
-        } else if (err?.parameters?.retry_after && err.parameters.retry_after <= 10) {
-          const retrySec = err.parameters.retry_after;
+        }
+        const retrySec = err?.response?.parameters?.retry_after || err?.parameters?.retry_after;
+        if (retrySec && retrySec <= 30) {
           logger.warn(`Alert rate limit hit. Waiting ${retrySec}s`, { userId });
           await new Promise(r => setTimeout(r, (retrySec + 1) * 1000));
           await bot.telegram.sendMessage(userId, message, { parse_mode: 'HTML' });
@@ -96,8 +97,9 @@ function initWorkers(bot, scheduleService) {
           logger.info('Broadcast user blocked bot or deactivated, marking blocked', { userId });
           dbService.markUserBlocked(userId, true).catch(() => {});
           return; // Terminal state, do not retry
-        } else if (err?.parameters?.retry_after && err.parameters.retry_after <= 10) {
-          const retrySec = err.parameters.retry_after;
+        }
+        const retrySec = err?.response?.parameters?.retry_after || err?.parameters?.retry_after;
+        if (retrySec && retrySec <= 30) {
           logger.warn(`Broadcast rate limit hit. Waiting ${retrySec}s`, { userId });
           await new Promise(r => setTimeout(r, (retrySec + 1) * 1000));
           await bot.telegram.sendMessage(userId, msg, { parse_mode: 'HTML' });

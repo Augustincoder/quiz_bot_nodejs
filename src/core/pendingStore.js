@@ -5,4 +5,9 @@ const { TTLMap } = require('./utils');
 // Bu bot RAM'ini himoya qiladi
 const pendingShelfSaves = new TTLMap(600_000); 
 
-module.exports = { pendingShelfSaves };
+function clearPendingUser(userId) {
+  if (!userId) return;
+  pendingShelfSaves.delete(userId);
+}
+
+module.exports = { pendingShelfSaves, clearPendingUser };

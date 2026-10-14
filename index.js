@@ -27,7 +27,7 @@ const scheduleWatcher = require("./src/services/scheduleWatcherService");
 const watchdogService = require("./src/services/watchdogService");
 const { BOT_TOKEN } = require("./src/config/config");
 const dbService = require("./src/services/dbService");
-const { getState, States, isAdmin, clearState } = require("./src/core/utils");
+const { getState, States, isAdmin, clearState, getTashkentDayOfWeek } = require("./src/core/utils");
 const { rateLimiterMiddleware } = require("./src/core/rateLimiter");
 const { initSocket } = require("./src/socket");
 
@@ -383,15 +383,8 @@ async function queueSchedules(isTomorrow = false) {
     }
     if (!users || users.length === 0) return;
 
-    // 3. Compute target day in Asia/Tashkent safely using Intl
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: "Asia/Tashkent",
-      weekday: "short",
-    }).formatToParts(new Date());
-    const weekdayStr = parts.find((p) => p.type === "weekday")?.value || "Mon";
-    const dayMap = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
-    let dayOfWeek = dayMap[weekdayStr] ?? ((new Date().getUTCDay() + 6) % 7);
-
+    // 3. Compute target day in Asia/Tashkent safely
+    let dayOfWeek = getTashkentDayOfWeek();
     if (isTomorrow) {
       dayOfWeek = (dayOfWeek + 1) % 7;
     }

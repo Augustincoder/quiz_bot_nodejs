@@ -56,10 +56,17 @@ class RoomManager {
         userId, 
         displayName, 
         socketId, 
-        score: 0
+        score: 0,
+        disconnected: false,
+        disconnectTimer: null
       });
     } else {
       const player = room.players.get(userId);
+      if (player.disconnectTimer) {
+        clearTimeout(player.disconnectTimer);
+        player.disconnectTimer = null;
+      }
+      player.disconnected = false;
       player.socketId = socketId;
       player.displayName = displayName;
     }
@@ -70,6 +77,11 @@ class RoomManager {
   async removePlayer(roomCode, userId) {
     const room = await this.getRoom(roomCode);
     if (room) {
+      const player = room.players.get(userId);
+      if (player?.disconnectTimer) {
+        clearTimeout(player.disconnectTimer);
+        player.disconnectTimer = null;
+      }
       room.players.delete(userId);
       if (room.players.size === 0) {
         await this.deleteRoom(roomCode);
@@ -86,6 +98,15 @@ class RoomManager {
       if (room.actionTimer) clearTimeout(room.actionTimer);
       if (room.cooldownTimer) clearTimeout(room.cooldownTimer);
       if (room.idleTimer) clearTimeout(room.idleTimer);
+      if (room.endTimer) clearTimeout(room.endTimer);
+      if (room.players) {
+        for (const player of room.players.values()) {
+          if (player?.disconnectTimer) {
+            clearTimeout(player.disconnectTimer);
+            player.disconnectTimer = null;
+          }
+        }
+      }
       this.rooms.delete(roomCode);
     }
   }

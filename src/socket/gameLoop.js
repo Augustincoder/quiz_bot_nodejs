@@ -105,6 +105,7 @@ async function handleGameEnd(roomCode, room) {
         roomManager.deleteRoom(roomCode);
     }, 5 * 60 * 1000);
     endTimer.unref();
+    room.endTimer = endTimer;
 }
 
 module.exports = { advanceQuestion };
