@@ -66,17 +66,19 @@ async function getUserStats(userId) {
     const cached = await redis.get(cacheKey);
     if (cached) return JSON.parse(cached);
 
-    const { data, error } = await supabase
-      .from('user_stats')
-      .select('*')
-      .eq('user_id', uid)
-      .maybeSingle();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('user_stats')
+        .select('*')
+        .eq('user_id', uid)
+        .maybeSingle();
 
-    if (error) throw error;
-    if (data) {
-      if (!data.history) data.history = [];
-      await redis.set(cacheKey, JSON.stringify(data), 'EX', 300).catch(() => {});
-      return data;
+      if (error) throw error;
+      if (data) {
+        if (!data.history) data.history = [];
+        await redis.set(cacheKey, JSON.stringify(data), 'EX', 300).catch(() => {});
+        return data;
+      }
     }
     return { user_id: uid, tests_completed: 0, total_correct: 0, total_wrong: 0, history: [] };
   } catch (err) {
@@ -85,41 +87,63 @@ async function getUserStats(userId) {
   }
 }
 
+// In-memory per-user update serialization queue to prevent lost updates on concurrent completions (Bug 47)
+const userStatsQueues = new Map();
+
 async function updateUserStats(userId, correct, wrong, subjectKey, testId, mistakes) {
   const uid = String(userId);
-  const stats = await getUserStats(uid);
-  if (stats._fetchFailed) {
-    logger.error('updateUserStats aborted: could not retrieve user stats due to DB error. Historical data protected.', { userId: uid });
-    return;
-  }
-  stats.tests_completed = (stats.tests_completed || 0) + 1;
-  stats.total_correct = (stats.total_correct || 0) + correct;
-  stats.total_wrong = (stats.total_wrong || 0) + wrong;
+  const prevPromise = userStatsQueues.get(uid) || Promise.resolve();
 
-  const entry = {
-    date: new Date().toISOString().slice(0, 16).replace('T', ' '),
-    timestamp: Date.now(),
-    subject: subjectKey,
-    test_id: testId,
-    correct,
-    wrong,
-    mistakes,
-  };
-  if (!Array.isArray(stats.history)) stats.history = [];
-  stats.history.unshift(entry);
-  stats.history = stats.history.slice(0, 15);
+  const currentPromise = (async () => {
+    try {
+      await prevPromise;
+    } catch {}
 
-  try {
-    delete stats._fetchFailed;
-    const { error } = await supabase.from('user_stats').upsert(stats, { onConflict: 'user_id' });
-    if (error) throw error;
-
-    await redis.set(`cache:user_stats:${uid}`, JSON.stringify(stats), 'EX', 300).catch(() => {});
-    if (correct > 0) {
-      await redis.del('cache:leaderboard:top10').catch(() => {});
+    const stats = await getUserStats(uid);
+    if (stats._fetchFailed) {
+      logger.error('updateUserStats aborted: could not retrieve user stats due to DB error. Historical data protected.', { userId: uid });
+      return;
     }
-  } catch (e) {
-    logger.error('Stats saqlashda xato:', { userId: uid, error: e.message });
+    stats.tests_completed = (stats.tests_completed || 0) + 1;
+    stats.total_correct = (stats.total_correct || 0) + correct;
+    stats.total_wrong = (stats.total_wrong || 0) + wrong;
+
+    const entry = {
+      date: new Date().toISOString().slice(0, 16).replace('T', ' '),
+      timestamp: Date.now(),
+      subject: subjectKey,
+      test_id: testId,
+      correct,
+      wrong,
+      mistakes,
+    };
+    if (!Array.isArray(stats.history)) stats.history = [];
+    stats.history.unshift(entry);
+    stats.history = stats.history.slice(0, 15);
+
+    try {
+      delete stats._fetchFailed;
+      if (supabase) {
+        const { error } = await supabase.from('user_stats').upsert(stats, { onConflict: 'user_id' });
+        if (error) throw error;
+      }
+
+      await redis.set(`cache:user_stats:${uid}`, JSON.stringify(stats), 'EX', 300).catch(() => {});
+      if (correct > 0) {
+        await redis.del('cache:leaderboard:top10').catch(() => {});
+      }
+    } catch (e) {
+      logger.error('Stats saqlashda xato:', { userId: uid, error: e.message });
+    }
+  })();
+
+  userStatsQueues.set(uid, currentPromise);
+  try {
+    return await currentPromise;
+  } finally {
+    if (userStatsQueues.get(uid) === currentPromise) {
+      userStatsQueues.delete(uid);
+    }
   }
 }
 
@@ -373,11 +397,21 @@ async function getBroadcastRecipients() {
 async function getAllUserNames() {
   if (!supabase) return [];
   try {
-    const { data, error } = await supabase
-      .from('users')
-      .select('telegram_id, full_name');
-    if (error) throw error;
-    return data || [];
+    const pageSize = 1000;
+    let from = 0;
+    const allNames = [];
+    while (true) {
+      const { data, error } = await supabase
+        .from('users')
+        .select('telegram_id, full_name')
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      allNames.push(...data);
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    return allNames;
   } catch (err) {
     logger.error('getAllUserNames error:', { error: err.message });
     return [];
@@ -411,12 +445,22 @@ async function getAllUsers() {
 async function getUsersByClassName(className) {
   if (!className || !supabase) return [];
   try {
-    const { data, error } = await supabase
-      .from('users')
-      .select('telegram_id, name, class_name')
-      .ilike('class_name', className);
-    if (error) throw error;
-    return data || [];
+    const pageSize = 1000;
+    let from = 0;
+    const allUsers = [];
+    while (true) {
+      const { data, error } = await supabase
+        .from('users')
+        .select('telegram_id, name, class_name')
+        .ilike('class_name', className)
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      allUsers.push(...data);
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    return allUsers;
   } catch (err) {
     logger.error('getUsersByClassName error:', { className, error: err.message });
     return [];
@@ -1184,4 +1228,5 @@ module.exports = {
   getUserNotificationPreference,
   getUserNotificationPreferences,
   setUserNotificationPreference,
+  _userStatsQueues: userStatsQueues,
 };

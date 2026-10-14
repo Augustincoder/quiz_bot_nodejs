@@ -4,6 +4,24 @@ Barcha muhim o'zgarishlar, yangilanishlar va xavfsizlik yaxshilanishlari ushbu h
 
 ---
 
+## [1.2.4] — 2026-10-15
+
+### ⚙️ 55 Bugs Simulyatsiyasi: 5-Bosqich — Core Infrastructure, Supabase DB, Redis, BullMQ va Mutex (Bugs 46, 47, 49–53)
+* **Kritik: Supabase 1000 Qator Yashirin Cheklovi Va Silent Truncation Yo'qotildi (INFRA-SIM-01 / Bug 46):**
+  - Supabase/PostgREST sukut bo'yicha cheklaydigan 1000 qatorlik limitdan oshganda foydalanuvchilar yo'qolib ketmasligi uchun `getAllUserNames`, `getUsersByClassName`, `getAllUsers`, `getBroadcastRecipients` va `getScheduleBroadcastUsers` so'rovlariga `while (true)` range-based (1000 tadan) to'liq sahifalash joriy etildi. 1000 dan ortiq barcha talabalar to'liq olinishi kafolatlandi.
+* **Kritik: Foydalanuvchi Ballarini Yangilashda Lost Update Va Race Condition Oldi Olindi (INFRA-SIM-02 / Bug 47):**
+  - Foydalanuvchi guruhda va shaxsiy chatda parallel test topshirganda ballari bir-birining ustiga yozilib ketmasligi uchun `dbService.js` da `userStatsQueues` Map promise zanjiri yaratildi. Har bir `userId` bo'yicha yangilanishlar navbat bilan ketma-ket (serialized) amalga oshirilib, ballar yo'qolishi bartaraf etildi.
+* **Kritik: Mutex Deadlock Va Xotira Oqishi (Memory Leak) Bartaraf Etildi (INFRA-SIM-05 / Bugs 49 & 50):**
+  - `mutex.js` da lock olish va kutish jarayonlarida xavfsizlik taymerlari va xatoliklar ushlab qolinishi yaxshilandi; navbat bo'shaganda kalit `_locks` Map'idan to'liq o'chirilishi kafolatlandi. `waitTimer` va `execTimer` faol Promise.race orqali kutilishi ta'minlanib, osilib qolishlar va xotira to'lishining oldi olindi.
+* **Kritik: Redis Uzilishida In-Memory Dual-Write Fallback Va Split-Brain Himoyasi (INFRA-SIM-05 / Bug 51):**
+  - `sessionService.js` da faol testlar (`localActiveTestCache`), poll xaritasi (`localPollMapCache`) va kutish xonalari (`localWaitingRoomCache`) uchun mahalliy xotira kesh zaxiralari ulandi. Redis qisqa vaqt uzilib qolganda yoki xato berganda ham davom etayotgan test sessiyalari yo'qolmaydi.
+* **Kritik: BullMQ Ommaviy Xabarlarda Telegram 429 Retry Storm Va Duplicate Spamming To'xtatildi (INFRA-SIM-05 / Bug 52):**
+  - `src/jobs/workers.js` da `isUserSentInJob` va `markUserSentInJob` orqali BullMQ job idempotency mexanizmi joriy etildi. 50 talabaga xabar yuborilayotganda 30-foydalanuvchida 429 yoki xatolik chiqib BullMQ qayta urinish (attempt 2) qilganda, avval yetkazilgan dastlabki 29 ta talabaga bir xil xabar qayta yuborilishi (spam storm) to'liq to'xtatildi.
+* **Yuqori: Circuit Breaker HALF_OPEN Holatida Probe Stampede Oldi Olindi (INFRA-SIM-05 / Bug 53):**
+  - `edupageService.js` da Circuit Breaker `OPEN` holatidan `HALF_OPEN` holatiga o'tganda `isHalfOpenProbeInFlight` bayrog'i o'rnatildi. Bir vaqtning o'zida kelgan parallel so'rovlardan faqat 1 tasi tekshiruv (probe) sifatida yuboriladi, qolgan parallel chaqiruvlar esa tashqi serverni qayta yiqitib qo'ymaslik uchun bloklanadi va keshga yo'naltiriladi.
+
+---
+
 ## [1.2.3] — 2026-10-15
 
 ### 🧪 55 Bugs Simulyatsiyasi: 4-Bosqich — Test Yaratish, AI, UX va Xavfsizlik (Bugs 43–45, 48, 54, 55)

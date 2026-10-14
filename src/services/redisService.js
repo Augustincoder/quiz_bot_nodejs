@@ -34,6 +34,10 @@ if (!process.env.REDIS_URL) {
     }
     return added;
   };
+  dummy.sismember = async (k, member) => {
+    const set = inMemoryStore.get(k);
+    return (set instanceof Set && set.has(String(member))) ? 1 : 0;
+  };
   dummy.srem = async (k, ...members) => {
     const set = inMemoryStore.get(k);
     if (!(set instanceof Set)) return 0;

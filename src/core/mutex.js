@@ -67,6 +67,7 @@ class Mutex {
     holdTimer = setTimeout(() => {
       doRelease();
     }, timeoutMs);
+    if (holdTimer.unref) holdTimer.unref();
 
     return doRelease;
   }
@@ -105,4 +106,6 @@ class Mutex {
   }
 }
 
-module.exports = new Mutex();
+const defaultMutex = new Mutex();
+defaultMutex.Mutex = Mutex;
+module.exports = defaultMutex;

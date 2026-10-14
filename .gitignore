@@ -29,6 +29,7 @@ yarn-error.log*
 
 # Office documents and test files
 *.docx
+*.txt
 
 # OS and IDE files
 .DS_Store

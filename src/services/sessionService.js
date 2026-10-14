@@ -7,99 +7,137 @@ const TTL = 86400;
 // Poll vaqtinchalik xaritasi uchun 1 soatlik TTL (xotira to'lishini oldini olish)
 const POLL_TTL = 3600; 
 
+// Local in-memory caches to prevent split-brain state during transient Redis disconnects (Bug 51)
+const localActiveTestCache = new Map();
+const localPollMapCache = new Map();
+const localWaitingRoomCache = new Map();
+
 // ─── Active Tests ────────────────────────────────────────────
 async function getActiveTest(chatId) {
+  const cid = String(chatId);
   try {
-    const data = await redis.get(`activeTest:${chatId}`);
-    return data ? JSON.parse(data) : null;
+    const data = await redis.get(`activeTest:${cid}`);
+    if (data) {
+      const parsed = JSON.parse(data);
+      localActiveTestCache.set(cid, { data: parsed, expiresAt: Date.now() + TTL * 1000 });
+      return parsed;
+    }
   } catch (err) {
-    logger.error('sessionService.getActiveTest failed', { chatId, error: err.message });
-    return null;
+    logger.error('sessionService.getActiveTest failed, falling back to local memory', { chatId: cid, error: err.message });
   }
+  const fallback = localActiveTestCache.get(cid);
+  if (fallback && fallback.expiresAt > Date.now()) {
+    return fallback.data;
+  }
+  return null;
 }
 
 async function setActiveTest(chatId, data) {
+  const cid = String(chatId);
+  if (!data || typeof data !== 'object') return;
+  const safeData = { ...data };
+  if (safeData.timer) delete safeData.timer;
+  localActiveTestCache.set(cid, { data: safeData, expiresAt: Date.now() + TTL * 1000 });
+
   try {
-    if (!data || typeof data !== 'object') return;
-    const safeData = { ...data };
-    if (safeData.timer) delete safeData.timer;
-    await redis.set(`activeTest:${chatId}`, JSON.stringify(safeData), 'EX', TTL);
+    await redis.set(`activeTest:${cid}`, JSON.stringify(safeData), 'EX', TTL);
   } catch (err) {
-    logger.error('sessionService.setActiveTest failed', { chatId, error: err.message });
+    logger.error('sessionService.setActiveTest failed, preserved in local fallback', { chatId: cid, error: err.message });
   }
 }
 
 async function deleteActiveTest(chatId) {
+  const cid = String(chatId);
+  localActiveTestCache.delete(cid);
   try {
-    await redis.del(`activeTest:${chatId}`);
+    await redis.del(`activeTest:${cid}`);
   } catch (err) {
-    logger.error('sessionService.deleteActiveTest failed', { chatId, error: err.message });
+    logger.error('sessionService.deleteActiveTest failed', { chatId: cid, error: err.message });
   }
 }
 
 // ─── Poll ↔ ChatId Mapping ──────────────────────────────────
 async function getPollChat(pollId) {
+  const pid = String(pollId);
   try {
-    return await redis.get(`pollMap:${pollId}`);
+    const chat = await redis.get(`pollMap:${pid}`);
+    if (chat) {
+      localPollMapCache.set(pid, { chatId: chat, expiresAt: Date.now() + POLL_TTL * 1000 });
+      return chat;
+    }
   } catch (err) {
-    logger.error('sessionService.getPollChat failed', { pollId, error: err.message });
-    return null;
+    logger.error('sessionService.getPollChat failed, checking local backup', { pollId: pid, error: err.message });
   }
+  const fallback = localPollMapCache.get(pid);
+  if (fallback && fallback.expiresAt > Date.now()) {
+    return fallback.chatId;
+  }
+  return null;
 }
 
 async function setPollChat(pollId, chatId) {
+  const pid = String(pollId);
+  const cid = String(chatId);
+  localPollMapCache.set(pid, { chatId: cid, expiresAt: Date.now() + POLL_TTL * 1000 });
   try {
-    await redis.set(`pollMap:${pollId}`, chatId, 'EX', POLL_TTL);
+    await redis.set(`pollMap:${pid}`, cid, 'EX', POLL_TTL);
   } catch (err) {
-    logger.error('sessionService.setPollChat failed', { pollId, error: err.message });
+    logger.error('sessionService.setPollChat failed, preserved in local fallback', { pollId: pid, error: err.message });
   }
 }
 
 async function deletePollChat(pollId) {
+  const pid = String(pollId);
+  localPollMapCache.delete(pid);
   try {
-    await redis.del(`pollMap:${pollId}`);
+    await redis.del(`pollMap:${pid}`);
   } catch (err) {
-    logger.error('sessionService.deletePollChat failed', { pollId, error: err.message });
+    logger.error('sessionService.deletePollChat failed', { pollId: pid, error: err.message });
   }
 }
 
-
 // ─── Waiting Rooms ──────────────────────────────────────────
 async function getWaitingRoom(chatId) {
+  const cid = String(chatId);
   try {
-    const data = await redis.get(`waitingRoom:${chatId}`);
+    const data = await redis.get(`waitingRoom:${cid}`);
     if (data) {
       const room = JSON.parse(data);
-      // Agar eski kod qolib ketgan bo'lsa (Array bo'lsa), Object ga aylantiramiz
       if (Array.isArray(room.readyUsers)) {
         const obj = {};
         room.readyUsers.forEach(id => obj[id] = 'Foydalanuvchi');
         room.readyUsers = obj;
       }
-      // Endi Set kerak emas, chunki ID va Ismlar Object da saqlanmoqda
+      localWaitingRoomCache.set(cid, { data: room, expiresAt: Date.now() + 300 * 1000 });
       return room;
     }
-    return null;
   } catch (err) {
-    logger.error('sessionService.getWaitingRoom failed', { chatId, error: err.message });
-    return null;
+    logger.error('sessionService.getWaitingRoom failed, checking local fallback', { chatId: cid, error: err.message });
   }
+  const fallback = localWaitingRoomCache.get(cid);
+  if (fallback && fallback.expiresAt > Date.now()) {
+    return fallback.data;
+  }
+  return null;
 }
 
 async function setWaitingRoom(chatId, data) {
+  const cid = String(chatId);
+  localWaitingRoomCache.set(cid, { data, expiresAt: Date.now() + 300 * 1000 });
   try {
-    // Array.from kerak emas, Object o'z holicha saqlanadi
-    await redis.set(`waitingRoom:${chatId}`, JSON.stringify(data), 'EX', 300);
+    await redis.set(`waitingRoom:${cid}`, JSON.stringify(data), 'EX', 300);
   } catch (err) {
-    logger.error('sessionService.setWaitingRoom failed', { chatId, error: err.message });
+    logger.error('sessionService.setWaitingRoom failed, preserved in local fallback', { chatId: cid, error: err.message });
   }
 }
 
 async function deleteWaitingRoom(chatId) {
+  const cid = String(chatId);
+  localWaitingRoomCache.delete(cid);
   try {
-    await redis.del(`waitingRoom:${chatId}`);
+    await redis.del(`waitingRoom:${cid}`);
   } catch (err) {
-    logger.error('sessionService.deleteWaitingRoom failed', { chatId, error: err.message });
+    logger.error('sessionService.deleteWaitingRoom failed', { chatId: cid, error: err.message });
   }
 }
 
@@ -107,4 +145,7 @@ module.exports = {
   getActiveTest, setActiveTest, deleteActiveTest,
   getPollChat, setPollChat, deletePollChat,
   getWaitingRoom, setWaitingRoom, deleteWaitingRoom,
+  _localActiveTestCache: localActiveTestCache,
+  _localPollMapCache: localPollMapCache,
+  _localWaitingRoomCache: localWaitingRoomCache,
 };

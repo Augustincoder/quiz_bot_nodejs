@@ -1605,4 +1605,18 @@ module.exports = {
   buildIndexedDatabase,
   getLastRawTimetableHash: () => lastRawTimetableHash,
   resetRawTimetableHash: () => { lastRawTimetableHash = null; },
+  canAttemptEduPageNetwork,
+  recordEduPageFailure,
+  recordEduPageSuccess,
+  _getCircuitBreakerState: () => ({
+    state: circuitBreakerState,
+    consecutiveFailures,
+    nextCircuitRetryTime,
+    isHalfOpenProbeInFlight,
+  }),
+  _setCircuitBreakerState: (state, nextRetry = 0, inFlight = false) => {
+    circuitBreakerState = state;
+    nextCircuitRetryTime = nextRetry;
+    isHalfOpenProbeInFlight = inFlight;
+  },
 };

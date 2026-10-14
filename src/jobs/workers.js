@@ -6,6 +6,33 @@ const { escapeHtml, truncateText } = require('../core/utils');
 const logger = require('../core/logger');
 const dbService = require('../services/dbService');
 
+// Idempotency tracking to prevent duplicate message sends when BullMQ retries failed jobs (Bug 52)
+async function isUserSentInJob(jobId, userId) {
+  if (!jobId || !userId) return false;
+  try {
+    const key = `bullmq:job_sent:${jobId}`;
+    if (typeof redisConnection.sismember === 'function') {
+      return (await redisConnection.sismember(key, String(userId))) === 1;
+    }
+    const mem = await redisConnection.smembers(key);
+    return Array.isArray(mem) && mem.includes(String(userId));
+  } catch (err) {
+    logger.warn('Failed to check job sent status in Redis', { jobId, userId, error: err.message });
+    return false;
+  }
+}
+
+async function markUserSentInJob(jobId, userId) {
+  if (!jobId || !userId) return;
+  try {
+    const key = `bullmq:job_sent:${jobId}`;
+    await redisConnection.sadd(key, String(userId));
+    await redisConnection.expire(key, 86400); // 24-hour TTL for idempotency record
+  } catch (err) {
+    logger.warn('Failed to mark user sent in Redis', { jobId, userId, error: err.message });
+  }
+}
+
 function initWorkers(bot, scheduleService) {
   if (!process.env.REDIS_URL || redisConnection.isDummy) {
     logger.info('REDIS_URL not configured. Background BullMQ queue workers will not run in standalone mode.');
@@ -14,28 +41,89 @@ function initWorkers(bot, scheduleService) {
 
   const broadcastWorker = new Worker('broadcastQueue', async (job) => {
     if (job.name === 'schedule-change-alert') {
-      const { userId, message } = job.data;
-      try {
-        await bot.telegram.sendMessage(userId, message, { parse_mode: 'HTML' });
-      } catch (err) {
-        const isBlocked = err?.message?.includes('blocked') ||
-          err?.message?.includes('deactivated') ||
-          err?.message?.includes('chat not found') ||
-          err?.response?.error_code === 403;
+      const { userId, message, users, recipients } = job.data;
+      const targetUsers = Array.isArray(users)
+        ? users
+        : Array.isArray(recipients)
+          ? recipients
+          : userId ? [userId] : [];
 
-        if (isBlocked) {
-          logger.info('User blocked bot or deactivated during alert, marking blocked', { userId });
-          dbService.markUserBlocked(userId, true).catch(() => {});
-          return; // Terminal state, complete job without retrying
+      for (const target of targetUsers) {
+        const uid = typeof target === 'object' ? (target.id || target.telegram_id || target.userId) : target;
+        if (!uid) continue;
+
+        if (job.id && await isUserSentInJob(job.id, uid)) {
+          logger.info('User already received alert in previous attempt of this job, skipping duplicate send', { jobId: job.id, userId: uid });
+          continue;
         }
-        const retrySec = err?.response?.parameters?.retry_after || err?.parameters?.retry_after;
-        if (retrySec && retrySec <= 30) {
-          logger.warn(`Alert rate limit hit. Waiting ${retrySec}s`, { userId });
-          await new Promise(r => setTimeout(r, (retrySec + 1) * 1000));
-          await bot.telegram.sendMessage(userId, message, { parse_mode: 'HTML' });
-        } else {
-          logger.error('Alert sending failed, flagging job for BullMQ retry', { userId, error: err.message });
-          throw err; // Allow BullMQ attempts and backoff to retry
+
+        try {
+          await bot.telegram.sendMessage(uid, message, { parse_mode: 'HTML' });
+          if (job.id) await markUserSentInJob(job.id, uid);
+        } catch (err) {
+          const isBlocked = err?.message?.includes('blocked') ||
+            err?.message?.includes('deactivated') ||
+            err?.message?.includes('chat not found') ||
+            err?.response?.error_code === 403;
+
+          if (isBlocked) {
+            logger.info('User blocked bot or deactivated during alert, marking blocked', { userId: uid });
+            dbService.markUserBlocked(uid, true).catch(() => {});
+            if (job.id) await markUserSentInJob(job.id, uid);
+            continue; // Terminal state, continue to next user without failing whole batch
+          }
+          const retrySec = err?.response?.parameters?.retry_after || err?.parameters?.retry_after;
+          if (retrySec && retrySec <= 30) {
+            logger.warn(`Alert rate limit hit. Waiting ${retrySec}s`, { userId: uid });
+            await new Promise(r => setTimeout(r, (retrySec + 1) * 1000));
+            await bot.telegram.sendMessage(uid, message, { parse_mode: 'HTML' });
+            if (job.id) await markUserSentInJob(job.id, uid);
+          } else {
+            logger.error('Alert sending failed, flagging job for BullMQ retry', { userId: uid, error: err.message });
+            throw err; // Allow BullMQ attempts and backoff to retry remaining users
+          }
+        }
+      }
+      return;
+    }
+
+    if (job.name === 'batch-broadcast' || Array.isArray(job.data.users) || Array.isArray(job.data.recipients)) {
+      const { message, users, recipients } = job.data;
+      const targetUsers = Array.isArray(users) ? users : Array.isArray(recipients) ? recipients : [];
+      for (const target of targetUsers) {
+        const uid = typeof target === 'object' ? (target.id || target.telegram_id || target.userId) : target;
+        if (!uid) continue;
+
+        if (job.id && await isUserSentInJob(job.id, uid)) {
+          logger.info('User already received batch broadcast in previous attempt, skipping duplicate', { jobId: job.id, userId: uid });
+          continue;
+        }
+
+        try {
+          await bot.telegram.sendMessage(uid, message, { parse_mode: 'HTML' });
+          if (job.id) await markUserSentInJob(job.id, uid);
+        } catch (err) {
+          const isBlocked = err?.message?.includes('blocked') ||
+            err?.message?.includes('deactivated') ||
+            err?.message?.includes('chat not found') ||
+            err?.response?.error_code === 403;
+
+          if (isBlocked) {
+            logger.info('User blocked bot during batch broadcast, marking blocked', { userId: uid });
+            dbService.markUserBlocked(uid, true).catch(() => {});
+            if (job.id) await markUserSentInJob(job.id, uid);
+            continue;
+          }
+          const retrySec = err?.response?.parameters?.retry_after || err?.parameters?.retry_after;
+          if (retrySec && retrySec <= 30) {
+            logger.warn(`Batch broadcast rate limit hit. Waiting ${retrySec}s`, { userId: uid });
+            await new Promise(r => setTimeout(r, (retrySec + 1) * 1000));
+            await bot.telegram.sendMessage(uid, message, { parse_mode: 'HTML' });
+            if (job.id) await markUserSentInJob(job.id, uid);
+          } else {
+            logger.error('Batch broadcast failed for user, throwing for BullMQ retry', { userId: uid, error: err.message });
+            throw err;
+          }
         }
       }
       return;
@@ -44,6 +132,11 @@ function initWorkers(bot, scheduleService) {
     const { userId, className, dayOfWeek, isTomorrow } = job.data;
     if (!userId || !className) {
       logger.warn('Broadcast job skipped: missing userId or className', { data: job.data });
+      return;
+    }
+
+    if (job.id && await isUserSentInJob(job.id, userId)) {
+      logger.info('User already received broadcast in previous attempt of this job, skipping duplicate send', { jobId: job.id, userId });
       return;
     }
 
@@ -87,6 +180,7 @@ function initWorkers(bot, scheduleService) {
 
       try {
         await bot.telegram.sendMessage(userId, msg, { parse_mode: 'HTML' });
+        if (job.id) await markUserSentInJob(job.id, userId);
       } catch (err) {
         const isBlocked = err?.message?.includes('blocked') ||
           err?.message?.includes('deactivated') ||
@@ -96,6 +190,7 @@ function initWorkers(bot, scheduleService) {
         if (isBlocked) {
           logger.info('Broadcast user blocked bot or deactivated, marking blocked', { userId });
           dbService.markUserBlocked(userId, true).catch(() => {});
+          if (job.id) await markUserSentInJob(job.id, userId);
           return; // Terminal state, do not retry
         }
         const retrySec = err?.response?.parameters?.retry_after || err?.parameters?.retry_after;
@@ -103,6 +198,7 @@ function initWorkers(bot, scheduleService) {
           logger.warn(`Broadcast rate limit hit. Waiting ${retrySec}s`, { userId });
           await new Promise(r => setTimeout(r, (retrySec + 1) * 1000));
           await bot.telegram.sendMessage(userId, msg, { parse_mode: 'HTML' });
+          if (job.id) await markUserSentInJob(job.id, userId);
         } else {
           logger.error('Broadcast message sending failed, flagging for BullMQ retry', { userId, error: err.message });
           throw err; // Trigger BullMQ retry
@@ -144,5 +240,8 @@ function initWorkers(bot, scheduleService) {
   logger.info('👷 BullMQ workers initialized successfully');
   return { broadcastWorker, quizTimerWorker };
 }
+
+initWorkers.isUserSentInJob = isUserSentInJob;
+initWorkers.markUserSentInJob = markUserSentInJob;
 
 module.exports = initWorkers;
