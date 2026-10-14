@@ -332,7 +332,7 @@ async function cmdHafta(ctx) {
       : '';
 
     try {
-      await ctx.replyWithPhoto(
+      const sentMsg = await ctx.replyWithPhoto(
         media,
         {
           caption: `🎓 <b>Haftalik Jadval: ${escapeHtml(className)}</b>\n<i>🎨 Mavzu: ${themeLabel}</i>${changeNotice}`,
@@ -342,6 +342,20 @@ async function cmdHafta(ctx) {
       );
       if (msg?.message_id) {
         await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(() => {});
+      }
+      // Bug 31 fix: When photo is rendered from buffer (local fallback due to 429), save Telegram's returned file_id to cache!
+      if (!photoResult.fileId && sentMsg?.photo?.length > 0) {
+        const bestPhoto = sentMsg.photo[sentMsg.photo.length - 1];
+        if (bestPhoto?.file_id) {
+          dbService.upsertTimetableCache({
+            groupName: className,
+            groupNormalized: edupageService.normalizeGroupName(className),
+            theme: userTheme,
+            fileId: bestPhoto.file_id,
+            channelMessageId: null,
+            scheduleHash: null,
+          }).catch(() => {});
+        }
       }
     } catch (sendErr) {
       const errStr = String(sendErr?.message || sendErr);

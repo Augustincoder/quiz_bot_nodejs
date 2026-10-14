@@ -4,6 +4,32 @@ Barcha muhim o'zgarishlar, yangilanishlar va xavfsizlik yaxshilanishlari ushbu h
 
 ---
 
+## [1.2.2] — 2026-10-15
+
+### 🎨 55 Bugs Simulyatsiyasi: 3-Bosqich — Rasmlar, CDN va WebSocket Kahoot (Bugs 28–32, 38–42)
+* **Kritik: Sharp C++ Off-Heap OOM (SIGKILL 137) Oldi Olindi (SCHED-SIM-08 / Bug 28):**
+  - Node.js V8 GC nazoratidan tashqaridagi Sharp/libvips C++ xotira chaqnashlarini to'xtatish uchun `RenderSemaphore` (maksimal 2 ta parallel render) joriy etildi. Server xotirasi (RAM) qat'iy normada saqlanadi.
+* **Kritik: Dars Kartasida Matn Sig'masligi va Vizual Buzilish Tuzatildi (SCHED-SIM-08 / Bug 29):**
+  - Juda uzun fan nomi va bir nechta o'qituvchilar bo'lganda `buildCardSvg` ichida dinamik shrift o'lchami kichraytirildi (`effectiveFSize -= 2`), pastki xona banneri ustiga matn minib qolishi to'liq bartaraf etildi.
+* **Kritik: JIT Rasm Generatsiyasida Cache Stampede Coalescing (SCHED-SIM-09 / Bug 30):**
+  - Bir vaqtning o'zida yuzlab talabalar bir xil guruh jadvalini so'raganda serverni qulatmaslik uchun `timetableCdnService` da `inflightRequests` Singleflight Promise Map joriy qilindi. Parallel so'rovlar bitta generatsiya vazifasiga birlashtirildi.
+* **Yuqori: Telegram CDN 429 Cheklovida O'z-o'zini Keshlovchi Fallback (SCHED-SIM-09 / Bug 31):**
+  - Telegram kanali 429 xatosi berganda, foydalanuvchiga to'g'ridan-to'g'ri yuborilgan rasmning Telegram tomonidan qaytarilgan `file_id` si avtomatik olinib bazaga keshlandi.
+* **Yuqori: Eskirgan / Noto'g'ri `file_id` Self-Healing Qayta Generatsiya (SCHED-SIM-09 / Bug 32):**
+  - Telegram `wrong file identifier`, `FILE_ID_INVALID` xatolarini bergan holatda eskirgan kesh darhol o'chirilib, yangi rasm render qilinib foydalanuvchiga uzatilishi ta'minlandi.
+* **Kritik: Kahoot Savollarida Erta Javob Berilganda Ghost Timer Xatosi (SOCK-SIM-01 / Bug 38):**
+  - `advanceQuestion` chaqirilganda eski savolning barcha taymerlari (`readTimer`, `actionTimer`, `cooldownTimer`) to'liq tozalandi va `null` qilindi. `actionTimer` ichida savol raqami tekshiruvi qo'yilib, barcha ishtirokchilar javob berganda taymer darhol to'xtatilishi yo'lga qo'yildi.
+* **Kritik: WebSocket Javob Yuborishda Double-Submit va Ball O'g'irlash Poygasi (SOCK-SIM-02 / Bug 39):**
+  - `kahoot:answer_submit` eventida asinxron kechikishlar olib tashlandi; xotiradagi `roomManager.rooms` xaritasidan sinxron o'qilib, `room.kahootAnswers.has(userId)` orqali atomik sinxron tekshirish o'rnatildi.
+* **Yuqori: Tarmoq Uzilishida 10 Sekundlik Grace Period va Ballarni Saqlash (SOCK-SIM-03 / Bug 40):**
+  - Foydalanuvchi interneti uzilib qayta ulanganda uning yig'gan bali nolga aylanmasligi uchun 10 soniyalik kutish taymeri o'rnatildi va qayta ulanganda uzilish taymeri bekor qilinib holat to'liq tiklanadi.
+* **Yuqori: Xona Egasi (Host) Chiqib Ketganda Zombie Room Va Memory Leak Himoyasi (SOCK-SIM-03 / Bug 41):**
+  - Host o'yindan chiqqanda xona egasi huquqi avtomatik ravishda keyingi faol o'yinchiga o'tadi (`room:host_changed`). Oxirgi o'yinchi chiqqanda esa barcha taymerlar tozalangan holda xona xotiradan to'liq o'chiriladi.
+* **Kritik: Telegram WebApp `initData` Replay Attack Himoyasi (SOCK-SIM-03 / Bug 42):**
+  - `validateTelegramInitData` da `auth_date` majburiy qilindi; 24 soatdan oshgan yoki kelajakka 60 soniyadan ortiq siljigan ma'lumotlar bekor qilinadi.
+
+---
+
 ## [1.2.1] — 2026-10-15
 
 ### 📅 55 Bugs Simulyatsiyasi: 2-Bosqich — Dars Jadvali, EduPage Parsing va Sanity (Bugs 19–27, 33–37)

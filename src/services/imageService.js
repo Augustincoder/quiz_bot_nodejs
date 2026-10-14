@@ -9,6 +9,44 @@ const sharp = require('sharp');
 sharp.cache(false);
 sharp.concurrency(1);
 
+// Concurrency Semaphore (Bug 28 fix): limits parallel Sharp rendering to 2 concurrent jobs
+// Prevents C++ native off-heap memory spikes and container OOM kills (SIGKILL 137)
+class RenderSemaphore {
+  constructor(maxConcurrency = 2) {
+    this.maxConcurrency = maxConcurrency;
+    this.current = 0;
+    this.queue = [];
+  }
+
+  async acquire() {
+    if (this.current < this.maxConcurrency) {
+      this.current++;
+      return;
+    }
+    return new Promise((resolve) => this.queue.push(resolve));
+  }
+
+  release() {
+    this.current--;
+    if (this.queue.length > 0) {
+      this.current++;
+      const next = this.queue.shift();
+      next();
+    }
+  }
+
+  async run(fn) {
+    await this.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
+  }
+}
+
+const renderSemaphore = new RenderSemaphore(2);
+
 // Sync bundled fonts to ~/.fonts for fontconfig/librsvg detection
 try {
   const userFontsDir = path.join(os.homedir(), '.fonts');
@@ -1207,8 +1245,26 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
   }
 
   const availableH = bannerY - topZoneY - 14;
-  const totalTextH = subjLines.length * (fSize * 1.18);
-  const textStartY = Math.round(topZoneY + (availableH - totalTextH) / 2 + fSize * 0.85);
+
+  // Dynamic height guard (Bug 29 fix): prevent subject lines from clipping into bottom room banner
+  let effectiveFSize = fSize;
+  let lineHeight = Math.round(effectiveFSize * 1.18);
+  let totalTextH = subjLines.length * lineHeight;
+
+  while (totalTextH > availableH - 8 && effectiveFSize > 24) {
+    effectiveFSize -= 2;
+    lineHeight = Math.round(effectiveFSize * 1.18);
+    totalTextH = subjLines.length * lineHeight;
+  }
+
+  let safeSubjLines = [...subjLines];
+  while (safeSubjLines.length * lineHeight > availableH - 8 && safeSubjLines.length > 1) {
+    safeSubjLines.pop();
+    safeSubjLines[safeSubjLines.length - 1] = safeSubjLines[safeSubjLines.length - 1].replace(/[.,;: ]+$/, '') + '…';
+  }
+
+  totalTextH = safeSubjLines.length * lineHeight;
+  const textStartY = Math.round(topZoneY + Math.max(0, (availableH - totalTextH) / 2) + effectiveFSize * 0.85);
 
   return `
     <g>
@@ -1227,9 +1283,9 @@ function buildCardSvg(lesson, baseX, baseY, span, cellW, colorSet) {
 
       <!-- Subject Title (Priority #2) -->
       <g transform="translate(${cardX + 24}, 0)">
-        ${subjLines.map((l, idx) => `
-          <text x="0" y="${textStartY + idx * Math.round(fSize * 1.18)}"
-                font-size="${fSize}" font-weight="900"
+        ${safeSubjLines.map((l, idx) => `
+          <text x="0" y="${textStartY + idx * lineHeight}"
+                font-size="${effectiveFSize}" font-weight="900"
                 fill="${colorSet.subjText}">${l}</text>
         `).join('')}
       </g>
@@ -1409,12 +1465,14 @@ async function generateScheduleImage(className, schedule, themeName = 'dark', op
     return svgString;
   }
 
-  return sharp(Buffer.from(svgString))
-    .png({
-      compressionLevel: 4,
-      effort: 1,
-    })
-    .toBuffer();
+  return renderSemaphore.run(() => {
+    return sharp(Buffer.from(svgString))
+      .png({
+        compressionLevel: 4,
+        effort: 1,
+      })
+      .toBuffer();
+  });
 }
 
 module.exports = {
@@ -1422,4 +1480,6 @@ module.exports = {
   THEMES,
   parseTeachers,
   formatTeacherName,
+  RenderSemaphore,
+  renderSemaphore,
 };

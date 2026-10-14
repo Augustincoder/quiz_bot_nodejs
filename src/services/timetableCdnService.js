@@ -547,4 +547,5 @@ module.exports = {
   stopPrewarmWorker,
   getWorkerStatus,
   invalidateTimetable,
+  inflightRequests,
 };

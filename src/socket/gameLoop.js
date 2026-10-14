@@ -12,8 +12,10 @@ async function advanceQuestion(roomCode) {
   const room = await roomManager.getRoom(roomCode);
   if (!room) return;
 
-  // Clear all timers
-  [room.readTimer, room.actionTimer, room.cooldownTimer].forEach(t => t && clearTimeout(t));
+  // Clear all timers (Bug 38 fix: ensure timers are cleared and nulled)
+  if (room.readTimer) { clearTimeout(room.readTimer); room.readTimer = null; }
+  if (room.actionTimer) { clearTimeout(room.actionTimer); room.actionTimer = null; }
+  if (room.cooldownTimer) { clearTimeout(room.cooldownTimer); room.cooldownTimer = null; }
 
   // Reset room state for new question
   room.lockedPlayers = new Set();
@@ -60,13 +62,14 @@ async function advanceQuestion(roomCode) {
   });
 
   room.readTimer = setTimeout(() => {
+    room.readTimer = null;
     room.status = 'action';
     io.to(roomCode).emit('game:phase_action', { index: qIndex });
     
-    // Auto-advance if no one answers? Usually Kahoot waits for everyone or timer.
-    // For now, let the action timer handle the timeout.
+    // Auto-advance if no one answers? Action timer handles timeout.
     room.actionTimer = setTimeout(() => {
-        if (room.status === 'action') {
+        // Bug 38 fix: verify that question index has not advanced before firing
+        if (room.status === 'action' && room.currentIndex === qIndex + 1) {
             io.to(roomCode).emit('game:leaderboard', { 
                 correctAnswer: room.currentAnswer,
                 explanation: room.currentExplanation,

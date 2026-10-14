@@ -83,6 +83,15 @@ class RoomManager {
         player.disconnectTimer = null;
       }
       room.players.delete(userId);
+
+      // Bug 41 fix: Migrate host to next remaining active player if host departed
+      if (String(room.hostId) === String(userId) && room.players.size > 0) {
+        const nextPlayer = room.players.values().next().value;
+        if (nextPlayer) {
+          room.hostId = nextPlayer.userId;
+        }
+      }
+
       if (room.players.size === 0) {
         await this.deleteRoom(roomCode);
         return null;

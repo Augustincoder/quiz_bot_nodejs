@@ -141,12 +141,12 @@ function initSocket(httpServer) {
     // --- Kahoot Game Logic ---
     socket.on("kahoot:answer_submit", async ({ roomCode, answerIndex }) => {
         if (!isValidRoomCode(roomCode)) return;
-        const room = await roomManager.getRoom(roomCode);
+        // Synchronous lookup from in-memory Map (Bug 39 fix: zero async tick delay)
+        const room = roomManager.rooms?.get(roomCode);
         if (!room || room.status !== 'action') return;
 
-        // Prevent duplicate answers / race condition score tampering
+        // Atomic synchronous guard against double-submit (Bug 39 fix)
         if (room.kahootAnswers.has(userId)) return;
-
         room.kahootAnswers.set(userId, answerIndex);
 
         if (String(answerIndex) === String(room.currentAnswer)) {
@@ -154,9 +154,16 @@ function initSocket(httpServer) {
             if (player) player.score += 10;
         }
 
-        // If all players answered, show leaderboard
+        // If all players answered, cancel active timer and show leaderboard (Bug 38 fix)
         if (room.kahootAnswers.size >= room.players.size) {
-            if (room.actionTimer) clearTimeout(room.actionTimer);
+            if (room.actionTimer) {
+              clearTimeout(room.actionTimer);
+              room.actionTimer = null;
+            }
+            if (room.readTimer) {
+              clearTimeout(room.readTimer);
+              room.readTimer = null;
+            }
             io.to(roomCode).emit('game:leaderboard', { 
                 correctAnswer: room.currentAnswer,
                 explanation: room.currentExplanation,
@@ -196,9 +203,16 @@ function initSocket(httpServer) {
             const p = currentRoom?.players.get(userId);
             if (p && p.disconnected) {
               console.log(`⏱️ Grace period expired for User ${userId} in Room ${room.roomCode}. Removing player.`);
+              const oldHostId = currentRoom?.hostId;
               await roomManager.removePlayer(room.roomCode, userId);
+              const updatedRoom = await roomManager.getRoom(room.roomCode);
+              if (updatedRoom && updatedRoom.hostId !== oldHostId) {
+                io.to(room.roomCode).emit("room:host_changed", {
+                  hostId: updatedRoom.hostId,
+                });
+              }
               io.to(room.roomCode).emit("room:player_left", {
-                players: currentRoom?.players ? Array.from(currentRoom.players.values()) : []
+                players: updatedRoom?.players ? Array.from(updatedRoom.players.values()) : []
               });
             }
           }, 10000);
