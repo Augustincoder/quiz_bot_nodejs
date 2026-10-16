@@ -802,8 +802,10 @@ async function cbV2ModeCustom(ctx) {
   }
   await safeAnswerCb(ctx);
   return ctx.reply(
-    '🎯 <b>Dars jadvali uchun qulay ertalabki vaqtni kiriting:</b>\n\n' +
-    'Format: <code>HH:mm</code> (masalan: <code>06:45</code>, <code>07:15</code> yoki <code>08:00</code>)',
+    '🎯 <b>Dars jadvali uchun qulay vaqtni kiriting:</b>\n\n' +
+    '• <b>00:00 – 17:59:</b> Bugungi kun jadvali uchun (ertalabki/kunduzgi)\n' +
+    '• <b>18:00 – 23:59:</b> Ertangi kun jadvali anonsi uchun (kechki)\n\n' +
+    'Format: <code>HH:mm</code> (masalan: <code>07:15</code> yoki <code>20:30</code>)',
     { parse_mode: 'HTML' }
   );
 }
@@ -812,19 +814,34 @@ async function onCustomTimeInput(ctx) {
   const text = (ctx.message?.text || '').trim();
   const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
   if (!timeRegex.test(text)) {
-    return ctx.reply('⚠️ Noto‘g‘ri vaqt formati! Iltimos, <code>HH:mm</code> formatida kiriting (Masalan: <code>07:00</code>):', { parse_mode: 'HTML' });
+    return ctx.reply('⚠️ Noto‘g‘ri vaqt formati! Iltimos, <code>HH:mm</code> formatida kiriting (Masalan: <code>07:00</code> yoki <code>20:30</code>):', { parse_mode: 'HTML' });
   }
 
+  const [hh] = text.split(':').map(Number);
   const userId = ctx.from?.id;
   if (ctx.session) ctx.session.state = null;
-  await dbService.upsertUserScheduleSettings(userId, {
-    notify_mode: 'custom_time',
-    custom_morning_time: text,
-  });
 
-  return ctx.reply(`✅ <b>Eslatma vaqti muvaffaqiyatli saqlandi:</b> <code>${text}</code>`, {
-    parse_mode: 'HTML',
-  });
+  if (hh < 18) {
+    await dbService.upsertUserScheduleSettings(userId, {
+      notify_mode: 'custom_time',
+      custom_morning_time: text,
+    });
+    return ctx.reply(
+      `✅ <b>Eslatma vaqti saqlandi:</b> <code>${text}</code>\n\n` +
+      `Har kuni soat <code>${text}</code> da <b>bugungi</b> dars jadvalingiz yuboriladi (ertalabki/kunduzgi rejim: 00:00–17:59).`,
+      { parse_mode: 'HTML' }
+    );
+  } else {
+    await dbService.upsertUserScheduleSettings(userId, {
+      notify_mode: 'custom_time',
+      custom_evening_time: text,
+    });
+    return ctx.reply(
+      `✅ <b>Eslatma vaqti saqlandi:</b> <code>${text}</code>\n\n` +
+      `Har kuni soat <code>${text}</code> da <b>ertangi</b> dars jadvalingiz yuboriladi (kechki anons rejimi: 18:00–23:59).`,
+      { parse_mode: 'HTML' }
+    );
+  }
 }
 
 function register(bot) {

@@ -1741,6 +1741,7 @@ function detectBuildingTransition(currentLesson, nextLesson) {
  */
 function isSameDoublePair(currentLesson, nextLesson) {
   if (!currentLesson || !nextLesson) return false;
+  if (nextLesson.isContinuation) return true;
   const sub1 = normalizeSubjectKey(currentLesson.subject);
   const sub2 = normalizeSubjectKey(nextLesson.subject);
   if (!sub1 || !sub2 || sub1.toLowerCase() !== sub2.toLowerCase()) return false;
@@ -1909,6 +1910,7 @@ function findUpcomingCourseOccurrences(fullGroupTimetable, subjectName, targetLe
       const items = Array.isArray(daySchedule[p]) ? daySchedule[p] : [daySchedule[p]];
       for (const item of items) {
         if (!item || !item.subject) continue;
+        if (item.isContinuation) continue;
         const itemNorm = normalizeSubjectKey(item.subject).toLowerCase();
         if (itemNorm !== baseNorm && !itemNorm.includes(baseNorm) && !baseNorm.includes(itemNorm)) {
           continue;

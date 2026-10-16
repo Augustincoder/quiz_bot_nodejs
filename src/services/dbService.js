@@ -601,6 +601,7 @@ async function updateUserClass(telegramId, className) {
         logger.warn('Supabase updateUserClass returned error', { error: error.message, uid });
       }
       await supabase.from('user_schedule_settings').update({ group_name: canonical }).eq('telegram_id', uid).catch(() => {});
+      invalidateSubscribersCache();
     } catch (e) {
       logger.error('updateUserClass error:', { telegramId: uid, error: e.message });
     }
@@ -854,6 +855,7 @@ async function markUserBlocked(userId, isBlocked = true) {
     if (supabase) {
       await supabase.from('users').update({ is_blocked: isBlocked }).eq('telegram_id', uid);
     }
+    invalidateSubscribersCache();
     logger.debug('Updated user blocked status', { userId: uid, isBlocked });
   } catch (err) {
     logger.warn('markUserBlocked error:', { userId: uid, error: err.message });
@@ -1319,7 +1321,6 @@ async function upsertUserScheduleSettings(telegramId, patch) {
       if (patch.custom_morning_time !== undefined) userUpdates.notif_custom_time = patch.custom_morning_time;
       if (patch.pre_class_5min_bell !== undefined) userUpdates.notif_next_bell = patch.pre_class_5min_bell;
       if (groupName !== undefined) {
-        userUpdates.student_group = groupName;
         userUpdates.class_name = groupName;
       }
 
@@ -1331,6 +1332,7 @@ async function upsertUserScheduleSettings(telegramId, patch) {
           .catch(() => {});
       }
 
+      invalidateSubscribersCache();
       return !error;
     }
   } catch (err) {
@@ -1340,12 +1342,37 @@ async function upsertUserScheduleSettings(telegramId, patch) {
   return false;
 }
 
+// Active schedule subscribers L1 in-memory cache (3-minute TTL)
+let activeSubscribersCache = null;
+let activeSubscribersCacheExpiresAt = 0;
+const SUBSCRIBERS_CACHE_TTL_MS = 3 * 60 * 1000;
+
+function invalidateSubscribersCache() {
+  activeSubscribersCache = null;
+  activeSubscribersCacheExpiresAt = 0;
+}
+
+// Due notes L1 in-memory cache (1-minute TTL)
+const dueNotesCache = new Map();
+const DUE_NOTES_CACHE_TTL_MS = 60 * 1000;
+
+function invalidateDueNotesCache() {
+  dueNotesCache.clear();
+}
+
 /**
  * Paginated fetch of all active schedule subscribers (>1000 users safe).
  * Merges public.users and public.user_schedule_settings by telegram_id.
+ * Caches in memory for 3 minutes to avoid hammering Supabase on every 60-second cron tick.
+ * @param {boolean} forceRefresh
  */
-async function getAllActiveScheduleSubscribers() {
+async function getAllActiveScheduleSubscribers(forceRefresh = false) {
   if (!supabase) return [];
+  const now = Date.now();
+  if (!forceRefresh && activeSubscribersCache && now < activeSubscribersCacheExpiresAt) {
+    return activeSubscribersCache;
+  }
+
   const PAGE_SIZE = 1000;
   const subscriberMap = new Map();
 
@@ -1355,9 +1382,9 @@ async function getAllActiveScheduleSubscribers() {
     while (true) {
       const { data, error } = await supabase
         .from('users')
-        .select('telegram_id, student_group, class_name, schedule_notifications, notif_mode, notif_offset_min, notif_custom_time, notif_evening_preview, notif_next_bell, is_banned, is_blocked')
-        .neq('is_banned', true)
-        .neq('is_blocked', true)
+        .select('telegram_id, class_name, is_banned')
+        .not('class_name', 'is', null)
+        .or('is_banned.is.null,is_banned.eq.false')
         .range(from, from + PAGE_SIZE - 1);
 
       if (error) {
@@ -1367,19 +1394,20 @@ async function getAllActiveScheduleSubscribers() {
       if (!data || data.length === 0) break;
 
       for (const u of data) {
-        const group = u.student_group || u.class_name;
+        const group = u.class_name;
         if (!group) continue;
-        if (u.schedule_notifications === false || u.notif_mode === 'disabled') continue;
 
         const uid = Number(u.telegram_id);
+        if (localBlockedUsers.has(String(uid))) continue;
+
         subscriberMap.set(uid, {
           telegram_id: uid,
           group_name: group,
-          notify_mode: u.notif_mode || 'shift_aware',
-          offset_minutes: Number(u.notif_offset_min) || 60,
-          custom_morning_time: u.notif_custom_time || '07:00',
+          notify_mode: 'shift_aware',
+          offset_minutes: 60,
+          custom_morning_time: '07:00',
           custom_evening_time: '20:00',
-          pre_class_5min_bell: u.notif_next_bell !== false,
+          pre_class_5min_bell: true,
           building_change_alert: true,
           quiet_hours_enabled: true,
           schedule_notifications: true,
@@ -1434,9 +1462,14 @@ async function getAllActiveScheduleSubscribers() {
       from += PAGE_SIZE;
     }
 
-    return Array.from(subscriberMap.values());
+    activeSubscribersCache = Array.from(subscriberMap.values());
+    activeSubscribersCacheExpiresAt = Date.now() + SUBSCRIBERS_CACHE_TTL_MS;
+    return activeSubscribersCache;
   } catch (err) {
     logger.error('getAllActiveScheduleSubscribers exception:', { error: err.message });
+    if (activeSubscribersCache) {
+      return activeSubscribersCache;
+    }
     return Array.from(subscriberMap.values());
   }
 }
@@ -1458,7 +1491,7 @@ async function createCourseNote(payload) {
       target_date: payload.target_date,
       target_period: Number(payload.target_period) || 1,
       target_start_time: payload.target_start_time || null,
-      note_text: payload.note_text || null,
+      note_text: payload.note_text ? String(payload.note_text).slice(0, 2000) : null,
       media_file_id: payload.media_file_id || null,
       media_type: payload.media_type || null,
       status: payload.status || 'pending',
@@ -1498,6 +1531,7 @@ async function createCourseNote(payload) {
       logger.error('createCourseNote error:', { error: error.message });
       return null;
     }
+    invalidateDueNotesCache();
     return data;
   } catch (err) {
     logger.error('createCourseNote exception:', { error: err.message });
@@ -1507,17 +1541,29 @@ async function createCourseNote(payload) {
 
 /**
  * Gets notes due for a specific date and target group / student.
+ * Caches global date queries in memory for 1 minute to avoid redundant database reads.
  * @param {number|string} telegramId
  * @param {string} groupName
  * @param {string} dateStr 'YYYY-MM-DD'
  */
 async function getDueNotesForLesson(telegramId, groupName, dateStr) {
   if (!supabase || !dateStr) return [];
+  const isGlobalDateQuery = !telegramId && !groupName;
+  const now = Date.now();
+
+  if (isGlobalDateQuery && dueNotesCache.has(dateStr)) {
+    const cached = dueNotesCache.get(dateStr);
+    if (now < cached.expiresAt) {
+      return cached.data;
+    }
+    dueNotesCache.delete(dateStr);
+  }
+
   try {
     let query = supabase
       .from('course_notes')
       .select('*')
-      .in('status', ['pending', 'notified_evening'])
+      .in('status', ['pending', 'notified_evening', 'snoozed'])
       .eq('target_date', dateStr);
 
     if (telegramId && groupName) {
@@ -1534,13 +1580,25 @@ async function getDueNotesForLesson(telegramId, groupName, dateStr) {
       const { data: altData } = await supabase
         .from('class_notes')
         .select('*')
-        .eq('status', 'pending')
+        .in('status', ['pending', 'snoozed'])
         .eq('target_date', dateStr);
-      return altData || [];
+      const resData = altData || [];
+      if (isGlobalDateQuery) {
+        dueNotesCache.set(dateStr, { data: resData, expiresAt: now + DUE_NOTES_CACHE_TTL_MS });
+      }
+      return resData;
     }
-    return data || [];
+
+    const resData = data || [];
+    if (isGlobalDateQuery) {
+      dueNotesCache.set(dateStr, { data: resData, expiresAt: now + DUE_NOTES_CACHE_TTL_MS });
+    }
+    return resData;
   } catch (err) {
     logger.error('getDueNotesForLesson exception:', { error: err.message });
+    if (isGlobalDateQuery && dueNotesCache.has(dateStr)) {
+      return dueNotesCache.get(dateStr).data;
+    }
     return [];
   }
 }
@@ -1578,17 +1636,35 @@ async function getNoteById(noteId) {
  * @param {string|null} newTargetDate 'YYYY-MM-DD'
  * @param {number|null} newTargetPeriod
  */
-async function updateNoteStatus(noteId, telegramId, newStatus, newTargetDate = null, newTargetPeriod = null, newStartTime = null) {
+async function updateNoteStatus(noteId, telegramId, newStatus, newTargetDate = null, newTargetPeriod = null, newStartTime = null, extraFields = null) {
   if (!supabase || !noteId) return false;
   try {
     const id = Number(noteId);
     const updates = {
-      status: newStatus,
       updated_at: new Date().toISOString(),
     };
+
+    if (newStatus === 'notified_before_class') {
+      updates.notified_before_class_at = new Date().toISOString();
+    } else if (newStatus) {
+      updates.status = newStatus;
+      if (newStatus === 'notified_evening') {
+        updates.notified_evening_at = new Date().toISOString();
+      }
+    }
+
+    if (newStatus === 'snoozed' || newTargetDate) {
+      updates.notified_before_class_at = null;
+      updates.notified_evening_at = null;
+    }
+
     if (newTargetDate) updates.target_date = newTargetDate;
     if (newTargetPeriod) updates.target_period = Number(newTargetPeriod);
     if (newStartTime) updates.target_start_time = newStartTime;
+
+    if (extraFields && typeof extraFields === 'object') {
+      Object.assign(updates, extraFields);
+    }
 
     let query = supabase.from('course_notes').update(updates).eq('id', id);
     if (telegramId) {
@@ -1602,6 +1678,7 @@ async function updateNoteStatus(noteId, telegramId, newStatus, newTargetDate = n
       error = res.error;
     }
 
+    invalidateDueNotesCache();
     return !error;
   } catch (err) {
     logger.error('updateNoteStatus exception:', { noteId, error: err.message });
@@ -1716,5 +1793,7 @@ module.exports = {
   getPendingNotesForDate: (dateStr) => getDueNotesForLesson(null, null, dateStr),
   getUserPendingNotes: getUserActiveNotes,
   _userStatsQueues: userStatsQueues,
+  invalidateSubscribersCache,
+  invalidateDueNotesCache,
 };
 

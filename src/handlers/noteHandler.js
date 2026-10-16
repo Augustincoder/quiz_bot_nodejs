@@ -8,6 +8,7 @@ const { escapeHtml, truncateText, safeCallbackData } = require('../core/utils');
 const logger = require('../core/logger');
 
 const NOTE_STATE_TTL = 15 * 60 * 1000; // 15 daqiqa
+const activeNoteSaves = new Set(); // In-flight mutex to prevent double-tap duplicate creations
 
 /**
  * Extracts note text or media (photo, document, voice) from message or reply
@@ -47,7 +48,7 @@ function extractNoteContentFromMessage(msg, commandName = 'note') {
 
   if (!rawText && !mediaFileId) return null;
   return {
-    text: rawText || (mediaType ? `📎 ${mediaType.toUpperCase()} biriktirildi` : 'Topshiriq'),
+    text: (rawText || (mediaType ? `📎 ${mediaType.toUpperCase()} biriktirildi` : 'Topshiriq')).slice(0, 2000),
     mediaType,
     mediaFileId,
   };
@@ -304,24 +305,34 @@ async function handleNoteCallback(ctx) {
       return ctx.answerCbQuery('⚠️ Guruh eslatmasini faqat uni yaratgan sardor yoki admin o‘zgartira oladi!', { show_alert: true }).catch(() => {});
     }
 
-    const now = edupageService.getTashkentNow();
-    const futureDate = new Date(now.getTime() + 12 * 3600 * 1000);
+    const now = new Date(Date.now() + 15 * 60 * 1000);
+    let noteTargetDate = null;
+    if (note.target_date && note.target_start_time) {
+      const parsed = new Date(`${note.target_date}T${note.target_start_time}:00+05:00`);
+      if (!isNaN(parsed.getTime())) {
+        noteTargetDate = parsed;
+      }
+    }
+    const searchFrom = (noteTargetDate && noteTargetDate > now)
+      ? new Date(noteTargetDate.getTime() + 15 * 60 * 1000)
+      : now;
+
     const occurrences = scheduleService.getUpcomingSubjectOccurrences(
       note.group_name,
       note.subject_name,
       4,
-      futureDate,
+      searchFrom,
       note.target_lesson_type || 'any'
     );
 
     const nextOcc = occurrences.find(o => note.target_lesson_type === 'any' || o.lessonType === note.target_lesson_type) || occurrences[0];
 
     if (!nextOcc) {
-      return ctx.answerCbQuery('⚠️ Keyingi haftada ushbu dars topilmadi', { show_alert: true }).catch(() => {});
+      return ctx.answerCbQuery('⚠️ Keyingi dars jadvalda topilmadi', { show_alert: true }).catch(() => {});
     }
 
-    await db.updateNoteStatus(noteId, null, 'pending', nextOcc.dateIso, nextOcc.period, nextOcc.startTime);
-    await ctx.answerCbQuery(`⏳ ${nextOcc.dateDisplay} (${nextOcc.period}-para) ga ko‘chirildi!`, { show_alert: true }).catch(() => {});
+    await db.updateNoteStatus(noteId, null, 'snoozed', nextOcc.dateIso, nextOcc.period, nextOcc.startTime);
+    await ctx.answerCbQuery(`⏳ Keyingi darsga ko‘chirildi: ${nextOcc.dateDisplay} (${nextOcc.period}-para, ${nextOcc.startTime})`, { show_alert: true }).catch(() => {});
     return ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
   }
 
@@ -395,49 +406,59 @@ async function handleNoteCallback(ctx) {
 
   // Pick occurrence: no:<index> or note_occ_<index>
   if (data.startsWith('no:') || data.startsWith('note_occ_')) {
-    await ctx.answerCbQuery('✅ Saqlanmoqda...').catch(() => {});
-    const occIdx = Number(data.replace(/^(?:no:|note_occ_)/, ''));
-    const occ = wiz.occurrences && wiz.occurrences[occIdx];
-    if (!occ || !wiz.content) return;
-
-    const saved = await db.createCourseNote({
-      creator_id: userId,
-      group_name: wiz.groupName,
-      is_group_shared: Boolean(wiz.isGroupShared),
-      subject_name: wiz.selectedSubject,
-      subject_norm: edupageService.normalizeSubjectKey(wiz.selectedSubject).toLowerCase(),
-      target_lesson_type: occ.lessonType,
-      target_date: occ.dateIso,
-      target_period: occ.period,
-      target_start_time: occ.startTime,
-      note_text: wiz.content.text,
-      media_type: wiz.content.mediaType,
-      media_file_id: wiz.content.mediaFileId,
-      status: 'pending',
-    });
-
-    await pendingStore.del(`note_wiz:${userId}`);
-
-    if (!saved) {
-      return ctx.editMessageText('❌ Saqlashda xatolik yuz berdi.').catch(() => {});
+    if (activeNoteSaves.has(userId)) {
+      return ctx.answerCbQuery('⏳ Saqlanmoqda, iltimos kuting...').catch(() => {});
     }
+    activeNoteSaves.add(userId);
 
-    const scopeBadge = wiz.isGroupShared
-      ? `👥 <b>Butun ${escapeHtml(wiz.groupName)} guruhi uchun</b>`
-      : `👤 <b>Shaxsiy eslatma</b>`;
+    try {
+      await ctx.answerCbQuery('✅ Saqlanmoqda...').catch(() => {});
+      const occIdx = Number(data.replace(/^(?:no:|note_occ_)/, ''));
+      const occ = wiz.occurrences && wiz.occurrences[occIdx];
+      if (!occ || !wiz.content) return;
 
-    const typeLabel = occ.lessonType === 'practice' ? "✍️ Amaliyot" : (occ.lessonType === 'lecture' ? "📖 Ma'ruza" : "Dars");
+      // Immediately consume wizard state to prevent rapid double-click duplicate creation
+      await pendingStore.del(`note_wiz:${userId}`);
 
-    return ctx.editMessageText(
-      `✅ <b>Topshiriq muvaffaqiyatli saqlandi!</b>\n\n` +
-      `${scopeBadge}\n` +
-      `📘 <b>Fan:</b> ${escapeHtml(wiz.selectedSubject)}\n` +
-      `🎯 <b>Dars turi:</b> ${typeLabel}\n` +
-      `📅 <b>Sana va vaqt:</b> ${occ.dateDisplay} • ${occ.period}-para (${occ.startTime})\n` +
-      `📝 <b>Topshiriq:</b> <i>${escapeHtml(wiz.content.text.slice(0, 200))}</i>\n\n` +
-      `🔔 <i>Bot sizga darsdan 1 kun oldin kechqurun (20:00) va dars boshlanishidan 20 daqiqa oldin eslatadi!</i>`,
-      { parse_mode: 'HTML' }
-    ).catch(() => {});
+      const saved = await db.createCourseNote({
+        creator_id: userId,
+        group_name: wiz.groupName,
+        is_group_shared: Boolean(wiz.isGroupShared),
+        subject_name: wiz.selectedSubject,
+        subject_norm: edupageService.normalizeSubjectKey(wiz.selectedSubject).toLowerCase(),
+        target_lesson_type: occ.lessonType,
+        target_date: occ.dateIso,
+        target_period: occ.period,
+        target_start_time: occ.startTime,
+        note_text: wiz.content.text,
+        media_type: wiz.content.mediaType,
+        media_file_id: wiz.content.mediaFileId,
+        status: 'pending',
+      });
+
+      if (!saved) {
+        return ctx.editMessageText('❌ Saqlashda xatolik yuz berdi.').catch(() => {});
+      }
+
+      const scopeBadge = wiz.isGroupShared
+        ? `👥 <b>Butun ${escapeHtml(wiz.groupName)} guruhi uchun</b>`
+        : `👤 <b>Shaxsiy eslatma</b>`;
+
+      const typeLabel = occ.lessonType === 'practice' ? "✍️ Amaliyot" : (occ.lessonType === 'lecture' ? "📖 Ma'ruza" : "Dars");
+
+      return ctx.editMessageText(
+        `✅ <b>Topshiriq muvaffaqiyatli saqlandi!</b>\n\n` +
+        `${scopeBadge}\n` +
+        `📘 <b>Fan:</b> ${escapeHtml(wiz.selectedSubject)}\n` +
+        `🎯 <b>Dars turi:</b> ${typeLabel}\n` +
+        `📅 <b>Sana va vaqt:</b> ${occ.dateDisplay} • ${occ.period}-para (${occ.startTime})\n` +
+        `📝 <b>Topshiriq:</b> <i>${escapeHtml(wiz.content.text.slice(0, 200))}</i>\n\n` +
+        `🔔 <i>Bot sizga darsdan 1 kun oldin kechqurun (20:00) va dars boshlanishidan 20 daqiqa oldin eslatadi!</i>`,
+        { parse_mode: 'HTML' }
+      ).catch(() => {});
+    } finally {
+      activeNoteSaves.delete(userId);
+    }
   }
 }
 

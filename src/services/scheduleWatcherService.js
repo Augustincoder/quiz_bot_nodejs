@@ -1049,49 +1049,27 @@ async function acquireNotificationLock(key, ttlSeconds = 72000) {
  * Sends a daily briefing schedule card (via Timetable CDN photo or fallback text).
  */
 async function sendDailyBriefingCard(bot, chatId, groupName, dayIdx, reasonHeader) {
-  if (!bot || !chatId || !groupName) return;
+  if (!bot || !chatId || !groupName) return false;
   try {
     const formatted = await scheduleService.fetchTodaySchedule(groupName, dayIdx);
     if (!formatted || /darslar yo['’`ʻʼ]?q|dam olish kuni|topilmadi/i.test(formatted)) {
-      return;
+      return false;
     }
 
     const fullMessage = `${reasonHeader}\n\n🎓 <b>Guruh: ${escapeHtml(groupName)}</b>\n\n${formatted}`;
-
-    let photoSent = false;
-    try {
-      const db = getDbService();
-      const userTheme = await db.getUserScheduleTheme(chatId);
-      const photoRes = await scheduleService.fetchWeeklySchedulePhoto(groupName, userTheme, bot.telegram);
-      if (photoRes?.fileId) {
-        if (fullMessage.length <= 1024) {
-          await bot.telegram.sendPhoto(chatId, photoRes.fileId, {
-            caption: fullMessage,
-            parse_mode: 'HTML',
-          });
-          photoSent = true;
-        } else {
-          await bot.telegram.sendPhoto(chatId, photoRes.fileId, {
-            caption: truncateText(`${reasonHeader}\n\n🎓 <b>Guruh: ${escapeHtml(groupName)}</b>`, 1024),
-            parse_mode: 'HTML',
-          });
-          await bot.telegram.sendMessage(chatId, truncateText(fullMessage, 4000), {
-            parse_mode: 'HTML',
-          });
-          photoSent = true;
-        }
-      }
-    } catch (photoErr) {
-      logger.debug('sendDailyBriefingCard photo delivery skipped, using text fallback', { chatId, error: photoErr.message });
-    }
-
-    if (!photoSent) {
-      await bot.telegram.sendMessage(chatId, truncateText(fullMessage, 4000), {
-        parse_mode: 'HTML',
-      });
-    }
+    await bot.telegram.sendMessage(chatId, truncateText(fullMessage, 4000), {
+      parse_mode: 'HTML',
+    });
+    return true;
   } catch (err) {
+    if (err?.response?.error_code === 403 || /blocked|deactivated|chat not found/i.test(err?.message)) {
+      getDbService().markUserBlocked(chatId, true).catch(() => {});
+    } else if (err?.response?.error_code === 429) {
+      const retryAfter = (err.response?.parameters?.retry_after || 1) * 1000;
+      await new Promise(r => setTimeout(r, retryAfter));
+    }
     logger.warn('sendDailyBriefingCard failed for user', { chatId, groupName, error: err.message });
+    return false;
   }
 }
 
@@ -1099,7 +1077,7 @@ async function sendDailyBriefingCard(bot, chatId, groupName, dayIdx, reasonHeade
  * Sends 5-minute pre-end bell push with building hopping warning if applicable.
  */
 async function sendPreEndBellAlert(bot, chatId, currentLesson, nextLesson, buildingChangeAlertEnabled = true) {
-  if (!bot || !chatId || !nextLesson) return;
+  if (!bot || !chatId || !nextLesson) return false;
   const currRoom = currentLesson.room || currentLesson.classroom || 'Noma\'lum';
   const nextRoom = nextLesson.room || nextLesson.classroom || 'Noma\'lum';
   const currBld = edupageService.extractBuildingCode(currRoom);
@@ -1122,8 +1100,16 @@ async function sendPreEndBellAlert(bot, chatId, currentLesson, nextLesson, build
 
   try {
     await bot.telegram.sendMessage(chatId, text, { parse_mode: 'HTML' });
+    return true;
   } catch (err) {
+    if (err?.response?.error_code === 403 || /blocked|deactivated|chat not found/i.test(err?.message)) {
+      getDbService().markUserBlocked(chatId, true).catch(() => {});
+    } else if (err?.response?.error_code === 429) {
+      const retryAfter = (err.response?.parameters?.retry_after || 1) * 1000;
+      await new Promise(r => setTimeout(r, retryAfter));
+    }
     logger.debug('sendPreEndBellAlert failed', { chatId, error: err.message });
+    return false;
   }
 }
 
@@ -1172,7 +1158,15 @@ async function deliverNoteReminder(bot, note, subscribers, titleHeader) {
           reply_markup: replyMarkup,
         });
       }
+      // Pacing delay after sending to Telegram
+      await new Promise(r => setTimeout(r, 40));
     } catch (sendErr) {
+      if (sendErr?.response?.error_code === 403 || /blocked|deactivated|chat not found/i.test(sendErr?.message)) {
+        db.markUserBlocked(targetId, true).catch(() => {});
+      } else if (sendErr?.response?.error_code === 429) {
+        const retryAfter = (sendErr.response?.parameters?.retry_after || 1) * 1000;
+        await new Promise(r => setTimeout(r, retryAfter));
+      }
       logger.debug('deliverNoteReminder failed to send to user', { targetId, noteId: note.id, error: sendErr.message });
     }
   }
@@ -1265,7 +1259,7 @@ async function runSmartScheduleMinuteTick(bot) {
             briefingReason = `⏰ <b>Birinchi darsingiz boshlanishiga ${offset} daqiqa qoldi (${firstLesson.startTime}):</b>`;
           }
         } else if (user.notify_mode === 'custom_time') {
-          if (user.custom_morning_time === currentHHMM && currentMinFromMidnight < 14 * 60) {
+          if (user.custom_morning_time === currentHHMM && currentMinFromMidnight < 18 * 60) {
             shouldSendBriefing = true;
             briefingReason = `🎯 <b>Belgilangan vaqtdagi dars jadvali (${currentHHMM}):</b>`;
           }
@@ -1279,7 +1273,10 @@ async function runSmartScheduleMinuteTick(bot) {
         if (shouldSendBriefing) {
           const lockKey = `sched_sent:${uid}:${todayIso}:morning`;
           if (await acquireNotificationLock(lockKey, 64800)) {
-            await sendDailyBriefingCard(bot, uid, groupName, dayOfWeek, briefingReason);
+            const sent = await sendDailyBriefingCard(bot, uid, groupName, dayOfWeek, briefingReason);
+            if (sent) {
+              await new Promise(r => setTimeout(r, 40));
+            }
           }
         }
       }
@@ -1290,7 +1287,7 @@ async function runSmartScheduleMinuteTick(bot) {
         let eveningReason = '';
 
         if (user.notify_mode === 'custom_time') {
-          if (user.custom_evening_time === currentHHMM && currentMinFromMidnight >= 14 * 60) {
+          if (user.custom_evening_time === currentHHMM && currentMinFromMidnight >= 18 * 60) {
             shouldSendEvening = true;
             eveningReason = `🌙 <b>Ertangi dars jadvali (${currentHHMM}):</b>`;
           }
@@ -1306,7 +1303,10 @@ async function runSmartScheduleMinuteTick(bot) {
           if (tomorrowLessons && tomorrowLessons.length > 0) {
             const lockKey = `sched_sent:${uid}:${todayIso}:evening`;
             if (await acquireNotificationLock(lockKey, 64800)) {
-              await sendDailyBriefingCard(bot, uid, groupName, tomorrowDayOfWeek, eveningReason);
+              const sent = await sendDailyBriefingCard(bot, uid, groupName, tomorrowDayOfWeek, eveningReason);
+              if (sent) {
+                await new Promise(r => setTimeout(r, 40));
+              }
             }
           }
         }
@@ -1346,7 +1346,10 @@ async function runSmartScheduleMinuteTick(bot) {
 
             const lockKey = `bell_5m:${uid}:${todayIso}:${p}`;
             if (await acquireNotificationLock(lockKey, 36000)) {
-              await sendPreEndBellAlert(bot, uid, curr, next, user.building_change_alert !== false);
+              const sent = await sendPreEndBellAlert(bot, uid, curr, next, user.building_change_alert !== false);
+              if (sent) {
+                await new Promise(r => setTimeout(r, 40));
+              }
             }
           }
         }
@@ -1355,25 +1358,31 @@ async function runSmartScheduleMinuteTick(bot) {
 
     // --- B. Process Contextual Note Reminders ---
     // 1. 20 minutes before class
-    const todayNotes = await db.getDueNotesForLesson(null, null, todayIso);
-    for (const note of todayNotes) {
-      if (note.status !== 'pending' && note.status !== 'notified_evening') continue;
+    // TSUE classes run between 08:00 and 20:30 (Mon-Sat).
+    // Pre-class 20-min window only occurs between 07:40 and 20:10.
+    // Querying database outside active university hours or on Sunday is skipped.
+    if (dayOfWeek < 6 && currentMinFromMidnight >= 7 * 60 + 30 && currentMinFromMidnight <= 20 * 60 + 30) {
+      const todayNotes = await db.getDueNotesForLesson(null, null, todayIso);
+      for (const note of todayNotes) {
+        if (note.status !== 'pending' && note.status !== 'notified_evening' && note.status !== 'snoozed') continue;
+        if (note.notified_before_class_at) continue;
 
-      const pTiming = edupageService.PERIOD_TIMINGS[note.target_period];
-      const startStr = note.target_start_time || (pTiming ? pTiming.start : '08:00');
-      const [sh, sm] = startStr.split(':').map(Number);
-      const startMin = (sh || 0) * 60 + (sm || 0);
+        const pTiming = edupageService.PERIOD_TIMINGS[note.target_period];
+        const startStr = note.target_start_time || (pTiming ? pTiming.start : '08:00');
+        const [sh, sm] = startStr.split(':').map(Number);
+        const startMin = (sh || 0) * 60 + (sm || 0);
 
-      if (currentMinFromMidnight >= startMin - 20 && currentMinFromMidnight <= startMin - 15) {
-        const lockKey = `note_rem:${note.id}:pre20m`;
-        if (await acquireNotificationLock(lockKey, 36000)) {
-          await db.updateNoteStatus(note.id, null, note.status);
-          await deliverNoteReminder(
-            bot,
-            note,
-            subscribers,
-            `⏰ <b>Dars boshlanishiga 20 daqiqa qoldi! (${startStr})</b>`
-          );
+        if (currentMinFromMidnight >= startMin - 20 && currentMinFromMidnight <= startMin - 15) {
+          const lockKey = `note_rem:${note.id}:pre20m`;
+          if (await acquireNotificationLock(lockKey, 36000)) {
+            await db.updateNoteStatus(note.id, null, 'notified_before_class');
+            await deliverNoteReminder(
+              bot,
+              note,
+              subscribers,
+              `⏰ <b>Dars boshlanishiga 20 daqiqa qoldi! (${startStr})</b>`
+            );
+          }
         }
       }
     }
@@ -1414,6 +1423,9 @@ module.exports = {
   formatChangeAlert,
   getWatcherStatus,
   runSmartScheduleMinuteTick,
+  sendDailyBriefingCard,
+  sendPreEndBellAlert,
+  deliverNoteReminder,
 };
 
 
