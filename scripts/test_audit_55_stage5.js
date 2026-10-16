@@ -247,6 +247,7 @@ async function runStage5Tests() {
   });
 
   console.log(`\n🎉 All ${passed}/${total} Stage 5 verification tests passed successfully!`);
+  process.exit(0);
 }
 
 if (require.main === module) {

@@ -1042,6 +1042,27 @@ function readDiskCacheSyncSafe() {
       } catch {}
     }
   }
+}
+
+/**
+ * Synchronous in-memory L1 cache accessor. If not initialized, builds database ONCE
+ * from local L3 disk cache synchronously and caches it in memory.
+ */
+function getCachedIndexedDatabaseSync() {
+  if (l1IndexedDatabase) return l1IndexedDatabase;
+  const diskRaw = readDiskCacheSyncSafe();
+  if (diskRaw) {
+    try {
+      l1IndexedDatabase = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || FALLBACK_DEFAULT_NUM);
+      l1CacheTime = Date.now();
+      logger.info('EduPage schedule cache loaded synchronously into memory from disk', {
+        classesCount: l1IndexedDatabase?.schedulesByClassId?.size || 0,
+      });
+      return l1IndexedDatabase;
+    } catch (err) {
+      logger.warn('Failed to build indexed database synchronously from disk cache', { error: err.message });
+    }
+  }
   return null;
 }
 
@@ -1610,64 +1631,77 @@ function getTashkentNow(customDate = null) {
 
 /**
  * Normalizes subject key by stripping prefixes like (M), (A), (S), (L),
- * bracketed descriptions, and uniforming quotes/spaces.
+ * recognized bracketed descriptions, trailing Ma/Sem, and uniforming quotes/spaces.
+ * Preserves descriptions like (soft skills) and (aylanma).
  * @param {string} subjectName
  */
 function normalizeSubjectKey(subjectName = '') {
   if (!subjectName || typeof subjectName !== 'string') return '';
   return subjectName
-    // Strip parenthetical tags like (M), (A), (S), (L), (Ma'ruza), (Amaliyot), (Lab), (Sem)
-    .replace(/\s*\((?:m|a|s|l|ma['’`]?ruza|amaliyot|amaliy|seminar|laboratoriya|lab|lek|sem|амалий|маъруза|семинар|лаб|лек)[^)]*\)/gi, '')
+    // Strip recognized tags inside parentheses
+    .replace(/\s*\(\s*(?:m|ma|a|s|l|lc|lec|lek|sem|lab|ma['’`ʻʼ]?ruza|maruza|amaliyot|amaliy|seminar|laboratoriya|амалий|маъруза|семинар|лаб|лек|lms|zoom|online)(?:\s+(?:zoom|online|lms))?\s*\)/gi, '')
     // Strip bracketed abbreviations like "[M]", "[A]", "[S]", "[L]" anywhere
-    .replace(/\s*\[(?:m|a|s|l)\]\s*/gi, '')
+    .replace(/\s*\[\s*(?:m|ma|a|s|l|lc|lec|lek|sem|lab)\s*\]/gi, '')
+    // Strip trailing Ma or Sem e.g. 'Fan nomi Ma' or 'Fan nomi Sem'
+    .replace(/\s+(?:Ma|Sem)$/i, '')
     // Normalize various apostrophes and quotation marks
-    .replace(/[`’ʻʼ]/g, "'")
+    .replace(/[`’‘ʻʼ]/g, "'")
     .replace(/["“”«»]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
-
 
 /**
  * Normalizes raw lesson type / subject into: 'lecture', 'practice', 'lab', or 'any'
  * @param {string|object} rawTypeOrLesson
  */
 function normalizeLessonType(rawTypeOrLesson) {
-  let raw = '';
+  let fullStr = '';
   if (typeof rawTypeOrLesson === 'string') {
-    raw = rawTypeOrLesson.toLowerCase();
+    fullStr = rawTypeOrLesson.trim();
   } else if (rawTypeOrLesson && typeof rawTypeOrLesson === 'object') {
-    raw = [
-      rawTypeOrLesson.subject || '',
+    fullStr = [
+      rawTypeOrLesson.subject || rawTypeOrLesson.name || '',
       rawTypeOrLesson.lessonType || '',
       rawTypeOrLesson.type || '',
       rawTypeOrLesson.room || rawTypeOrLesson.classroom || '',
       rawTypeOrLesson.group || '',
-    ].join(' ').toLowerCase();
+    ].join(' ').trim();
+  }
 
-    // Check subgroup indications
-    if (rawTypeOrLesson.subgroups && rawTypeOrLesson.subgroups.length > 0) {
+  // Step 1 (Highest Priority — Explicit parenthetical/bracketed tags or trailing Ma/Sem):
+  // Check explicit tags inside (...) or [...] or trailing Ma/Sem FIRST before inspecting general words
+  if (/\(\s*(?:lab|l|лаб|laboratoriya|лаборатория)\b[^)]*\)|\[\s*(?:l|lab)\s*\]/i.test(fullStr)) {
+    return 'lab';
+  }
+  if (/\(\s*(?:sem|s|a|amal|amaliy|amaliyot|seminar|сем|амалий|семинар)\b[^)]*\)|\[\s*(?:s|a|sem)\s*\]|\s+sem$/i.test(fullStr)) {
+    return 'practice';
+  }
+  if (/\(\s*(?:ma|m|lek|lec|lc|ma['’`ʻʼ]?ruza|maruza|лек|маъруза)\b[^)]*\)|\[\s*(?:m|ma|lek)\s*\]|\s+ma$/i.test(fullStr)) {
+    return 'lecture';
+  }
+
+  // Step 2 (Object metadata):
+  if (rawTypeOrLesson && typeof rawTypeOrLesson === 'object') {
+    if ((rawTypeOrLesson.subgroup && String(rawTypeOrLesson.subgroup).trim()) || (Array.isArray(rawTypeOrLesson.subgroups) && rawTypeOrLesson.subgroups.length > 0)) {
       return 'practice';
     }
-    if (rawTypeOrLesson.jointGroups && rawTypeOrLesson.jointGroups.length > 1) {
+    if (Array.isArray(rawTypeOrLesson.jointGroups) && rawTypeOrLesson.jointGroups.length > 1) {
       return 'lecture';
     }
   }
 
-  if (/(lab|лаб|laboratoriya|лаборатория)/i.test(raw)) {
-    return 'lab';
-  }
-  if (/(amal|амал|sem|сем|amaliy|амалий|seminar|семинар|ichki|kichik|\d-guruh|\d-гуруҳ)/i.test(raw)) {
-    return 'practice';
-  }
-  if (/(ma'ruza|maruza|маъруza|маъруза|lek|лек|umumiy)/i.test(raw)) {
+  // Step 3 (Fallback whole-word regex with strict word boundaries):
+  // Strict boundary regex ensures "Elektron", "Intellektual", "kompleksi" NEVER match "lek"
+  if (/(?:^|[^a-zA-Zа-яА-ЯўқғҳЎҚҒҲ])(ma['’`ʻʼ]?ruza|maruza|маъруза|leksiya|лекция|lek)(?=$|[^a-zA-Zа-яА-ЯўқғҳЎҚҒҲ])/i.test(fullStr)) {
     return 'lecture';
   }
-
-  // Check standalone (M), (A), (S), (L)
-  if (/\b\(?m\)?\b/i.test(raw)) return 'lecture';
-  if (/\b\(?[as]\)?\b/i.test(raw)) return 'practice';
-  if (/\b\(?l\)?\b/i.test(raw)) return 'lab';
+  if (/(?:^|[^a-zA-Zа-яА-ЯўқғҳЎҚҒҲ])(laboratoriya|лаборатория|lab|лаб)(?=$|[^a-zA-Zа-яА-ЯўқғҳЎҚҒҲ])/i.test(fullStr)) {
+    return 'lab';
+  }
+  if (/(?:^|[^a-zA-Zа-яА-ЯўқғҳЎҚҒҲ])(amaliyot|amaliy[a-zа-я]*|seminar|семинар|амалий[а-я]*|amal|sem|kichik|\d-guruh|\d-гуруҳ)(?=$|[^a-zA-Zа-яА-ЯўқғҳЎҚҒҲ])/i.test(fullStr)) {
+    return 'practice';
+  }
 
   return 'any';
 }
@@ -1951,6 +1985,7 @@ module.exports = {
   validateTimetablePayload,
   saveTimetableCacheAtomically,
   buildIndexedDatabase,
+  getCachedIndexedDatabaseSync,
   getLastRawTimetableHash: () => lastRawTimetableHash,
   resetRawTimetableHash: () => { lastRawTimetableHash = null; },
   canAttemptEduPageNetwork,

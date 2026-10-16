@@ -1034,7 +1034,7 @@ async function acquireNotificationLock(key, ttlSeconds = 72000) {
   minuteLocalDedupe.set(key, now + ttlSeconds * 1000);
 
   const redis = getRedisClient();
-  if (redis && redis.isReady && typeof redis.set === 'function') {
+  if (redis && !redis.isDummy && (redis.status === 'ready' || typeof redis.set === 'function')) {
     try {
       const res = await redis.set(key, '1', 'EX', ttlSeconds, 'NX');
       return res === 'OK';
@@ -1051,11 +1051,44 @@ async function acquireNotificationLock(key, ttlSeconds = 72000) {
 async function sendDailyBriefingCard(bot, chatId, groupName, dayIdx, reasonHeader) {
   if (!bot || !chatId || !groupName) return;
   try {
-    const timetableCdnService = require('./timetableCdnService');
-    const sent = await timetableCdnService.sendTimetableImage(bot, chatId, groupName, dayIdx, reasonHeader);
-    if (!sent) {
-      const formatted = await scheduleService.fetchTodaySchedule(groupName, dayIdx);
-      await bot.telegram.sendMessage(chatId, `${reasonHeader}\n\n${formatted}`, { parse_mode: 'HTML' });
+    const formatted = await scheduleService.fetchTodaySchedule(groupName, dayIdx);
+    if (!formatted || /darslar yo['’`ʻʼ]?q|dam olish kuni|topilmadi/i.test(formatted)) {
+      return;
+    }
+
+    const fullMessage = `${reasonHeader}\n\n🎓 <b>Guruh: ${escapeHtml(groupName)}</b>\n\n${formatted}`;
+
+    let photoSent = false;
+    try {
+      const db = getDbService();
+      const userTheme = await db.getUserScheduleTheme(chatId);
+      const photoRes = await scheduleService.fetchWeeklySchedulePhoto(groupName, userTheme, bot.telegram);
+      if (photoRes?.fileId) {
+        if (fullMessage.length <= 1024) {
+          await bot.telegram.sendPhoto(chatId, photoRes.fileId, {
+            caption: fullMessage,
+            parse_mode: 'HTML',
+          });
+          photoSent = true;
+        } else {
+          await bot.telegram.sendPhoto(chatId, photoRes.fileId, {
+            caption: truncateText(`${reasonHeader}\n\n🎓 <b>Guruh: ${escapeHtml(groupName)}</b>`, 1024),
+            parse_mode: 'HTML',
+          });
+          await bot.telegram.sendMessage(chatId, truncateText(fullMessage, 4000), {
+            parse_mode: 'HTML',
+          });
+          photoSent = true;
+        }
+      }
+    } catch (photoErr) {
+      logger.debug('sendDailyBriefingCard photo delivery skipped, using text fallback', { chatId, error: photoErr.message });
+    }
+
+    if (!photoSent) {
+      await bot.telegram.sendMessage(chatId, truncateText(fullMessage, 4000), {
+        parse_mode: 'HTML',
+      });
     }
   } catch (err) {
     logger.warn('sendDailyBriefingCard failed for user', { chatId, groupName, error: err.message });
@@ -1065,7 +1098,7 @@ async function sendDailyBriefingCard(bot, chatId, groupName, dayIdx, reasonHeade
 /**
  * Sends 5-minute pre-end bell push with building hopping warning if applicable.
  */
-async function sendPreEndBellAlert(bot, chatId, currentLesson, nextLesson) {
+async function sendPreEndBellAlert(bot, chatId, currentLesson, nextLesson, buildingChangeAlertEnabled = true) {
   if (!bot || !chatId || !nextLesson) return;
   const currRoom = currentLesson.room || currentLesson.classroom || 'Noma\'lum';
   const nextRoom = nextLesson.room || nextLesson.classroom || 'Noma\'lum';
@@ -1073,7 +1106,7 @@ async function sendPreEndBellAlert(bot, chatId, currentLesson, nextLesson) {
   const nextBld = edupageService.extractBuildingCode(nextRoom);
 
   let buildingAlert = '';
-  if (currBld && nextBld && currBld !== nextBld) {
+  if (buildingChangeAlertEnabled && currBld && nextBld && currBld !== nextBld) {
     buildingAlert = `\n⚠️ <b>DIQQAT: Keyingi dars BOSHQA BINODA! (${currBld} ➔ ${nextBld})</b>`;
   }
 
@@ -1186,6 +1219,15 @@ async function runSmartScheduleMinuteTick(bot) {
       return groupTodayScheduleCache.get(groupName);
     };
 
+    const groupTomorrowScheduleCache = new Map();
+    const getCachedTomorrowLessons = (groupName) => {
+      if (tomorrowDayOfWeek === 6) return [];
+      if (!groupTomorrowScheduleCache.has(groupName)) {
+        groupTomorrowScheduleCache.set(groupName, scheduleService.getGroupScheduleForDay(groupName, tomorrowDayOfWeek, tomorrowDate));
+      }
+      return groupTomorrowScheduleCache.get(groupName);
+    };
+
     // --- A. Process Schedule Briefings & 5-Min Bell for Each User ---
     for (const user of subscribers) {
       const uid = user.telegram_id;
@@ -1260,7 +1302,7 @@ async function runSmartScheduleMinuteTick(bot) {
         }
 
         if (shouldSendEvening) {
-          const tomorrowLessons = scheduleService.getGroupScheduleForDay(groupName, tomorrowDayOfWeek, tomorrowDate);
+          const tomorrowLessons = getCachedTomorrowLessons(groupName);
           if (tomorrowLessons && tomorrowLessons.length > 0) {
             const lockKey = `sched_sent:${uid}:${todayIso}:evening`;
             if (await acquireNotificationLock(lockKey, 64800)) {
@@ -1272,21 +1314,39 @@ async function runSmartScheduleMinuteTick(bot) {
 
       // 3. 5-Minute Pre-End Bell (pre_class_5min_bell)
       if (dayOfWeek < 6 && user.pre_class_5min_bell !== false && todayLessons && todayLessons.length >= 2) {
-        for (let i = 0; i < todayLessons.length - 1; i++) {
-          const curr = todayLessons[i];
-          const next = todayLessons[i + 1];
-          const pTiming = edupageService.PERIOD_TIMINGS[curr.period];
+        // Group lessons by period number (1..8) to prevent false alerts between subgroups of the same period
+        const lessonsByPeriod = new Map();
+        for (const l of todayLessons) {
+          if (!l || !l.period) continue;
+          if (!lessonsByPeriod.has(l.period)) {
+            lessonsByPeriod.set(l.period, []);
+          }
+          lessonsByPeriod.get(l.period).push(l);
+        }
+
+        const sortedPeriods = Array.from(lessonsByPeriod.keys()).sort((a, b) => a - b);
+        for (let idx = 0; idx < sortedPeriods.length; idx++) {
+          const p = sortedPeriods[idx];
+          const nextPeriod = p + 1;
+          if (!lessonsByPeriod.has(nextPeriod)) continue;
+
+          const pTiming = edupageService.PERIOD_TIMINGS[p];
           const bellMinute = pTiming ? pTiming.bell5MinBeforeEnd : null;
 
           if (bellMinute && currentMinFromMidnight === bellMinute) {
+            const currLessons = lessonsByPeriod.get(p);
+            const nextLessons = lessonsByPeriod.get(nextPeriod);
+            const curr = currLessons[0];
+            const next = nextLessons[0];
+
             // Check double-pair suppression: if same subject and same room continues, suppress alert
             if (edupageService.isSameDoublePair(curr, next)) {
               continue;
             }
 
-            const lockKey = `bell_5m:${uid}:${todayIso}:${curr.period}`;
+            const lockKey = `bell_5m:${uid}:${todayIso}:${p}`;
             if (await acquireNotificationLock(lockKey, 36000)) {
-              await sendPreEndBellAlert(bot, uid, curr, next);
+              await sendPreEndBellAlert(bot, uid, curr, next, user.building_change_alert !== false);
             }
           }
         }

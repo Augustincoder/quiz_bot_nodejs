@@ -341,15 +341,11 @@ bot.command("prewarm_stop", async (ctx) => {
 bot.on("message", async (ctx, next) => {
   // Check active /note wizard first (handles user sending text, photo, docx, voice for notes)
   if (handlers.notes && typeof handlers.notes.handleNoteWizardInput === "function") {
-    let handledByNoteWizard = false;
+    let passedThrough = false;
     await handlers.notes.handleNoteWizardInput(ctx, () => {
-      handledByNoteWizard = false;
+      passedThrough = true;
     });
-    // If handleNoteWizardInput replied or captured the input, return immediately
-    const wiz = await require("./src/core/pendingStore").get(`note_wiz:${ctx.from?.id}`);
-    if (wiz && wiz.step === 'AWAITING_OCCURRENCE') {
-      return;
-    }
+    if (!passedThrough) return;
   }
 
   const state = getState(ctx);
@@ -613,17 +609,11 @@ async function main() {
   }
 
   // ═══ Cron Tasks (Asia/Tashkent) ══════════════════════════════
-  // 1. Ertalab 07:30 (Bugungi jadval uchun) — Dushanbadan Shanbagacha
-  const morningCron = cron.schedule("30 07 * * 1-6", () => queueSchedules(false), {
-    timezone: "Asia/Tashkent",
-  });
+  // Note: Legacy morning (07:30) and evening (21:00) broad broadcasts have been replaced by
+  // Smart Schedule v2.0 minute tick (minuteCron) which handles shift-aware, custom time, and offset briefings.
+  // queueSchedules(false/true) remains available for manual admin testing (/testcron_bugun, /testcron_ertaga).
 
-  // 2. Kechqurun 21:00 (Ertangi jadval uchun) — Yakshanbadan Jumagacha
-  const eveningCron = cron.schedule("00 21 * * 0-5", () => queueSchedules(true), {
-    timezone: "Asia/Tashkent",
-  });
-
-  // 3. Realtime Schedule Watcher (Har kuni, shu jumladan Shanba va Yakshanba: 07:00 dan 21:55 gacha har 5 daqiqada)
+  // 1. Realtime Schedule Watcher (Har kuni, shu jumladan Shanba va Yakshanba: 07:00 dan 21:55 gacha har 5 daqiqada)
   // Universitet dispetcherlari dars jadvali o'zgarishlarini asosan Shanba va Yakshanba kunlari kiritishini hisobga olgan holda
   // dam olish kunlarida ham hafta kunlari kabi to'liq va uzluksiz har 5 daqiqada tekshiriladi.
   const watcherDayCron = cron.schedule("*/5 7-21 * * *", () => {
@@ -634,7 +624,7 @@ async function main() {
     timezone: "Asia/Tashkent",
   });
 
-  // 4. Realtime Schedule Watcher (Tungi sokin soatlarda har 30 daqiqada — 22:05 dan 06:35 gacha)
+  // 2. Realtime Schedule Watcher (Tungi sokin soatlarda har 30 daqiqada — 22:05 dan 06:35 gacha)
   const watcherNightCron = cron.schedule("5,35 22-23,0-6 * * *", () => {
     scheduleWatcher.checkScheduleChanges(false).catch(err => {
       logger.error("Watcher night cron error:", { error: err.message });
@@ -643,7 +633,7 @@ async function main() {
     timezone: "Asia/Tashkent",
   });
 
-  // 5. Tungi 02:00 dan 05:00 gacha faol guruhlar jadval rasmlarini kanalga to'ldirish (Nightly Theme Completion Worker)
+  // 3. Tungi 02:00 dan 05:00 gacha faol guruhlar jadval rasmlarini kanalga to'ldirish (Nightly Theme Completion Worker)
   // Har kuni 02:00 da boshlanadi va 05:00 gacha yetishmagan mavzularni (light/dark/vibrant) bittalab to'ldiradi
   const nightPrewarmStartCron = cron.schedule("00 02 * * *", () => {
     logger.info("🌙 Nightly timetable theme completion worker started (02:00 Asia/Tashkent)...");
@@ -659,7 +649,7 @@ async function main() {
     timezone: "Asia/Tashkent",
   });
 
-  // 6. Tungi 05:00 da worker to'xtatiladi (Fail-safe hard cutoff)
+  // 4. Tungi 05:00 da worker to'xtatiladi (Fail-safe hard cutoff)
   const nightPrewarmStopCron = cron.schedule("00 05 * * *", () => {
     logger.info("🛑 Nightly timetable theme completion worker stopping (05:00 Asia/Tashkent cutoff)...");
     const timetableCdnService = require("./src/services/timetableCdnService");
@@ -668,7 +658,7 @@ async function main() {
     timezone: "Asia/Tashkent",
   });
 
-  // 7. Smart Schedule v2.0: 1-minute precision scheduler & 5-minute pre-end bell
+  // 5. Smart Schedule v2.0: 1-minute precision scheduler & 5-minute pre-end bell
   const minuteCron = cron.schedule("* * * * *", () => {
     scheduleWatcher.runSmartScheduleMinuteTick(bot).catch((err) => {
       logger.error("Smart schedule minute tick error:", { error: err.message });
@@ -678,8 +668,6 @@ async function main() {
   });
 
   _cronJobs = [
-    morningCron,
-    eveningCron,
     watcherDayCron,
     watcherNightCron,
     nightPrewarmStartCron,

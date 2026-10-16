@@ -234,20 +234,8 @@ function getGroupScheduleForDay(className, dayIdx, targetDate = null) {
 
   const canonical = getCanonicalGroupName(className) || className;
   try {
-    const { getIndexedDatabase, findClassId, PERIOD_TIMINGS } = require('./edupageService');
-    // Using synchronous access to memory database if available
-    let db = null;
-    try {
-      const fs = require('fs');
-      const path = require('path');
-      const rootDataPath = path.resolve(__dirname, '../../data/timetable_cache.json');
-      if (fs.existsSync(rootDataPath)) {
-        const raw = JSON.parse(fs.readFileSync(rootDataPath, 'utf8'));
-        const { buildIndexedDatabase } = require('./edupageService');
-        db = buildIndexedDatabase(raw, 'sync');
-      }
-    } catch {}
-
+    const { getCachedIndexedDatabaseSync, findClassId, PERIOD_TIMINGS } = require('./edupageService');
+    const db = getCachedIndexedDatabaseSync();
     if (!db) return [];
     const classId = findClassId(db, canonical);
     if (!classId) return [];
@@ -270,8 +258,11 @@ function getGroupScheduleForDay(className, dayIdx, targetDate = null) {
           room: item.room || item.classroom || '',
           teacher: item.teacher || '',
           subgroups: item.subgroups || [],
+          subgroup: item.subgroup || '',
           jointGroups: item.jointGroups || [],
           lessonType: item.lessonType || '',
+          weekParity: item.weekParity || 'all',
+          isContinuation: Boolean(item.isContinuation),
         });
       }
     }
@@ -320,13 +311,9 @@ function getActiveOrRecentLessonContext(className, nowTashkent = null) {
 function getUpcomingSubjectOccurrences(className, baseSubjectName, maxResults = 5, nowTashkent = null, targetLessonType = 'any') {
   const canonical = getCanonicalGroupName(className) || className;
   try {
-    const fs = require('fs');
-    const path = require('path');
-    const rootDataPath = path.resolve(__dirname, '../../data/timetable_cache.json');
-    if (!fs.existsSync(rootDataPath)) return [];
-    const raw = JSON.parse(fs.readFileSync(rootDataPath, 'utf8'));
-    const { buildIndexedDatabase, findClassId, findUpcomingCourseOccurrences } = require('./edupageService');
-    const db = buildIndexedDatabase(raw, 'sync');
+    const { getCachedIndexedDatabaseSync, findClassId, findUpcomingCourseOccurrences } = require('./edupageService');
+    const db = getCachedIndexedDatabaseSync();
+    if (!db) return [];
     const classId = findClassId(db, canonical);
     if (!classId) return [];
     const schedule = db.schedulesByClassId.get(classId);

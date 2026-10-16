@@ -305,6 +305,7 @@ async function runStage3Tests() {
   });
 
   console.log(`\n🎉 Stage 3 Tests Complete: ${passed}/${total} passed! 100% OK.\n`);
+  process.exit(0);
 }
 
 if (require.main === module) {

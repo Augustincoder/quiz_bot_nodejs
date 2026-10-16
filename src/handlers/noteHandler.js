@@ -279,6 +279,14 @@ async function handleNoteCallback(ctx) {
   // 1. Mark completed action: nd:<id> or note_done:<id> or note_done_<id>
   if (data.startsWith('nd:') || data.startsWith('note_done:') || data.startsWith('note_done_')) {
     const noteId = Number(data.replace(/^(?:nd:|note_done:|note_done_)/, ''));
+    const note = await db.getNoteById(noteId);
+    if (!note) {
+      return ctx.answerCbQuery('⚠️ Eslatma topilmadi', { show_alert: true }).catch(() => {});
+    }
+    const { isAdmin } = require('../core/utils');
+    if (note.is_group_shared && String(note.creator_id) !== String(userId) && !isAdmin(userId)) {
+      return ctx.answerCbQuery('⚠️ Guruh eslatmasini faqat uni yaratgan sardor yoki admin o‘zgartira oladi!', { show_alert: true }).catch(() => {});
+    }
     await ctx.answerCbQuery('✅ Topshiriq bajarildi!').catch(() => {});
     await db.updateNoteStatus(noteId, userId, 'completed');
     return ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
@@ -290,6 +298,10 @@ async function handleNoteCallback(ctx) {
     const note = await db.getNoteById(noteId);
     if (!note) {
       return ctx.answerCbQuery('⚠️ Eslatma topilmadi', { show_alert: true }).catch(() => {});
+    }
+    const { isAdmin } = require('../core/utils');
+    if (note.is_group_shared && String(note.creator_id) !== String(userId) && !isAdmin(userId)) {
+      return ctx.answerCbQuery('⚠️ Guruh eslatmasini faqat uni yaratgan sardor yoki admin o‘zgartira oladi!', { show_alert: true }).catch(() => {});
     }
 
     const now = edupageService.getTashkentNow();
@@ -316,7 +328,7 @@ async function handleNoteCallback(ctx) {
   // 3. Wizard interactions
   const wiz = await pendingStore.get(`note_wiz:${userId}`);
   if (data === 'nc:cancel' || data === 'note_cancel') {
-    await pendingStore.delete(`note_wiz:${userId}`);
+    await pendingStore.del(`note_wiz:${userId}`);
     await ctx.answerCbQuery('Bekor qilindi').catch(() => {});
     return ctx.editMessageText('❌ Eslatma saqlash bekor qilindi.').catch(() => {});
   }
@@ -404,7 +416,7 @@ async function handleNoteCallback(ctx) {
       status: 'pending',
     });
 
-    await pendingStore.delete(`note_wiz:${userId}`);
+    await pendingStore.del(`note_wiz:${userId}`);
 
     if (!saved) {
       return ctx.editMessageText('❌ Saqlashda xatolik yuz berdi.').catch(() => {});
@@ -437,13 +449,25 @@ async function handleNoteWizardInput(ctx, next) {
   if (!userId) return next();
 
   const wiz = await pendingStore.get(`note_wiz:${userId}`);
-  if (!wiz || wiz.step !== 'AWAITING_CONTENT_THEN_OCCURRENCE') {
+  if (!wiz) {
     return next();
   }
 
-  // Cancel wizard if user sends another bot command
-  if (ctx.message?.text?.startsWith('/')) {
-    await pendingStore.delete(`note_wiz:${userId}`);
+  const text = (ctx.message?.text || '').trim();
+  const isCommand = text.startsWith('/');
+  const isMainMenuButton = [
+    '📅 Dars jadvali', '🧪 Testlar', '🤖 AI Yordamchi', '👤 Profil', '📊 Statistika',
+    '🔍 Guruh qidirish', '🏢 Bo\'sh xonalar', '📚 Rasmiy Testlar', '📝 O\'z Testlarim',
+    '🔙 Ortga', '🏠 Asosiy Menyu', '❌ Bekor qilish', '🏠 Bosh menyu'
+  ].some(btn => text.includes(btn));
+
+  // Cancel wizard if user sends another bot command or taps main menu button
+  if (isCommand || isMainMenuButton) {
+    await pendingStore.del(`note_wiz:${userId}`);
+    return next();
+  }
+
+  if (wiz.step !== 'AWAITING_CONTENT_THEN_OCCURRENCE') {
     return next();
   }
 

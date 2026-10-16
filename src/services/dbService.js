@@ -600,6 +600,7 @@ async function updateUserClass(telegramId, className) {
       if (error) {
         logger.warn('Supabase updateUserClass returned error', { error: error.message, uid });
       }
+      await supabase.from('user_schedule_settings').update({ group_name: canonical }).eq('telegram_id', uid).catch(() => {});
     } catch (e) {
       logger.error('updateUserClass error:', { telegramId: uid, error: e.message });
     }
@@ -1288,11 +1289,20 @@ async function upsertUserScheduleSettings(telegramId, patch) {
 
   try {
     if (supabase) {
+      let groupName = patch.group_name;
+      if (!groupName) {
+        const currentGroup = await getUserClass(uid);
+        if (currentGroup) groupName = currentGroup;
+      }
+
       const payload = {
         telegram_id: uid,
         ...patch,
         updated_at: new Date().toISOString(),
       };
+      if (groupName) {
+        payload.group_name = groupName;
+      }
 
       const { error } = await supabase
         .from('user_schedule_settings')
@@ -1308,9 +1318,9 @@ async function upsertUserScheduleSettings(telegramId, patch) {
       if (patch.offset_minutes !== undefined) userUpdates.notif_offset_min = patch.offset_minutes;
       if (patch.custom_morning_time !== undefined) userUpdates.notif_custom_time = patch.custom_morning_time;
       if (patch.pre_class_5min_bell !== undefined) userUpdates.notif_next_bell = patch.pre_class_5min_bell;
-      if (patch.group_name !== undefined) {
-        userUpdates.student_group = patch.group_name;
-        userUpdates.class_name = patch.group_name;
+      if (groupName !== undefined) {
+        userUpdates.student_group = groupName;
+        userUpdates.class_name = groupName;
       }
 
       if (Object.keys(userUpdates).length > 0) {
@@ -1332,21 +1342,59 @@ async function upsertUserScheduleSettings(telegramId, patch) {
 
 /**
  * Paginated fetch of all active schedule subscribers (>1000 users safe).
+ * Merges public.users and public.user_schedule_settings by telegram_id.
  */
 async function getAllActiveScheduleSubscribers() {
   if (!supabase) return [];
   const PAGE_SIZE = 1000;
-  let allSubscribers = [];
-  let from = 0;
+  const subscriberMap = new Map();
 
   try {
-    // 1. Fetch from user_schedule_settings where notify_mode != 'disabled'
+    // 1. Fetch base users from public.users with pagination
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('users')
+        .select('telegram_id, student_group, class_name, schedule_notifications, notif_mode, notif_offset_min, notif_custom_time, notif_evening_preview, notif_next_bell, is_banned, is_blocked')
+        .neq('is_banned', true)
+        .neq('is_blocked', true)
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (error) {
+        logger.warn('getAllActiveScheduleSubscribers users error:', { error: error.message });
+        break;
+      }
+      if (!data || data.length === 0) break;
+
+      for (const u of data) {
+        const group = u.student_group || u.class_name;
+        if (!group) continue;
+        if (u.schedule_notifications === false || u.notif_mode === 'disabled') continue;
+
+        const uid = Number(u.telegram_id);
+        subscriberMap.set(uid, {
+          telegram_id: uid,
+          group_name: group,
+          notify_mode: u.notif_mode || 'shift_aware',
+          offset_minutes: Number(u.notif_offset_min) || 60,
+          custom_morning_time: u.notif_custom_time || '07:00',
+          custom_evening_time: '20:00',
+          pre_class_5min_bell: u.notif_next_bell !== false,
+          building_change_alert: true,
+          quiet_hours_enabled: true,
+          schedule_notifications: true,
+        });
+      }
+      if (data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+
+    // 2. Fetch custom settings from user_schedule_settings with pagination
+    from = 0;
     while (true) {
       const { data, error } = await supabase
         .from('user_schedule_settings')
         .select('*')
-        .neq('notify_mode', 'disabled')
-        .not('group_name', 'is', null)
         .range(from, from + PAGE_SIZE - 1);
 
       if (error) {
@@ -1354,51 +1402,42 @@ async function getAllActiveScheduleSubscribers() {
         break;
       }
       if (!data || data.length === 0) break;
-      allSubscribers.push(...data);
+
+      for (const s of data) {
+        const uid = Number(s.telegram_id);
+        if (s.notify_mode === 'disabled' || s.schedule_notifications === false) {
+          subscriberMap.delete(uid);
+          continue;
+        }
+
+        const existing = subscriberMap.get(uid);
+        const resolvedGroup = s.group_name || existing?.group_name;
+        if (!resolvedGroup) {
+          continue;
+        }
+
+        subscriberMap.set(uid, {
+          telegram_id: uid,
+          group_name: resolvedGroup,
+          notify_mode: s.notify_mode || existing?.notify_mode || 'shift_aware',
+          offset_minutes: s.offset_minutes !== undefined ? Number(s.offset_minutes) : (existing?.offset_minutes || 60),
+          custom_morning_time: s.custom_morning_time || existing?.custom_morning_time || '07:00',
+          custom_evening_time: s.custom_evening_time || existing?.custom_evening_time || '20:00',
+          pre_class_5min_bell: s.pre_class_5min_bell !== undefined ? s.pre_class_5min_bell : (existing?.pre_class_5min_bell !== false),
+          building_change_alert: s.building_change_alert !== undefined ? s.building_change_alert : (existing?.building_change_alert !== false),
+          quiet_hours_enabled: s.quiet_hours_enabled !== undefined ? s.quiet_hours_enabled : (existing?.quiet_hours_enabled !== false),
+          schedule_notifications: true,
+        });
+      }
+
       if (data.length < PAGE_SIZE) break;
       from += PAGE_SIZE;
     }
 
-    // 2. If table is empty or newly created, fallback to users table with pagination
-    if (allSubscribers.length === 0) {
-      from = 0;
-      while (true) {
-        const { data, error } = await supabase
-          .from('users')
-          .select('telegram_id, student_group, class_name, schedule_notifications, notif_mode, notif_offset_min, notif_custom_time, notif_evening_preview, notif_next_bell, is_banned, is_blocked')
-          .neq('is_banned', true)
-          .neq('is_blocked', true)
-          .range(from, from + PAGE_SIZE - 1);
-
-        if (error) break;
-        if (!data || data.length === 0) break;
-
-        for (const u of data) {
-          const group = u.student_group || u.class_name;
-          if (group && u.schedule_notifications !== false && u.notif_mode !== 'disabled') {
-            allSubscribers.push({
-              telegram_id: u.telegram_id,
-              group_name: group,
-              notify_mode: u.notif_mode || 'shift_aware',
-              offset_minutes: Number(u.notif_offset_min) || 60,
-              custom_morning_time: u.notif_custom_time || '07:00',
-              custom_evening_time: '20:00',
-              pre_class_5min_bell: u.notif_next_bell !== false,
-              building_change_alert: true,
-              quiet_hours_enabled: true,
-              schedule_notifications: true,
-            });
-          }
-        }
-        if (data.length < PAGE_SIZE) break;
-        from += PAGE_SIZE;
-      }
-    }
-
-    return allSubscribers;
+    return Array.from(subscriberMap.values());
   } catch (err) {
     logger.error('getAllActiveScheduleSubscribers exception:', { error: err.message });
-    return [];
+    return Array.from(subscriberMap.values());
   }
 }
 

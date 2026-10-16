@@ -12,7 +12,7 @@ async function set(key, value, ttlMs = 15 * 60 * 1000) {
   generalPendingStore.set(key, value);
   try {
     const redis = require('../services/redisService');
-    if (redis && redis.isReady && typeof redis.set === 'function') {
+    if (redis && !redis.isDummy && (redis.status === 'ready' || typeof redis.set === 'function')) {
       const ttlSec = Math.max(1, Math.round(ttlMs / 1000));
       await redis.set(`pending:${key}`, JSON.stringify(value), 'EX', ttlSec);
     }
@@ -25,7 +25,7 @@ async function get(key) {
   }
   try {
     const redis = require('../services/redisService');
-    if (redis && redis.isReady && typeof redis.get === 'function') {
+    if (redis && !redis.isDummy && (redis.status === 'ready' || typeof redis.get === 'function')) {
       const raw = await redis.get(`pending:${key}`);
       if (raw) {
         const parsed = JSON.parse(raw);
@@ -41,7 +41,7 @@ async function del(key) {
   generalPendingStore.delete(key);
   try {
     const redis = require('../services/redisService');
-    if (redis && redis.isReady && typeof redis.del === 'function') {
+    if (redis && !redis.isDummy && (redis.status === 'ready' || typeof redis.del === 'function')) {
       await redis.del(`pending:${key}`);
     }
   } catch {}
@@ -58,6 +58,7 @@ module.exports = {
   clearPendingUser,
   set,
   get,
+  del,
   delete: del,
 };
 

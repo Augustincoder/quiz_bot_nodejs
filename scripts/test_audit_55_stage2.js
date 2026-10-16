@@ -410,9 +410,10 @@ async function runStage2Tests() {
   console.log(`\n==================================================`);
   console.log(`🎉 STAGE 2 AUDIT VERIFICATION: ${passed}/${total} TESTS PASSED (100%)`);
   console.log(`==================================================\n`);
+  process.exit(0);
 }
 
-runStage((err) => {
+runStage2Tests().catch((err) => {
   console.error('\n❌ Audit test execution failed:', err);
   process.exit(1);
 });
