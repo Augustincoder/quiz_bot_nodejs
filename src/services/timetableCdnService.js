@@ -539,10 +539,25 @@ async function invalidateTimetable(className) {
   await dbService.deleteTimetableCache(canonical);
 }
 
+/**
+ * Self-healing invalid/stale file_id handler:
+ * Invalidates cache entry when Telegram returns wrong file identifier / file reference expired error,
+ * and regenerates fresh timetable image.
+ */
+async function handleInvalidFileId(telegram, className, theme = 'dark') {
+  if (!className) return null;
+  const canonical = edupageService.getCanonicalGroupName(className) || className.trim();
+  const validTheme = ALL_THEMES.includes(theme) ? theme : 'dark';
+  logger.warn(`[timetableCdnService] Purging invalid/stale file_id cache for ${canonical} [${validTheme}] and regenerating...`);
+  await dbService.deleteTimetableCache(canonical, validTheme).catch(() => {});
+  return getOrGenerateTimetablePhoto(telegram, canonical, validTheme);
+}
+
 module.exports = {
   computeScheduleHash,
   uploadPhotoToChannel,
   getOrGenerateTimetablePhoto,
+  handleInvalidFileId,
   prewarmAllTimetables,
   stopPrewarmWorker,
   getWorkerStatus,

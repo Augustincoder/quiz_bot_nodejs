@@ -1,7 +1,7 @@
 "use strict";
 
 const { Markup } = require("telegraf");
-const { TTLMap } = require("../core/utils");
+const { TTLMap, safeCallbackData } = require("../core/utils");
 
 const ITEMS_PER_PAGE = 5;
 
@@ -63,13 +63,13 @@ function invalidateBlocksCache(subjectKey = null) {
 function paginationRow(prefix, currentPage, totalPages) {
   const nav = [];
   if (currentPage > 0) {
-    nav.push(Markup.button.callback("⬅️ Oldingi", `${prefix}${currentPage - 1}`));
+    nav.push(Markup.button.callback("⬅️ Oldingi", safeCallbackData(`${prefix}${currentPage - 1}`)));
   }
   if (totalPages > 1) {
     nav.push(Markup.button.callback(`${currentPage + 1} / ${totalPages}`, "ignore"));
   }
   if (currentPage < totalPages - 1) {
-    nav.push(Markup.button.callback("Keyingi ➡️", `${prefix}${currentPage + 1}`));
+    nav.push(Markup.button.callback("Keyingi ➡️", safeCallbackData(`${prefix}${currentPage + 1}`)));
   }
   return nav;
 }
@@ -101,17 +101,17 @@ function getBlocksKeyboard(subjectKey, page = 0) {
       buttons.push([
         Markup.button.callback(
           `📘 ${tId}-Blok  •  ${qCount} ta savol`,
-          `start_test_${subjectKey}_${tId}`,
+          safeCallbackData(`start_test_${subjectKey}_${tId}`),
         ),
       ]);
     }
     const nav = paginationRow(`page_${subjectKey}_`, page, totalPages);
     if (nav.length) buttons.push(nav);
     buttons.push([
-      Markup.button.callback("🎲 Aralash (Mock Exam)", `mock_${subjectKey}`),
+      Markup.button.callback("🎲 Aralash (Mock Exam)", safeCallbackData(`mock_${subjectKey}`)),
     ]);
     buttons.push([
-      Markup.button.callback("🎯 AI Adaptiv Test", `adaptive_${subjectKey}`),
+      Markup.button.callback("🎯 AI Adaptiv Test", safeCallbackData(`adaptive_${subjectKey}`)),
     ]);
   }
   buttons.push([

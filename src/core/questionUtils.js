@@ -67,9 +67,33 @@ function fitsTelegramPoll(question, options) {
   return true;
 }
 
+/**
+ * Savol tushuntirishini (explanation) Telegram Poll 200 belgi limitiga moslab xavfsiz qisqartiradi.
+ * Agar qisqartirish HTML entity (&amp;, &lt;, &gt;, &quot;) o'rtasiga to'g'ri kelsa, chala qolgan entityni
+ * tozalab, Telegram "can't parse entities" xatosini 100% oldini oladi.
+ *
+ * @param {string} text
+ * @param {number} maxLen
+ * @returns {string}
+ */
+function safeTruncateExplanation(text, maxLen = 200) {
+  if (!text || typeof text !== 'string') return '';
+  const trimmed = text.trim();
+  if (trimmed.length <= maxLen) return trimmed;
+
+  const targetLen = Math.max(0, maxLen - 3);
+  let sliced = trimmed.slice(0, targetLen);
+
+  // Agar kesish HTML entity (&...;) o'rtasiga tushgan bo'lsa, chala entityni qirqib tashlaymiz
+  sliced = sliced.replace(/&[a-zA-Z0-9#]*$/, '');
+
+  return sliced.trimEnd() + '...';
+}
+
 module.exports = {
   prepareShuffledQuestions,
   shuffleArray,
   fitsTelegramPoll,
   deepClone,
+  safeTruncateExplanation,
 };

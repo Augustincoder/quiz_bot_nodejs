@@ -68,12 +68,12 @@ async function loadAllTests() {
             }
 
             if (Array.isArray(questions)) {
-              botModule.memoryDb[subj][testId] = {
+              botModule.memoryDb[subj][testId] = deepFreeze({
                 test_id: testId,
                 range,
                 block_name: blockName,
                 questions,
-              };
+              });
             }
         } catch (err) {
             logger.error(`Error parsing local test file: ${filePath}`, err);
@@ -88,6 +88,24 @@ async function loadAllTests() {
   // Update keyboard references
   setMemoryDb(botModule.memoryDb);
   return botModule.memoryDb;
+}
+
+/**
+ * Rekursiv ravishda obyekt va uning ichidagi massivlarni muzlatadi (deep freeze).
+ * Kelgusida tasodifiy mutatsiyalarni (masalan, .sort(), .splice()) oldini oladi.
+ */
+function deepFreeze(obj) {
+  if (!obj || typeof obj !== 'object' || Object.isFrozen(obj)) {
+    return obj;
+  }
+  Object.freeze(obj);
+  for (const key of Object.keys(obj)) {
+    const val = obj[key];
+    if (val && typeof val === 'object') {
+      deepFreeze(val);
+    }
+  }
+  return obj;
 }
 
 /**
@@ -110,5 +128,6 @@ async function syncUserNames() {
 
 module.exports = {
   loadAllTests,
-  syncUserNames
+  syncUserNames,
+  deepFreeze,
 };

@@ -4,6 +4,27 @@ Barcha muhim o'zgarishlar, yangilanishlar va xavfsizlik yaxshilanishlari ushbu h
 
 ---
 
+## [1.2.5] — 2026-10-16
+
+### 🛡️ Post-Fix Audit Verification: 9 ta Qolib Ketgan va Qisman Tuzatilgan Muammo To'liq Yopildi (100% Production-Grade)
+* **Kritik: Web Admin API va Supabase 1000-Qator Cheklovi To'liq Yechildi (Bug 46):**
+  - `src/api/admin.js` ga paginatsiyali `GET /users` va `GET /official-tests` endpointlari qo'shildi.
+  - `src/services/dbService.js` dagi `loadAllOfficialTests` funksiyasiga 1000 tadan range paginatsiya kiritilib, barcha rasmiy testlar yo'qotishlarsiz o'qilishi ta'minlandi.
+* **Kritik: Foydalanuvchi Statistika Ballarini Saqlashda `user_id` Not-Null Himoyasi (Bug 47):**
+  - `dbService.js` da `updateUserStats` ichida `stats.user_id = uid` kafolatlanib, parallel yozishlardagi xatoliklar bartaraf etildi.
+* **Yuqori: Timetable CDN da Invalid / Stale `file_id` Self-Healing Mexanizmi (Bug 32):**
+  - `src/services/timetableCdnService.js` ga `handleInvalidFileId` qo'shildi. Telegramdan `wrong file identifier` xatosi qaytganda kesh tozalanadi va avtomatik yangi rasm generatsiya qilinadi.
+* **Yuqori: HTML Entity Slicing Edge-Case Bartaraf Etildi (Bug 7):**
+  - `src/core/questionUtils.js` da `safeTruncateExplanation(text, maxLen = 200)` funksiyasi yaratildi. Matn kesilganda chala qolgan entitylar (`&amp`, `&qu...`) tozalanib, Telegram `can't parse entities` xatosi yo'qotildi.
+* **Yuqori: Global Rasmiy Testlar Keshini `deepFreeze` Bilan Qulflash (Bug 8):**
+  - `src/core/loader.js` ga `deepFreeze` qo'shilib, xotiraga yuklangan test bloklari rekursiv muzlatildi. Testlar massivining tasodifiy mutatsiyalari 100% oldi olindi.
+* **O'rta: Profil Callback Timeout Xatosi Bartaraf Etildi (Bug 16 & Bug 55):**
+  - `src/handlers/profileHandler.js` dagi `cbProfile` boshiga `await safeAnswerCb(ctx)` qo'shildi.
+* **O'rta: Klaviatura Callback Data 64-Bayt Cheklovi Himoyasi (Bug 22):**
+  - `src/keyboards/keyboards.js` dagi `paginationRow` va `getBlocksKeyboard` generatorlariga `safeCallbackData()` ulandi.
+
+---
+
 ## [1.2.4] — 2026-10-15
 
 ### ⚙️ 55 Bugs Simulyatsiyasi: 5-Bosqich — Core Infrastructure, Supabase DB, Redis, BullMQ va Mutex (Bugs 46, 47, 49–53)

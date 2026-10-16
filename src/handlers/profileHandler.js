@@ -230,6 +230,7 @@ async function cmdSetClass(ctx) {
 }
 
 async function cbProfile(ctx) {
+  await safeAnswerCb(ctx);
   const statsHandlers = require('./statsHandlers');
   return statsHandlers.cbStatsMenu(ctx);
 }

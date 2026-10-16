@@ -93,11 +93,12 @@ function sanitizeQuizQuestions(rawQuestions) {
       numCorrect = 0;
     }
 
+    const { safeTruncateExplanation } = require('../core/questionUtils');
     cleanList.push({
       question,
       options,
       correct_index: numCorrect,
-      explanation: item.explanation ? String(item.explanation).trim().slice(0, 200) : undefined,
+      explanation: item.explanation ? safeTruncateExplanation(String(item.explanation), 200) : undefined,
     });
   }
   return cleanList;

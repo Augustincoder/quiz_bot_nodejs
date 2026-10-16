@@ -8,6 +8,7 @@ const { isAdmin, TTLMap } = require('../core/utils');
 const { validateTelegramInitData } = require('../socket/auth');
 const crypto = require('crypto');
 const logger = require('../core/logger');
+const dbService = require('../services/dbService');
 
 const router = express.Router();
 const adminRateLimitMap = new TTLMap(60 * 1000, 5000); // 1 minute window, max 5000 tracked IPs
@@ -206,6 +207,59 @@ router.post('/upload-questions', async (req, res) => {
   } catch (err) {
     logger.error('Upload Questions API Error:', { error: err.message, mode });
     res.status(500).json({ error: 'Savollarni yuklashda xatolik yuz berdi' });
+  }
+});
+
+/**
+ * Bug 46 Fix: Paginated User Retrieval without Supabase 1000 row hard limit
+ */
+router.get('/users', async (req, res) => {
+  try {
+    const page = Math.max(0, parseInt(req.query.page, 10) || 0);
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 100));
+
+    if (req.query.all === 'true') {
+      const allUsers = await dbService.getAllUsers();
+      return res.json({ success: true, count: allUsers.length, users: allUsers });
+    }
+
+    if (!supabase) {
+      return res.status(503).json({ error: 'Database unavailable' });
+    }
+
+    const from = page * limit;
+    const to = from + limit - 1;
+
+    const { data, count, error } = await supabase
+      .from('users')
+      .select('*', { count: 'exact' })
+      .order('id', { ascending: false })
+      .range(from, to);
+
+    if (error) throw error;
+    res.json({
+      success: true,
+      total: count,
+      page,
+      limit,
+      users: data || [],
+    });
+  } catch (err) {
+    logger.error('Admin API get users error:', { error: err.message });
+    res.status(500).json({ error: 'Foydalanuvchilarni yuklashda xatolik' });
+  }
+});
+
+/**
+ * Bug 46 Fix: Official Tests Retrieval across all records
+ */
+router.get('/official-tests', async (req, res) => {
+  try {
+    const tests = await dbService.loadAllOfficialTests();
+    res.json({ success: true, tests });
+  } catch (err) {
+    logger.error('Admin API get tests error:', { error: err.message });
+    res.status(500).json({ error: 'Rasmiy testlarni yuklashda xatolik' });
   }
 });
 

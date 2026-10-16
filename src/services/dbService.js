@@ -11,10 +11,23 @@ const fallbackTimetableCache = new TTLMap(24 * 60 * 60 * 1000, 1000);
 async function loadAllOfficialTests() {
   if (!supabase) return {};
   try {
-    const { data, error } = await supabase.from('official_tests').select('*');
-    if (error) throw error;
+    const pageSize = 1000;
+    let from = 0;
+    const allRows = [];
+    while (true) {
+      const { data, error } = await supabase
+        .from('official_tests')
+        .select('*')
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      allRows.push(...data);
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+
     const db = {};
-    for (const row of (data || [])) {
+    for (const row of allRows) {
       const subj = row.subject;
       const tId  = parseInt(row.test_id, 10);
       if (!db[subj]) db[subj] = {};
@@ -123,6 +136,7 @@ async function updateUserStats(userId, correct, wrong, subjectKey, testId, mista
 
     try {
       delete stats._fetchFailed;
+      stats.user_id = uid;
       if (supabase) {
         const { error } = await supabase.from('user_stats').upsert(stats, { onConflict: 'user_id' });
         if (error) throw error;

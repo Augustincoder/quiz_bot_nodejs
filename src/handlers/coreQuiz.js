@@ -195,10 +195,8 @@ async function sendNextQuestion(chatId, telegram) {
         pollExtra.message_thread_id = session.messageThreadId;
       }
       if (q.explanation) {
-        let exp = escapeHtml(String(q.explanation).trim());
-        if (exp.length > 200) {
-          exp = exp.slice(0, 197) + "...";
-        }
+        const { safeTruncateExplanation } = require("../core/questionUtils");
+        const exp = safeTruncateExplanation(escapeHtml(String(q.explanation).trim()), 200);
         pollExtra.explanation = exp;
         pollExtra.explanation_parse_mode = "HTML";
       }
