@@ -1197,6 +1197,424 @@ async function setUserNotificationPreference(userId, preference) {
   return true;
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SMART SCHEDULE V2 & COURSE NOTES SERVICE LAYER
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Returns user schedule notification preferences with safe fallback defaults.
+ * @param {number|string} telegramId
+ */
+async function getUserScheduleSettings(telegramId) {
+  const uid = Number(telegramId);
+  const defaultSettings = {
+    telegram_id: uid,
+    group_name: null,
+    notify_mode: 'shift_aware',
+    offset_minutes: 60,
+    custom_morning_time: '07:00',
+    custom_evening_time: '20:00',
+    pre_class_5min_bell: true,
+    building_change_alert: true,
+    quiet_hours_enabled: true,
+    schedule_notifications: true,
+  };
+
+  if (!uid) return defaultSettings;
+
+  try {
+    // 1. First attempt to fetch from user_schedule_settings table
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('user_schedule_settings')
+        .select('*')
+        .eq('telegram_id', uid)
+        .maybeSingle();
+
+      if (!error && data) {
+        // Also verify student_group / class_name from users if group_name is missing
+        let groupName = data.group_name;
+        if (!groupName) {
+          const userRow = await getUserByTelegramId(uid);
+          groupName = userRow?.student_group || userRow?.class_name || null;
+        }
+        return {
+          telegram_id: uid,
+          group_name: groupName,
+          notify_mode: data.notify_mode || 'shift_aware',
+          offset_minutes: Number(data.offset_minutes) || 60,
+          custom_morning_time: data.custom_morning_time || '07:00',
+          custom_evening_time: data.custom_evening_time || '20:00',
+          pre_class_5min_bell: data.pre_class_5min_bell !== false,
+          building_change_alert: data.building_change_alert !== false,
+          quiet_hours_enabled: data.quiet_hours_enabled !== false,
+          schedule_notifications: data.notify_mode !== 'disabled',
+        };
+      }
+    }
+
+    // 2. Fallback to existing public.users table fields
+    const userRow = await getUserByTelegramId(uid);
+    if (userRow) {
+      const groupName = userRow.student_group || userRow.class_name || null;
+      return {
+        telegram_id: uid,
+        group_name: groupName,
+        notify_mode: userRow.notif_mode || 'shift_aware',
+        offset_minutes: Number(userRow.notif_offset_min) || 60,
+        custom_morning_time: userRow.notif_custom_time || '07:00',
+        custom_evening_time: '20:00',
+        pre_class_5min_bell: userRow.notif_next_bell !== false,
+        building_change_alert: true,
+        quiet_hours_enabled: true,
+        schedule_notifications: userRow.schedule_notifications !== false && userRow.notif_mode !== 'disabled',
+      };
+    }
+  } catch (err) {
+    logger.warn('getUserScheduleSettings error:', { telegramId: uid, error: err.message });
+  }
+
+  return defaultSettings;
+}
+
+/**
+ * Upserts user schedule preferences into Supabase with backwards compatibility.
+ * @param {number|string} telegramId
+ * @param {object} patch
+ */
+async function upsertUserScheduleSettings(telegramId, patch) {
+  const uid = Number(telegramId);
+  if (!uid || !patch || typeof patch !== 'object') return false;
+
+  try {
+    if (supabase) {
+      const payload = {
+        telegram_id: uid,
+        ...patch,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from('user_schedule_settings')
+        .upsert(payload, { onConflict: 'telegram_id' });
+
+      if (error) {
+        logger.warn('upsertUserScheduleSettings Supabase error:', { error: error.message });
+      }
+
+      // Also mirror to users table for backwards-compatibility if columns exist
+      const userUpdates = {};
+      if (patch.notify_mode !== undefined) userUpdates.notif_mode = patch.notify_mode;
+      if (patch.offset_minutes !== undefined) userUpdates.notif_offset_min = patch.offset_minutes;
+      if (patch.custom_morning_time !== undefined) userUpdates.notif_custom_time = patch.custom_morning_time;
+      if (patch.pre_class_5min_bell !== undefined) userUpdates.notif_next_bell = patch.pre_class_5min_bell;
+      if (patch.group_name !== undefined) {
+        userUpdates.student_group = patch.group_name;
+        userUpdates.class_name = patch.group_name;
+      }
+
+      if (Object.keys(userUpdates).length > 0) {
+        await supabase
+          .from('users')
+          .update(userUpdates)
+          .eq('telegram_id', uid)
+          .catch(() => {});
+      }
+
+      return !error;
+    }
+  } catch (err) {
+    logger.error('upsertUserScheduleSettings exception:', { telegramId: uid, error: err.message });
+  }
+
+  return false;
+}
+
+/**
+ * Paginated fetch of all active schedule subscribers (>1000 users safe).
+ */
+async function getAllActiveScheduleSubscribers() {
+  if (!supabase) return [];
+  const PAGE_SIZE = 1000;
+  let allSubscribers = [];
+  let from = 0;
+
+  try {
+    // 1. Fetch from user_schedule_settings where notify_mode != 'disabled'
+    while (true) {
+      const { data, error } = await supabase
+        .from('user_schedule_settings')
+        .select('*')
+        .neq('notify_mode', 'disabled')
+        .not('group_name', 'is', null)
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (error) {
+        logger.warn('getAllActiveScheduleSubscribers settings error:', { error: error.message });
+        break;
+      }
+      if (!data || data.length === 0) break;
+      allSubscribers.push(...data);
+      if (data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+
+    // 2. If table is empty or newly created, fallback to users table with pagination
+    if (allSubscribers.length === 0) {
+      from = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from('users')
+          .select('telegram_id, student_group, class_name, schedule_notifications, notif_mode, notif_offset_min, notif_custom_time, notif_evening_preview, notif_next_bell, is_banned, is_blocked')
+          .neq('is_banned', true)
+          .neq('is_blocked', true)
+          .range(from, from + PAGE_SIZE - 1);
+
+        if (error) break;
+        if (!data || data.length === 0) break;
+
+        for (const u of data) {
+          const group = u.student_group || u.class_name;
+          if (group && u.schedule_notifications !== false && u.notif_mode !== 'disabled') {
+            allSubscribers.push({
+              telegram_id: u.telegram_id,
+              group_name: group,
+              notify_mode: u.notif_mode || 'shift_aware',
+              offset_minutes: Number(u.notif_offset_min) || 60,
+              custom_morning_time: u.notif_custom_time || '07:00',
+              custom_evening_time: '20:00',
+              pre_class_5min_bell: u.notif_next_bell !== false,
+              building_change_alert: true,
+              quiet_hours_enabled: true,
+              schedule_notifications: true,
+            });
+          }
+        }
+        if (data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
+    }
+
+    return allSubscribers;
+  } catch (err) {
+    logger.error('getAllActiveScheduleSubscribers exception:', { error: err.message });
+    return [];
+  }
+}
+
+/**
+ * Creates a course note in public.course_notes (or class_notes fallback).
+ * @param {object} payload
+ */
+async function createCourseNote(payload) {
+  if (!supabase || !payload) return null;
+  try {
+    const record = {
+      creator_id: Number(payload.creator_id),
+      group_name: payload.group_name,
+      is_group_shared: Boolean(payload.is_group_shared ?? payload.is_group_note ?? false),
+      subject_name: payload.subject_name,
+      subject_norm: payload.subject_norm || (payload.subject_name || '').toLowerCase().trim(),
+      target_lesson_type: (payload.target_lesson_type || 'any').toLowerCase(),
+      target_date: payload.target_date,
+      target_period: Number(payload.target_period) || 1,
+      target_start_time: payload.target_start_time || null,
+      note_text: payload.note_text || null,
+      media_file_id: payload.media_file_id || null,
+      media_type: payload.media_type || null,
+      status: payload.status || 'pending',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    // Try primary table course_notes
+    let { data, error } = await supabase
+      .from('course_notes')
+      .insert([record])
+      .select('*')
+      .single();
+
+    if (error && error.message?.includes('relation "public.course_notes" does not exist')) {
+      // Fallback to class_notes if migration used class_notes name
+      const fallbackRecord = {
+        creator_id: record.creator_id,
+        group_name: record.group_name,
+        is_group_note: record.is_group_shared,
+        subject_name: record.subject_name,
+        target_lesson_type: record.target_lesson_type.toUpperCase(),
+        target_date: record.target_date,
+        target_period: record.target_period,
+        target_start_time: record.target_start_time || '08:00',
+        note_text: record.note_text,
+        media_type: record.media_type,
+        media_file_id: record.media_file_id,
+        status: record.status,
+      };
+      const res = await supabase.from('class_notes').insert([fallbackRecord]).select('*').single();
+      data = res.data;
+      error = res.error;
+    }
+
+    if (error) {
+      logger.error('createCourseNote error:', { error: error.message });
+      return null;
+    }
+    return data;
+  } catch (err) {
+    logger.error('createCourseNote exception:', { error: err.message });
+    return null;
+  }
+}
+
+/**
+ * Gets notes due for a specific date and target group / student.
+ * @param {number|string} telegramId
+ * @param {string} groupName
+ * @param {string} dateStr 'YYYY-MM-DD'
+ */
+async function getDueNotesForLesson(telegramId, groupName, dateStr) {
+  if (!supabase || !dateStr) return [];
+  try {
+    let query = supabase
+      .from('course_notes')
+      .select('*')
+      .in('status', ['pending', 'notified_evening'])
+      .eq('target_date', dateStr);
+
+    if (telegramId && groupName) {
+      query = query.or(`creator_id.eq.${Number(telegramId)},and(is_group_shared.eq.true,group_name.eq.${groupName})`);
+    } else if (groupName) {
+      query = query.eq('group_name', groupName);
+    } else if (telegramId) {
+      query = query.eq('creator_id', Number(telegramId));
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      // Try class_notes fallback
+      const { data: altData } = await supabase
+        .from('class_notes')
+        .select('*')
+        .eq('status', 'pending')
+        .eq('target_date', dateStr);
+      return altData || [];
+    }
+    return data || [];
+  } catch (err) {
+    logger.error('getDueNotesForLesson exception:', { error: err.message });
+    return [];
+  }
+}
+
+/**
+ * Retrieves a single course note by its primary ID.
+ * @param {number|string} noteId
+ */
+async function getNoteById(noteId) {
+  if (!supabase || !noteId) return null;
+  try {
+    const id = Number(noteId);
+    let { data, error } = await supabase
+      .from('course_notes')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error || !data) {
+      const alt = await supabase.from('class_notes').select('*').eq('id', id).maybeSingle();
+      data = alt.data;
+    }
+    return data || null;
+  } catch (err) {
+    logger.error('getNoteById error:', { noteId, error: err.message });
+    return null;
+  }
+}
+
+/**
+ * Updates note status (e.g. 'completed', 'snoozed', 'cancelled'), with optional new date and period.
+ * @param {number|string} noteId
+ * @param {number|string} telegramId
+ * @param {string} newStatus
+ * @param {string|null} newTargetDate 'YYYY-MM-DD'
+ * @param {number|null} newTargetPeriod
+ */
+async function updateNoteStatus(noteId, telegramId, newStatus, newTargetDate = null, newTargetPeriod = null, newStartTime = null) {
+  if (!supabase || !noteId) return false;
+  try {
+    const id = Number(noteId);
+    const updates = {
+      status: newStatus,
+      updated_at: new Date().toISOString(),
+    };
+    if (newTargetDate) updates.target_date = newTargetDate;
+    if (newTargetPeriod) updates.target_period = Number(newTargetPeriod);
+    if (newStartTime) updates.target_start_time = newStartTime;
+
+    let query = supabase.from('course_notes').update(updates).eq('id', id);
+    if (telegramId) {
+      query = query.eq('creator_id', Number(telegramId));
+    }
+    let { error } = await query;
+
+    if (error && error.message?.includes('course_notes')) {
+      const altQuery = supabase.from('class_notes').update(updates).eq('id', id);
+      const res = await altQuery;
+      error = res.error;
+    }
+
+    return !error;
+  } catch (err) {
+    logger.error('updateNoteStatus exception:', { noteId, error: err.message });
+    return false;
+  }
+}
+
+/**
+ * Retrieves all active/pending notes for a user and their group.
+ * @param {number|string} telegramId
+ * @param {string|null} groupName
+ */
+async function getUserActiveNotes(telegramId, groupName = null) {
+  if (!supabase || !telegramId) return [];
+  try {
+    const uid = Number(telegramId);
+    let query = supabase
+      .from('course_notes')
+      .select('*')
+      .in('status', ['pending', 'notified_evening'])
+      .order('target_date', { ascending: true })
+      .order('target_period', { ascending: true });
+
+    if (groupName) {
+      query = query.or(`creator_id.eq.${uid},and(is_group_shared.eq.true,group_name.eq.${groupName})`);
+    } else {
+      query = query.eq('creator_id', uid);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      // Fallback to class_notes
+      const altQuery = supabase
+        .from('class_notes')
+        .select('*')
+        .eq('status', 'pending')
+        .order('target_date', { ascending: true });
+      if (groupName) {
+        altQuery.or(`creator_id.eq.${uid},and(is_group_note.eq.true,group_name.eq.${groupName})`);
+      } else {
+        altQuery.eq('creator_id', uid);
+      }
+      const altRes = await altQuery;
+      return altRes.data || [];
+    }
+    return data || [];
+  } catch (err) {
+    logger.error('getUserActiveNotes exception:', { telegramId, error: err.message });
+    return [];
+  }
+}
+
 module.exports = {
   loadAllOfficialTests,
   saveOfficialTest,
@@ -1242,5 +1660,22 @@ module.exports = {
   getUserNotificationPreference,
   getUserNotificationPreferences,
   setUserNotificationPreference,
+  getUserScheduleSettings,
+  upsertUserScheduleSettings,
+  getAllActiveScheduleSubscribers,
+  createCourseNote,
+  getDueNotesForLesson,
+  getNoteById,
+  updateNoteStatus,
+  getUserActiveNotes,
+  // Aliases for blueprint compatibility:
+  getUserSchedulePrefs: getUserScheduleSettings,
+  updateUserSchedulePrefs: upsertUserScheduleSettings,
+  getAllSubscribedScheduleUsers: getAllActiveScheduleSubscribers,
+  createClassNote: createCourseNote,
+  updateClassNote: updateNoteStatus,
+  getPendingNotesForDate: (dateStr) => getDueNotesForLesson(null, null, dateStr),
+  getUserPendingNotes: getUserActiveNotes,
   _userStatsQueues: userStatsQueues,
 };
+

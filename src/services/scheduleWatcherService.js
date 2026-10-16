@@ -1014,6 +1014,335 @@ function getWatcherStatus() {
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SMART TIMETABLE V2: 1-MINUTE PRECISION SCHEDULER & 5-MIN BELL
+// ═══════════════════════════════════════════════════════════════════
+
+let isMinuteTickRunning = false;
+const minuteLocalDedupe = new TTLMap(60 * 60 * 1000, 3000); // 1-hour dedupe memory map
+
+/**
+ * Idempotency lock acquisition using Redis (with in-memory fallback).
+ * @param {string} key
+ * @param {number} ttlSeconds
+ */
+async function acquireNotificationLock(key, ttlSeconds = 72000) {
+  const now = Date.now();
+  if (minuteLocalDedupe.has(key) && minuteLocalDedupe.get(key) > now) {
+    return false;
+  }
+  minuteLocalDedupe.set(key, now + ttlSeconds * 1000);
+
+  const redis = getRedisClient();
+  if (redis && redis.isReady && typeof redis.set === 'function') {
+    try {
+      const res = await redis.set(key, '1', 'EX', ttlSeconds, 'NX');
+      return res === 'OK';
+    } catch (err) {
+      logger.debug('Redis acquireNotificationLock error:', { key, error: err.message });
+    }
+  }
+  return true;
+}
+
+/**
+ * Sends a daily briefing schedule card (via Timetable CDN photo or fallback text).
+ */
+async function sendDailyBriefingCard(bot, chatId, groupName, dayIdx, reasonHeader) {
+  if (!bot || !chatId || !groupName) return;
+  try {
+    const timetableCdnService = require('./timetableCdnService');
+    const sent = await timetableCdnService.sendTimetableImage(bot, chatId, groupName, dayIdx, reasonHeader);
+    if (!sent) {
+      const formatted = await scheduleService.fetchTodaySchedule(groupName, dayIdx);
+      await bot.telegram.sendMessage(chatId, `${reasonHeader}\n\n${formatted}`, { parse_mode: 'HTML' });
+    }
+  } catch (err) {
+    logger.warn('sendDailyBriefingCard failed for user', { chatId, groupName, error: err.message });
+  }
+}
+
+/**
+ * Sends 5-minute pre-end bell push with building hopping warning if applicable.
+ */
+async function sendPreEndBellAlert(bot, chatId, currentLesson, nextLesson) {
+  if (!bot || !chatId || !nextLesson) return;
+  const currRoom = currentLesson.room || currentLesson.classroom || 'Noma\'lum';
+  const nextRoom = nextLesson.room || nextLesson.classroom || 'Noma\'lum';
+  const currBld = edupageService.extractBuildingCode(currRoom);
+  const nextBld = edupageService.extractBuildingCode(nextRoom);
+
+  let buildingAlert = '';
+  if (currBld && nextBld && currBld !== nextBld) {
+    buildingAlert = `\n⚠️ <b>DIQQAT: Keyingi dars BOSHQA BINODA! (${currBld} ➔ ${nextBld})</b>`;
+  }
+
+  const nextType = edupageService.normalizeLessonType(nextLesson);
+  const typeLabel = nextType === 'practice' ? '✍️ Amaliyot' : (nextType === 'lecture' ? "📖 Ma'ruza" : (nextType === 'lab' ? '🔬 Laboratoriya' : '📘 Dars'));
+
+  const text =
+    `🔔 <b>5 daqiqadan so‘ng ${currentLesson.period}-para tugaydi!</b>\n\n` +
+    `👉 <b>Keyingi dars (${nextLesson.period}-para • ${nextLesson.startTime}):</b>\n` +
+    `📘 <b>${escapeHtml(nextLesson.subject)}</b> (${typeLabel})\n` +
+    `📍 <b>Xona:</b> <code>${escapeHtml(nextRoom)}</code>${buildingAlert}\n` +
+    (nextLesson.teacher ? `👨‍🏫 <b>O‘qituvchi:</b> ${escapeHtml(nextLesson.teacher)}` : '');
+
+  try {
+    await bot.telegram.sendMessage(chatId, text, { parse_mode: 'HTML' });
+  } catch (err) {
+    logger.debug('sendPreEndBellAlert failed', { chatId, error: err.message });
+  }
+}
+
+/**
+ * Delivers contextual note reminder to target users (with photo/document/voice re-send).
+ */
+async function deliverNoteReminder(bot, note, subscribers, titleHeader) {
+  if (!bot || !note) return;
+  const db = getDbService();
+  const recipients = note.is_group_shared
+    ? subscribers.filter(u => u.group_name === note.group_name).map(u => u.telegram_id)
+    : [note.creator_id];
+
+  const safeTitle = `${titleHeader}\n\n` +
+    `📘 <b>Fan:</b> ${escapeHtml(note.subject_name)}\n` +
+    `📝 <b>Topshiriq:</b>\n<i>${escapeHtml(note.note_text || '')}</i>`;
+
+  const { getNoteActionsKeyboard } = require('../keyboards/keyboards');
+
+  for (const targetId of recipients) {
+    const isOwner = String(targetId) === String(note.creator_id);
+    const replyMarkup = isOwner ? getNoteActionsKeyboard(note.id) : undefined;
+
+    try {
+      if (note.media_type === 'photo' && note.media_file_id) {
+        await bot.telegram.sendPhoto(targetId, note.media_file_id, {
+          caption: truncateText(safeTitle, 1024),
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup,
+        });
+      } else if (note.media_type === 'document' && note.media_file_id) {
+        await bot.telegram.sendDocument(targetId, note.media_file_id, {
+          caption: truncateText(safeTitle, 1024),
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup,
+        });
+      } else if (note.media_type === 'voice' && note.media_file_id) {
+        await bot.telegram.sendVoice(targetId, note.media_file_id, {
+          caption: truncateText(safeTitle, 1024),
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup,
+        });
+      } else {
+        await bot.telegram.sendMessage(targetId, truncateText(safeTitle, 4000), {
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup,
+        });
+      }
+    } catch (sendErr) {
+      logger.debug('deliverNoteReminder failed to send to user', { targetId, noteId: note.id, error: sendErr.message });
+    }
+  }
+}
+
+/**
+ * 1-Minute Precision Smart Notification & Bell Scheduler Tick
+ * (Runs every minute in Asia/Tashkent timezone).
+ * @param {object} bot Telegram bot instance
+ */
+async function runSmartScheduleMinuteTick(bot) {
+  if (isMinuteTickRunning) return;
+  isMinuteTickRunning = true;
+
+  try {
+    const db = getDbService();
+    const nowTashkent = edupageService.getTashkentNow();
+    const dayOfWeek = (nowTashkent.getDay() + 6) % 7; // 0=Mon .. 5=Sat, 6=Sun
+    const nowHours = nowTashkent.getHours();
+    const nowMins = nowTashkent.getMinutes();
+    const currentMinFromMidnight = nowHours * 60 + nowMins;
+    const currentHHMM = `${String(nowHours).padStart(2, '0')}:${String(nowMins).padStart(2, '0')}`;
+
+    const yyyy = nowTashkent.getFullYear();
+    const mm = String(nowTashkent.getMonth() + 1).padStart(2, '0');
+    const dd = String(nowTashkent.getDate()).padStart(2, '0');
+    const todayIso = `${yyyy}-${mm}-${dd}`;
+
+    const tomorrowDate = new Date(nowTashkent.getTime() + 86400000);
+    const tomorrowDayOfWeek = (tomorrowDate.getDay() + 6) % 7;
+    const tomorrowIso = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth() + 1).padStart(2, '0')}-${String(tomorrowDate.getDate()).padStart(2, '0')}`;
+
+    // 1. Fetch all subscribers safely paginated (>1000 users safe)
+    const subscribers = await db.getAllActiveScheduleSubscribers();
+    if (!subscribers || subscribers.length === 0) return;
+
+    // Cache day schedule per group to avoid duplicate calculations
+    const groupTodayScheduleCache = new Map();
+    const getCachedTodayLessons = (groupName) => {
+      if (dayOfWeek === 6) return [];
+      if (!groupTodayScheduleCache.has(groupName)) {
+        groupTodayScheduleCache.set(groupName, scheduleService.getGroupScheduleForDay(groupName, dayOfWeek, nowTashkent));
+      }
+      return groupTodayScheduleCache.get(groupName);
+    };
+
+    // --- A. Process Schedule Briefings & 5-Min Bell for Each User ---
+    for (const user of subscribers) {
+      const uid = user.telegram_id;
+      const groupName = user.group_name;
+      if (!groupName || user.notify_mode === 'disabled' || user.schedule_notifications === false) {
+        continue;
+      }
+
+      const todayLessons = getCachedTodayLessons(groupName);
+      const { firstLesson } = edupageService.getFirstAndLastLessonOfDay(todayLessons);
+
+      // 1. Daily Morning / Shift Briefing
+      if (dayOfWeek < 6 && firstLesson) {
+        const pTiming = edupageService.PERIOD_TIMINGS[firstLesson.period];
+        const startStr = firstLesson.startTime || (pTiming ? pTiming.start : '08:00');
+        const [sh, sm] = startStr.split(':').map(Number);
+        const firstStartMin = (sh || 0) * 60 + (sm || 0);
+
+        let shouldSendBriefing = false;
+        let briefingReason = '';
+
+        if (user.notify_mode === 'shift_aware') {
+          // If 1st lesson < 13:00 -> 07:00; If 1st lesson >= 13:00 -> 11:30
+          if (firstStartMin < 13 * 60 && currentHHMM === '07:00') {
+            shouldSendBriefing = true;
+            briefingReason = '☀️ <b>Bugungi dars jadvalingiz (Ertalabki smena):</b>';
+          } else if (firstStartMin >= 13 * 60 && currentHHMM === '11:30') {
+            shouldSendBriefing = true;
+            briefingReason = `🌤 <b>Bugungi dars jadvalingiz (2-smena, ${firstLesson.startTime} da boshlanadi):</b>`;
+          }
+        } else if (user.notify_mode === 'offset_before_first') {
+          const offset = Number(user.offset_minutes) || 60;
+          if (currentMinFromMidnight === firstStartMin - offset) {
+            shouldSendBriefing = true;
+            briefingReason = `⏰ <b>Birinchi darsingiz boshlanishiga ${offset} daqiqa qoldi (${firstLesson.startTime}):</b>`;
+          }
+        } else if (user.notify_mode === 'custom_time') {
+          if (user.custom_morning_time === currentHHMM && currentMinFromMidnight < 14 * 60) {
+            shouldSendBriefing = true;
+            briefingReason = `🎯 <b>Belgilangan vaqtdagi dars jadvali (${currentHHMM}):</b>`;
+          }
+        } else if (user.notify_mode === 'standard_both') {
+          if (currentHHMM === '07:30') {
+            shouldSendBriefing = true;
+            briefingReason = '☀️ <b>Bugungi dars jadvalingiz:</b>';
+          }
+        }
+
+        if (shouldSendBriefing) {
+          const lockKey = `sched_sent:${uid}:${todayIso}:morning`;
+          if (await acquireNotificationLock(lockKey, 64800)) {
+            await sendDailyBriefingCard(bot, uid, groupName, dayOfWeek, briefingReason);
+          }
+        }
+      }
+
+      // 2. Evening Preview for Tomorrow
+      if (tomorrowDayOfWeek < 6) {
+        let shouldSendEvening = false;
+        let eveningReason = '';
+
+        if (user.notify_mode === 'custom_time') {
+          if (user.custom_evening_time === currentHHMM && currentMinFromMidnight >= 14 * 60) {
+            shouldSendEvening = true;
+            eveningReason = `🌙 <b>Ertangi dars jadvali (${currentHHMM}):</b>`;
+          }
+        } else if (user.notify_mode === 'standard_both' || user.notify_mode === 'shift_aware') {
+          if (currentHHMM === '20:00') {
+            shouldSendEvening = true;
+            eveningReason = '🌙 <b>Ertangi kun dars jadvali:</b>';
+          }
+        }
+
+        if (shouldSendEvening) {
+          const tomorrowLessons = scheduleService.getGroupScheduleForDay(groupName, tomorrowDayOfWeek, tomorrowDate);
+          if (tomorrowLessons && tomorrowLessons.length > 0) {
+            const lockKey = `sched_sent:${uid}:${todayIso}:evening`;
+            if (await acquireNotificationLock(lockKey, 64800)) {
+              await sendDailyBriefingCard(bot, uid, groupName, tomorrowDayOfWeek, eveningReason);
+            }
+          }
+        }
+      }
+
+      // 3. 5-Minute Pre-End Bell (pre_class_5min_bell)
+      if (dayOfWeek < 6 && user.pre_class_5min_bell !== false && todayLessons && todayLessons.length >= 2) {
+        for (let i = 0; i < todayLessons.length - 1; i++) {
+          const curr = todayLessons[i];
+          const next = todayLessons[i + 1];
+          const pTiming = edupageService.PERIOD_TIMINGS[curr.period];
+          const bellMinute = pTiming ? pTiming.bell5MinBeforeEnd : null;
+
+          if (bellMinute && currentMinFromMidnight === bellMinute) {
+            // Check double-pair suppression: if same subject and same room continues, suppress alert
+            if (edupageService.isSameDoublePair(curr, next)) {
+              continue;
+            }
+
+            const lockKey = `bell_5m:${uid}:${todayIso}:${curr.period}`;
+            if (await acquireNotificationLock(lockKey, 36000)) {
+              await sendPreEndBellAlert(bot, uid, curr, next);
+            }
+          }
+        }
+      }
+    }
+
+    // --- B. Process Contextual Note Reminders ---
+    // 1. 20 minutes before class
+    const todayNotes = await db.getDueNotesForLesson(null, null, todayIso);
+    for (const note of todayNotes) {
+      if (note.status !== 'pending' && note.status !== 'notified_evening') continue;
+
+      const pTiming = edupageService.PERIOD_TIMINGS[note.target_period];
+      const startStr = note.target_start_time || (pTiming ? pTiming.start : '08:00');
+      const [sh, sm] = startStr.split(':').map(Number);
+      const startMin = (sh || 0) * 60 + (sm || 0);
+
+      if (currentMinFromMidnight >= startMin - 20 && currentMinFromMidnight <= startMin - 15) {
+        const lockKey = `note_rem:${note.id}:pre20m`;
+        if (await acquireNotificationLock(lockKey, 36000)) {
+          await db.updateNoteStatus(note.id, null, note.status);
+          await deliverNoteReminder(
+            bot,
+            note,
+            subscribers,
+            `⏰ <b>Dars boshlanishiga 20 daqiqa qoldi! (${startStr})</b>`
+          );
+        }
+      }
+    }
+
+    // 2. Evening before (20:30)
+    if (currentHHMM === '20:30') {
+      const tomorrowNotes = await db.getDueNotesForLesson(null, null, tomorrowIso);
+      for (const note of tomorrowNotes) {
+        if (note.status === 'completed' || note.status === 'cancelled') continue;
+        const lockKey = `note_rem:${note.id}:evening`;
+        if (await acquireNotificationLock(lockKey, 43200)) {
+          await db.updateNoteStatus(note.id, null, 'notified_evening');
+          await deliverNoteReminder(
+            bot,
+            note,
+            subscribers,
+            `🌙 <b>Ertangi dars uchun belgilangan topshiriq:</b>\n` +
+            `📅 <i>${note.target_period}-para (${note.target_start_time || '08:00'})</i>`
+          );
+        }
+      }
+    }
+  } catch (err) {
+    logger.error('runSmartScheduleMinuteTick error:', { error: err.message });
+  } finally {
+    isMinuteTickRunning = false;
+  }
+}
+
 module.exports = {
   setBotInstance,
   notifyGroupScheduleChanged,
@@ -1024,5 +1353,7 @@ module.exports = {
   getSimplifiedSchedule,
   formatChangeAlert,
   getWatcherStatus,
+  runSmartScheduleMinuteTick,
 };
+
 

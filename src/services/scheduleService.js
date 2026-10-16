@@ -221,6 +221,162 @@ function clearImageMemoryCache() {
   imageMemoryCache.clear();
 }
 
+/**
+ * Returns raw lesson list for a specific group and day index (0=Mon .. 5=Sat)
+ * @param {string} className
+ * @param {number} dayIdx
+ * @param {Date|null} targetDate
+ */
+function getGroupScheduleForDay(className, dayIdx, targetDate = null) {
+  if (!className || dayIdx === null || dayIdx === undefined) return [];
+  const numDay = Number(dayIdx);
+  if (numDay < 0 || numDay >= 6) return []; // Sunday is a day off
+
+  const canonical = getCanonicalGroupName(className) || className;
+  try {
+    const { getIndexedDatabase, findClassId, PERIOD_TIMINGS } = require('./edupageService');
+    // Using synchronous access to memory database if available
+    let db = null;
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const rootDataPath = path.resolve(__dirname, '../../data/timetable_cache.json');
+      if (fs.existsSync(rootDataPath)) {
+        const raw = JSON.parse(fs.readFileSync(rootDataPath, 'utf8'));
+        const { buildIndexedDatabase } = require('./edupageService');
+        db = buildIndexedDatabase(raw, 'sync');
+      }
+    } catch {}
+
+    if (!db) return [];
+    const classId = findClassId(db, canonical);
+    if (!classId) return [];
+    const schedule = db.schedulesByClassId.get(classId);
+    if (!schedule || !schedule[numDay]) return [];
+
+    const daySchedule = schedule[numDay];
+    const lessons = [];
+    const pKeys = Object.keys(daySchedule).map(Number).sort((a, b) => a - b);
+    for (const p of pKeys) {
+      const items = Array.isArray(daySchedule[p]) ? daySchedule[p] : [daySchedule[p]];
+      for (const item of items) {
+        if (!item) continue;
+        const pTiming = PERIOD_TIMINGS[p] || { start: '08:00', end: '09:20' };
+        lessons.push({
+          period: p,
+          startTime: item.startTime || pTiming.start,
+          endTime: item.endTime || pTiming.end,
+          subject: item.subject || '',
+          room: item.room || item.classroom || '',
+          teacher: item.teacher || '',
+          subgroups: item.subgroups || [],
+          jointGroups: item.jointGroups || [],
+          lessonType: item.lessonType || '',
+        });
+      }
+    }
+    return lessons;
+  } catch (err) {
+    logger.warn('getGroupScheduleForDay error:', { className, dayIdx, error: err.message });
+    return [];
+  }
+}
+
+/**
+ * Returns raw lesson list for today according to Asia/Tashkent time
+ * @param {string} className
+ * @param {Date|null} nowTashkent
+ */
+function getGroupScheduleToday(className, nowTashkent = null) {
+  const { getTashkentNow } = require('./edupageService');
+  const now = getTashkentNow(nowTashkent);
+  const dayOfWeek = (now.getDay() + 6) % 7;
+  return getGroupScheduleForDay(className, dayOfWeek, now);
+}
+
+/**
+ * Returns active lesson context or recent finished lesson
+ * @param {string} className
+ * @param {Date|null} nowTashkent
+ */
+function getActiveOrRecentLessonContext(className, nowTashkent = null) {
+  const { getTashkentNow, detectCurrentActiveLesson } = require('./edupageService');
+  const now = getTashkentNow(nowTashkent);
+  const todayLessons = getGroupScheduleToday(className, now);
+  if (!todayLessons || todayLessons.length === 0) return null;
+
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  return detectCurrentActiveLesson(todayLessons, currentMinutes);
+}
+
+/**
+ * Searches upcoming occurrences of a course for a group
+ * @param {string} className
+ * @param {string} baseSubjectName
+ * @param {number} maxResults
+ * @param {Date|null} nowTashkent
+ * @param {string} targetLessonType
+ */
+function getUpcomingSubjectOccurrences(className, baseSubjectName, maxResults = 5, nowTashkent = null, targetLessonType = 'any') {
+  const canonical = getCanonicalGroupName(className) || className;
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const rootDataPath = path.resolve(__dirname, '../../data/timetable_cache.json');
+    if (!fs.existsSync(rootDataPath)) return [];
+    const raw = JSON.parse(fs.readFileSync(rootDataPath, 'utf8'));
+    const { buildIndexedDatabase, findClassId, findUpcomingCourseOccurrences } = require('./edupageService');
+    const db = buildIndexedDatabase(raw, 'sync');
+    const classId = findClassId(db, canonical);
+    if (!classId) return [];
+    const schedule = db.schedulesByClassId.get(classId);
+    if (!schedule) return [];
+
+    return findUpcomingCourseOccurrences(schedule, baseSubjectName, targetLessonType, nowTashkent, maxResults);
+  } catch (err) {
+    logger.warn('getUpcomingSubjectOccurrences error:', { className, baseSubjectName, error: err.message });
+    return [];
+  }
+}
+
+/**
+ * Returns sorted unique subjects of a group, prioritizing today's subjects
+ * @param {string} className
+ * @param {Date|null} nowTashkent
+ */
+function getGroupUniqueSubjectsSorted(className, nowTashkent = null) {
+  const { getTashkentNow, normalizeSubjectKey } = require('./edupageService');
+  const now = getTashkentNow(nowTashkent);
+  const todayIdx = (now.getDay() + 6) % 7;
+
+  const todaySubjects = new Set();
+  if (todayIdx < 6) {
+    const todayLessons = getGroupScheduleForDay(className, todayIdx, now) || [];
+    for (const l of todayLessons) {
+      if (l.subject) {
+        const norm = normalizeSubjectKey(l.subject);
+        if (norm) todaySubjects.add(norm);
+      }
+    }
+  }
+
+  const allSubjects = new Set([...todaySubjects]);
+  for (let d = 0; d < 6; d++) {
+    const lessons = getGroupScheduleForDay(className, d, now) || [];
+    for (const l of lessons) {
+      if (l.subject) {
+        const norm = normalizeSubjectKey(l.subject);
+        if (norm) allSubjects.add(norm);
+      }
+    }
+  }
+
+  return Array.from(allSubjects).map(subj => ({
+    name: subj,
+    isToday: todaySubjects.has(subj),
+  }));
+}
+
 module.exports = {
   fetchTodaySchedule,
   fetchWeeklyScheduleImage,
@@ -233,4 +389,10 @@ module.exports = {
   compareTimes,
   isTimeBetween,
   PERIOD_INTERVALS,
+  // Phase 2 Context-Aware Timetable Exports:
+  getGroupScheduleForDay,
+  getGroupScheduleToday,
+  getActiveOrRecentLessonContext,
+  getUpcomingSubjectOccurrences,
+  getGroupUniqueSubjectsSorted,
 };

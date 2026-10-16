@@ -75,7 +75,9 @@ const handlers = {
   shelf: require("./src/handlers/shelfHandlers"),
   aiTests: require("./src/handlers/aiTestsHandlers"),
   contact: require("./src/handlers/contactAdmin"),
+  notes: require("./src/handlers/noteHandler"),
 };
+
 
 // ═══ MIDDLEWARE STACK ═════════════════════════════════════════
 bot.use(rateLimiterMiddleware());
@@ -240,7 +242,14 @@ bot.command("check_schedule", async (ctx) => {
   return ctx.reply(msg, { parse_mode: "HTML" });
 });
 
+// ─── Smart Schedule v2: /note, /groupnote, /mynotes ─────────
+bot.command("note", (ctx) => handlers.notes.handleNoteCommand(ctx, false));
+bot.command("groupnote", (ctx) => handlers.notes.handleNoteCommand(ctx, true));
+bot.command("mynotes", (ctx) => handlers.notes.handleMyNotesCommand(ctx));
+bot.action(/^(?:no:|ns:|np:|nc:|nd:|nsz:|note_)/, (ctx) => handlers.notes.handleNoteCallback(ctx));
+
 bot.command(["send_schedule_alert", "alert_group"], async (ctx) => {
+
   if (!isAdmin(ctx.from?.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
   const text = (ctx.message?.text || "").trim();
   const groupArg = text.replace(/^\/(send_schedule_alert|alert_group)\s*/i, "").trim();
@@ -330,6 +339,19 @@ bot.command("prewarm_stop", async (ctx) => {
 
 // ═══ GLOBAL TEXT STATE ROUTER ════════════════════════════════
 bot.on("message", async (ctx, next) => {
+  // Check active /note wizard first (handles user sending text, photo, docx, voice for notes)
+  if (handlers.notes && typeof handlers.notes.handleNoteWizardInput === "function") {
+    let handledByNoteWizard = false;
+    await handlers.notes.handleNoteWizardInput(ctx, () => {
+      handledByNoteWizard = false;
+    });
+    // If handleNoteWizardInput replied or captured the input, return immediately
+    const wiz = await require("./src/core/pendingStore").get(`note_wiz:${ctx.from?.id}`);
+    if (wiz && wiz.step === 'AWAITING_OCCURRENCE') {
+      return;
+    }
+  }
+
   const state = getState(ctx);
   if (!state) return next();
 
@@ -373,6 +395,7 @@ bot.on("message", async (ctx, next) => {
     [States.AI_ESSAY_ANALYSIS]: () => handlers.ai.onEssayInput(ctx),
     [States.CREATE_SHELF_FOLDER]: () => handlers.shelf.onNewFolderInput(ctx),
     [States.SET_CLASS]: () => handlers.profile.onSetClassInput(ctx),
+    'sched:custom_time': () => handlers.schedule.onCustomTimeInput ? handlers.schedule.onCustomTimeInput(ctx) : next(),
 
     // Admin test creation & management
     [States.ADM_CREATE_TEST_ID]: () => handlers.admin.onAdmTestId(ctx),
@@ -397,6 +420,7 @@ bot.on("message", async (ctx, next) => {
   if (stateMap[state]) return stateMap[state]();
   return next();
 });
+
 
 bot.on("poll_answer", async (ctx) => {
   await handlers.quiz.handlePollAnswer(ctx.pollAnswer, ctx.telegram);
@@ -644,6 +668,15 @@ async function main() {
     timezone: "Asia/Tashkent",
   });
 
+  // 7. Smart Schedule v2.0: 1-minute precision scheduler & 5-minute pre-end bell
+  const minuteCron = cron.schedule("* * * * *", () => {
+    scheduleWatcher.runSmartScheduleMinuteTick(bot).catch((err) => {
+      logger.error("Smart schedule minute tick error:", { error: err.message });
+    });
+  }, {
+    timezone: "Asia/Tashkent",
+  });
+
   _cronJobs = [
     morningCron,
     eveningCron,
@@ -651,14 +684,16 @@ async function main() {
     watcherNightCron,
     nightPrewarmStartCron,
     nightPrewarmStopCron,
+    minuteCron,
   ];
-  logger.info("⏰ Dars jadvali avtomatik tarqatish, Realtime Watcher va Tungi CDN Worker faollashtirildi");
+  logger.info("⏰ Dars jadvali avtomatik tarqatish, Smart Schedule v2 daqiqalik dispetcher, Realtime Watcher va Tungi CDN Worker faollashtirildi");
   watchdogService.startWatchdog();
 
   // Initial watcher snapshot baseline in background
   scheduleWatcher.checkScheduleChanges(false).catch((err) => {
     logger.warn("Initial schedule watcher check deferred", { error: err.message });
   });
+
 
   // Web Server & Socket.io
   const app = express();

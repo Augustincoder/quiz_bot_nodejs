@@ -676,43 +676,41 @@ async function cbRetryHafta(ctx) {
 }
 
 const PREF_LABELS = {
-  both: "🔔 Ikkisi ham (07:30 va 21:00)",
-  morning: "🌤 Faqat ertalab (07:30)",
-  evening: "🌙 Faqat kechqurun (21:00)",
-  silent: "🔕 Faqat o'zgarishlar (Sokin rejim)",
+  shift_aware: '🌗 Smenaga mos (1-smena 07:00 / 2-smena 11:30)',
+  offset_before_first: '⏱ Birinchi darsdan oldin (Dinamik)',
+  custom_time: '🎯 Aniq belgilangan vaqtda',
+  standard_both: '🌅+🌙 Standart (07:30 va 20:00)',
+  disabled: '🔕 Kunlik eslatmalar o\'chirilgan',
+  both: '🌅+🌙 Standart (07:30 va 20:00)',
+  morning: '🌤 Faqat ertalab (07:30)',
+  evening: '🌙 Faqat kechqurun (20:00)',
+  silent: '🔕 Faqat o\'zgarishlar (Sokin rejim)',
 };
 
 async function renderNotifySettings(ctx, alertMessage = null) {
   const userId = ctx.from?.id;
   if (!userId) return;
 
-  const currentPref = await dbService.getUserNotificationPreference(userId);
-  const currentLabel = PREF_LABELS[currentPref] || PREF_LABELS.both;
+  const prefs = await dbService.getUserScheduleSettings(userId);
+  const { getScheduleV2SettingsKeyboard } = require('../keyboards/keyboards');
 
-  const text = `🔔 <b>Dars Jadvali Xabarnoma Sozlamalari</b>\n━━━━━━━━━━━━━━━━━━━━\n` +
-    `👤 Hozirgi tanlovingiz: <b>${escapeHtml(currentLabel)}</b>\n\n` +
-    `Bot sizga qachon dars jadvalini yuborishini o'zingizga moslang:\n` +
-    `• <b>Ikkisi ham:</b> Har kuni ertalab bugungi va kechasi ertangi jadval\n` +
-    `• <b>Faqat ertalab:</b> Soat 07:30 da bugungi darslar\n` +
-    `• <b>Faqat kechqurun:</b> Soat 21:00 da ertangi darslar\n` +
-    `• <b>Sokin rejim:</b> Har kungi xabar kelmaydi, faqat jadval o'zgarganda ogohlantiriladi\n\n` +
-    `👇 <i>Kerakli rejimni tanlang:</i>`;
+  const modeLabel = PREF_LABELS[prefs.notify_mode] || PREF_LABELS.shift_aware;
+  const offsetText = prefs.notify_mode === 'offset_before_first'
+    ? `\n⏱ <b>Offset:</b> Darsdan ${prefs.offset_minutes} daqiqa oldin`
+    : '';
+  const customTimeText = prefs.notify_mode === 'custom_time'
+    ? `\n🎯 <b>Tanlangan vaqt:</b> ${prefs.custom_morning_time || '07:00'} (ertalab) / ${prefs.custom_evening_time || '20:00'} (kechki)`
+    : '';
 
-  const kb = Markup.inlineKeyboard([
-    [
-      Markup.button.callback(`${currentPref === 'both' ? '✅ ' : ''}🔔 Ikkisi ham`, 'set_pref_both'),
-    ],
-    [
-      Markup.button.callback(`${currentPref === 'morning' ? '✅ ' : ''}🌤 Faqat ertalab`, 'set_pref_morning'),
-      Markup.button.callback(`${currentPref === 'evening' ? '✅ ' : ''}🌙 Faqat kechqurun`, 'set_pref_evening'),
-    ],
-    [
-      Markup.button.callback(`${currentPref === 'silent' ? '✅ ' : ''}🔕 Faqat o'zgarishlar (Sokin)`, 'set_pref_silent'),
-    ],
-    [
-      Markup.button.callback('🔙 Jadval Markaziga qaytish', 'schedule_menu'),
-    ],
-  ]);
+  const text =
+    `⚙️ <b>Aqlli Dars Jadvali Eslatmalari (v2.0)</b>\n━━━━━━━━━━━━━━━━━━━━\n` +
+    `👥 <b>Guruhingiz:</b> <code>${escapeHtml(prefs.group_name || 'Tanlanmagan')}</code>\n` +
+    `📡 <b>Joriy rejim:</b> <b>${escapeHtml(modeLabel)}</b>${offsetText}${customTimeText}\n` +
+    `🔔 <b>5 daqiqalik qo‘ng‘iroq eslatmasi:</b> ${prefs.pre_class_5min_bell ? '✅ Yoqilgan' : '❌ O‘chirilgan'}\n` +
+    `🏢 <b>Bino almashinuvi ogohlantirishi:</b> ${prefs.building_change_alert ? '✅ Yoqilgan' : '❌ O‘chirilgan'}\n\n` +
+    `👇 <i>O‘zingizga eng qulay eslatma rejimini tanlang:</i>`;
+
+  const kb = getScheduleV2SettingsKeyboard(prefs);
 
   if (ctx.callbackQuery) {
     if (alertMessage) {
@@ -744,6 +742,89 @@ async function cbSetPref(ctx, pref) {
   await dbService.setUserNotificationPreference(userId, pref);
   const label = PREF_LABELS[pref] || pref;
   return renderNotifySettings(ctx, `✅ Saqlandi: ${label}`);
+}
+
+async function cbV2ModeShift(ctx) {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+  await dbService.upsertUserScheduleSettings(userId, { notify_mode: 'shift_aware' });
+  return renderNotifySettings(ctx, '✅ Smenaga mos avto-rejim saqlandi!');
+}
+
+async function cbV2Offset(ctx, mins) {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+  await dbService.upsertUserScheduleSettings(userId, {
+    notify_mode: 'offset_before_first',
+    offset_minutes: Number(mins),
+  });
+  return renderNotifySettings(ctx, `✅ Darsdan ${mins} daqiqa oldin eslatish belgilandi!`);
+}
+
+async function cbV2ModeStandard(ctx) {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+  await dbService.upsertUserScheduleSettings(userId, { notify_mode: 'standard_both' });
+  return renderNotifySettings(ctx, '✅ Standart rejim saqlandi!');
+}
+
+async function cbV2ToggleBell(ctx) {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+  const prefs = await dbService.getUserScheduleSettings(userId);
+  const nextVal = !prefs.pre_class_5min_bell;
+  await dbService.upsertUserScheduleSettings(userId, { pre_class_5min_bell: nextVal });
+  return renderNotifySettings(ctx, nextVal ? '🔔 5 daqiqalik qo‘ng‘iroq yoqildi!' : '🔕 5 daqiqalik qo‘ng‘iroq o‘chirildi');
+}
+
+async function cbV2ToggleBld(ctx) {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+  const prefs = await dbService.getUserScheduleSettings(userId);
+  const nextVal = !prefs.building_change_alert;
+  await dbService.upsertUserScheduleSettings(userId, { building_change_alert: nextVal });
+  return renderNotifySettings(ctx, nextVal ? '🏢 Bino almashinuvi ogohlantirishi yoqildi!' : '🏢 Bino almashinuvi o‘chirildi');
+}
+
+async function cbV2ModeDisabled(ctx) {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+  await dbService.upsertUserScheduleSettings(userId, { notify_mode: 'disabled' });
+  return renderNotifySettings(ctx, '🔕 Kunlik eslatmalar o‘chirildi');
+}
+
+async function cbV2ModeCustom(ctx) {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+  const { setState, States } = require('../core/utils');
+  if (ctx.session) {
+    ctx.session.state = 'sched:custom_time';
+  }
+  await safeAnswerCb(ctx);
+  return ctx.reply(
+    '🎯 <b>Dars jadvali uchun qulay ertalabki vaqtni kiriting:</b>\n\n' +
+    'Format: <code>HH:mm</code> (masalan: <code>06:45</code>, <code>07:15</code> yoki <code>08:00</code>)',
+    { parse_mode: 'HTML' }
+  );
+}
+
+async function onCustomTimeInput(ctx) {
+  const text = (ctx.message?.text || '').trim();
+  const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+  if (!timeRegex.test(text)) {
+    return ctx.reply('⚠️ Noto‘g‘ri vaqt formati! Iltimos, <code>HH:mm</code> formatida kiriting (Masalan: <code>07:00</code>):', { parse_mode: 'HTML' });
+  }
+
+  const userId = ctx.from?.id;
+  if (ctx.session) ctx.session.state = null;
+  await dbService.upsertUserScheduleSettings(userId, {
+    notify_mode: 'custom_time',
+    custom_morning_time: text,
+  });
+
+  return ctx.reply(`✅ <b>Eslatma vaqti muvaffaqiyatli saqlandi:</b> <code>${text}</code>`, {
+    parse_mode: 'HTML',
+  });
 }
 
 function register(bot) {
@@ -779,13 +860,26 @@ function register(bot) {
   bot.action('back_to_rooms_menu', cbBackToRoomsMenu);
   bot.action('retry_hafta', cbRetryHafta);
 
-  // Notification preference triggers
+  // Notification preference triggers (Legacy + V2)
   bot.action('schedule_notify_settings', cbNotifySettings);
   bot.action('set_pref_both', (ctx) => cbSetPref(ctx, 'both'));
   bot.action('set_pref_morning', (ctx) => cbSetPref(ctx, 'morning'));
   bot.action('set_pref_evening', (ctx) => cbSetPref(ctx, 'evening'));
   bot.action('set_pref_silent', (ctx) => cbSetPref(ctx, 'silent'));
+
+  // Smart Schedule v2 interactive triggers
+  bot.action('v2_mode_shift', cbV2ModeShift);
+  bot.action('v2_offset_15', (ctx) => cbV2Offset(ctx, 15));
+  bot.action('v2_offset_30', (ctx) => cbV2Offset(ctx, 30));
+  bot.action('v2_offset_60', (ctx) => cbV2Offset(ctx, 60));
+  bot.action('v2_offset_120', (ctx) => cbV2Offset(ctx, 120));
+  bot.action('v2_mode_standard', cbV2ModeStandard);
+  bot.action('v2_mode_custom', cbV2ModeCustom);
+  bot.action('v2_toggle_bell', cbV2ToggleBell);
+  bot.action('v2_toggle_bld', cbV2ToggleBld);
+  bot.action('v2_mode_disabled', cbV2ModeDisabled);
 }
+
 
 module.exports = {
   register,
@@ -796,4 +890,5 @@ module.exports = {
   cmdXonalar,
   buildRoomPageKb,
   getPeriodNowAndNext,
+  onCustomTimeInput,
 };

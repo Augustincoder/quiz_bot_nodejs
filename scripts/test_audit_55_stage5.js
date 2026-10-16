@@ -249,7 +249,11 @@ async function runStage5Tests() {
   console.log(`\n🎉 All ${passed}/${total} Stage 5 verification tests passed successfully!`);
 }
 
-runStage5Tests().catch((err) => {
-  console.error('\n❌ Stage 5 Tests failed:', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  runStage5Tests().catch((err) => {
+    console.error('\n❌ Stage 5 Tests failed:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = { runStage5Tests };

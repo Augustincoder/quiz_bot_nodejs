@@ -248,3 +248,4 @@ if (require.main === module) {
 }
 
 module.exports = { runStage4Tests };
+

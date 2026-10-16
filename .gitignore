@@ -11,9 +11,11 @@ node_modules/
 # Database dumps, backups & user data (SECURITY & PRIVACY)
 ai_ignore_sql/
 *.sql
+!migrations/*.sql
 *.csv
 !assets/
 !.agent/skills/**/data/*.csv
+
 data/users_stats.json
 src/data/users_stats.json
 src/data/timetable_cache.json

@@ -412,7 +412,7 @@ async function runStage2Tests() {
   console.log(`==================================================\n`);
 }
 
-runStage2Tests().catch((err) => {
+runStage((err) => {
   console.error('\n❌ Audit test execution failed:', err);
   process.exit(1);
 });

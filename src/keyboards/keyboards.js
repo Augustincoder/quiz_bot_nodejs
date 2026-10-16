@@ -157,6 +157,60 @@ function getTimetableInlineKeyboard(className = null) {
   return Markup.inlineKeyboard(rows);
 }
 
+/**
+ * Builds Smart Schedule v2 notification settings interactive inline keyboard
+ */
+function getScheduleV2SettingsKeyboard(prefs) {
+  const mode = prefs.notify_mode || 'shift_aware';
+  const offset = Number(prefs.offset_minutes) || 60;
+  const bell = prefs.pre_class_5min_bell !== false;
+  const bld = prefs.building_change_alert !== false;
+
+  return Markup.inlineKeyboard([
+    // Row 1: Shift-aware auto mode (recommended)
+    [Markup.button.callback(
+      `${mode === 'shift_aware' ? '🔘' : '⚪️'} 🌗 Smenaga mos (Avto)`,
+      'v2_mode_shift'
+    )],
+    // Row 2: Offset before first lesson
+    [
+      Markup.button.callback(`${mode === 'offset_before_first' && offset === 15 ? '🔘' : '⚪️'} 15 daq`, 'v2_offset_15'),
+      Markup.button.callback(`${mode === 'offset_before_first' && offset === 30 ? '🔘' : '⚪️'} 30 daq`, 'v2_offset_30'),
+      Markup.button.callback(`${mode === 'offset_before_first' && offset === 60 ? '🔘' : '⚪️'} 1 soat`, 'v2_offset_60'),
+      Markup.button.callback(`${mode === 'offset_before_first' && offset === 120 ? '🔘' : '⚪️'} 2 soat`, 'v2_offset_120'),
+    ],
+    // Row 3: Custom HH:mm or Standard
+    [
+      Markup.button.callback(`${mode === 'custom_time' ? '🔘' : '⚪️'} 🎯 Aniq vaqt (${prefs.custom_morning_time || '07:00'})`, 'v2_mode_custom'),
+      Markup.button.callback(`${mode === 'standard_both' ? '🔘' : '⚪️'} 🌅+🌙 Standart`, 'v2_mode_standard'),
+    ],
+    // Row 4: 5-minute pre-end bell & building transition alerts
+    [
+      Markup.button.callback(`🔔 5 daq qo'ng'iroq: ${bell ? 'YOQILGAN ✅' : 'O\'CHIQ ❌'}`, 'v2_toggle_bell'),
+    ],
+    [
+      Markup.button.callback(`🏢 Bino almashinuvi: ${bld ? 'YOQILGAN ✅' : 'O\'CHIQ ❌'}`, 'v2_toggle_bld'),
+    ],
+    // Row 5: Disable / Back
+    [
+      Markup.button.callback(`${mode === 'disabled' ? '🔘' : '⚪️'} 🔕 O'chirish`, 'v2_mode_disabled'),
+      Markup.button.callback('⬅️ Orqaga', 'schedule_menu'),
+    ],
+  ]);
+}
+
+/**
+ * Builds note interactive reminder actions keyboard
+ */
+function getNoteActionsKeyboard(noteId) {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback('✅ Bajarildi', safeCallbackData(`nd:${noteId}`)),
+      Markup.button.callback('⏳ Keyingi darsga surish', safeCallbackData(`nsz:${noteId}`)),
+    ],
+  ]);
+}
+
 module.exports = {
   ITEMS_PER_PAGE,
   getMainKeyboard,
@@ -165,6 +219,9 @@ module.exports = {
   setMemoryDb,
   getTimetableKeyboard,
   getTimetableInlineKeyboard,
+  getScheduleV2SettingsKeyboard,
+  getNoteActionsKeyboard,
   paginationRow,
 };
+
 

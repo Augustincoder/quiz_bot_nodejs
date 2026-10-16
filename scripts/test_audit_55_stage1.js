@@ -322,6 +322,7 @@ async function runStage1Tests() {
 
   console.log('\n==================================================');
   console.log('🎉 ALL 55-BUGS AUDIT STAGE 1 TESTS PASSED (18/18)!');
+  process.exit(0);
   console.log('==================================================\n');
 }
 
