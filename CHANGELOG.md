@@ -20,8 +20,10 @@ Barcha muhim o'zgarishlar, yangilanishlar va xavfsizlik yaxshilanishlari ushbu h
   - `src/core/loader.js` ga `deepFreeze` qo'shilib, xotiraga yuklangan test bloklari rekursiv muzlatildi. Testlar massivining tasodifiy mutatsiyalari 100% oldi olindi.
 * **O'rta: Profil Callback Timeout Xatosi Bartaraf Etildi (Bug 16 & Bug 55):**
   - `src/handlers/profileHandler.js` dagi `cbProfile` boshiga `await safeAnswerCb(ctx)` qo'shildi.
-* **O'rta: Klaviatura Callback Data 64-Bayt Cheklovi Himoyasi (Bug 22):**
-  - `src/keyboards/keyboards.js` dagi `paginationRow` va `getBlocksKeyboard` generatorlariga `safeCallbackData()` ulandi.
+* **Yuqori: Circuit Breaker HALF_OPEN Probe Lock Moduli (`watchdogService.js` / Bug 53):**
+  - `src/services/watchdogService.js` ga qayta tiklanish sinovida faqat 1 ta probe ruxsat beruvchi (`isProbing = true`) va parallel kelgan chaqiruvlarni bloklovchi production-grade `CircuitBreaker` sinfi qo'shildi.
+* **Yuqori: In-Memory Dual-Write va Redis Auto-Flush Mexanizmi (`storage.js` / Bug 51):**
+  - `src/core/storage.js` ga in-memory kesh, dirty-state monitoringi hamda Redis uzilib qayta ulanganda `flushToRedis()` orqali avtomatik ma'lumotlarni sinxronlash (flush) qo'shildi.
 
 ---
 
