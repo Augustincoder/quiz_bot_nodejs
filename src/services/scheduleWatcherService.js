@@ -650,6 +650,40 @@ async function checkScheduleChanges(forceOrOptions = false) {
       }
     }
 
+    // 1.5. Tier 1 Lightweight Gatekeeper (332-byte probe)
+    // Avoids downloading and parsing 12-15 MB JSON 288 times a day if metadata signature is unchanged
+    const shouldSkipTier1 = forceDeepCheck || forceCheckAllActive || targetNorm || !isBaselineReady || (Date.now() - lastDeepCheckAt > DEEP_CHECK_INTERVAL_MS);
+    if (!shouldSkipTier1) {
+      try {
+        const sig = await edupageService.getMetadataSignature();
+        if (sig && lastKnownSignature && sig === lastKnownSignature) {
+          tier1SkipsCount++;
+          lastCheckedAt = Date.now();
+          lastCheckStatus = 'ok_tier1_unchanged';
+          logger.debug('Schedule Watcher: Tier 1 signature match (332-byte probe), live timetable unchanged', {
+            sig,
+            tier1SkipsCount,
+            durationMs: Date.now() - t0,
+          });
+          isChecking = false;
+          return {
+            checked: true,
+            unchanged: true,
+            changedGroupsCount: 0,
+            changedGroups: [],
+            durationMs: Date.now() - t0,
+            reason: 'tier1_signature_match',
+          };
+        }
+        if (sig) {
+          lastKnownSignature = sig;
+          if (redis) redis.set(REDIS_SIG_KEY, sig, 'EX', 86400 * 7).catch(() => {});
+        }
+      } catch (tier1Err) {
+        logger.debug('Tier 1 signature check failed, proceeding to full check', { error: tier1Err.message });
+      }
+    }
+
     // 2. Real-time Full Synchronization with EduPage (Gzip ~767KB in ~1.2s)
     // Directly synchronizes and validates all 1,367 university groups with 100% precision.
     deepChecksCount++;
@@ -1119,9 +1153,17 @@ async function sendPreEndBellAlert(bot, chatId, currentLesson, nextLesson, build
 async function deliverNoteReminder(bot, note, subscribers, titleHeader) {
   if (!bot || !note) return;
   const db = getDbService();
-  const recipients = note.is_group_shared
-    ? subscribers.filter(u => u.group_name === note.group_name).map(u => u.telegram_id)
-    : [note.creator_id];
+  let recipients = [Number(note.creator_id)];
+
+  if (note.is_group_shared && note.group_name) {
+    const targetNorm = normalizeGroupName(note.group_name);
+    const groupUsers = await db.getUsersByClassName(note.group_name).catch(() => []);
+    const fromDb = (groupUsers || []).map(u => Number(u.telegram_id)).filter(Boolean);
+    const fromSubs = (subscribers || [])
+      .filter(u => normalizeGroupName(u.group_name) === targetNorm)
+      .map(u => Number(u.telegram_id));
+    recipients = Array.from(new Set([...fromDb, ...fromSubs, Number(note.creator_id)]));
+  }
 
   const safeTitle = `${titleHeader}\n\n` +
     `📘 <b>Fan:</b> ${escapeHtml(note.subject_name)}\n` +
@@ -1202,157 +1244,158 @@ async function runSmartScheduleIntervalTick(bot) {
     const tomorrowIso = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth() + 1).padStart(2, '0')}-${String(tomorrowDate.getDate()).padStart(2, '0')}`;
 
     // 1. Fetch all subscribers safely paginated (>1000 users safe)
-    const subscribers = await db.getAllActiveScheduleSubscribers();
-    if (!subscribers || subscribers.length === 0) return;
-
-    // Cache day schedule per group to avoid duplicate calculations
-    const groupTodayScheduleCache = new Map();
-    const getCachedTodayLessons = (groupName) => {
-      if (dayOfWeek === 6) return [];
-      if (!groupTodayScheduleCache.has(groupName)) {
-        groupTodayScheduleCache.set(groupName, scheduleService.getGroupScheduleForDay(groupName, dayOfWeek, nowTashkent));
-      }
-      return groupTodayScheduleCache.get(groupName);
-    };
-
-    const groupTomorrowScheduleCache = new Map();
-    const getCachedTomorrowLessons = (groupName) => {
-      if (tomorrowDayOfWeek === 6) return [];
-      if (!groupTomorrowScheduleCache.has(groupName)) {
-        groupTomorrowScheduleCache.set(groupName, scheduleService.getGroupScheduleForDay(groupName, tomorrowDayOfWeek, tomorrowDate));
-      }
-      return groupTomorrowScheduleCache.get(groupName);
-    };
+    const subscribers = (await db.getAllActiveScheduleSubscribers()) || [];
 
     // --- A. Process Schedule Briefings & 5-Min Bell for Each User ---
-    for (const user of subscribers) {
-      const uid = user.telegram_id;
-      const groupName = user.group_name;
-      if (!groupName || user.notify_mode === 'disabled' || user.schedule_notifications === false) {
-        continue;
-      }
+    if (subscribers.length > 0) {
+      // Cache day schedule per group to avoid duplicate calculations
+      const groupTodayScheduleCache = new Map();
+      const getCachedTodayLessons = (groupName) => {
+        if (dayOfWeek === 6) return [];
+        if (!groupTodayScheduleCache.has(groupName)) {
+          groupTodayScheduleCache.set(groupName, scheduleService.getGroupScheduleForDay(groupName, dayOfWeek, nowTashkent));
+        }
+        return groupTodayScheduleCache.get(groupName);
+      };
 
-      const todayLessons = getCachedTodayLessons(groupName);
-      const { firstLesson } = edupageService.getFirstAndLastLessonOfDay(todayLessons);
+      const groupTomorrowScheduleCache = new Map();
+      const getCachedTomorrowLessons = (groupName) => {
+        if (tomorrowDayOfWeek === 6) return [];
+        if (!groupTomorrowScheduleCache.has(groupName)) {
+          groupTomorrowScheduleCache.set(groupName, scheduleService.getGroupScheduleForDay(groupName, tomorrowDayOfWeek, tomorrowDate));
+        }
+        return groupTomorrowScheduleCache.get(groupName);
+      };
 
-      // 1. Daily Morning / Shift Briefing
-      if (dayOfWeek < 6 && firstLesson) {
-        const pTiming = edupageService.PERIOD_TIMINGS[firstLesson.period];
-        const startStr = firstLesson.startTime || (pTiming ? pTiming.start : '08:00');
-        const [sh, sm] = startStr.split(':').map(Number);
-        const firstStartMin = (sh || 0) * 60 + (sm || 0);
-
-        let shouldSendBriefing = false;
-        let briefingReason = '';
-
-        if (user.notify_mode === 'shift_aware') {
-          // If 1st lesson < 13:00 -> 07:00; If 1st lesson >= 13:00 -> 11:30
-          if (firstStartMin < 13 * 60 && currentHHMM === '07:00') {
-            shouldSendBriefing = true;
-            briefingReason = '☀️ <b>Bugungi dars jadvalingiz (Ertalabki smena):</b>';
-          } else if (firstStartMin >= 13 * 60 && currentHHMM === '11:30') {
-            shouldSendBriefing = true;
-            briefingReason = `🌤 <b>Bugungi dars jadvalingiz (2-smena, ${firstLesson.startTime} da boshlanadi):</b>`;
-          }
-        } else if (user.notify_mode === 'offset_before_first') {
-          const offset = Number(user.offset_minutes) || 60;
-          const targetMin = firstStartMin - offset;
-          if (currentMinFromMidnight === targetMin || (currentMinFromMidnight >= targetMin && currentMinFromMidnight < targetMin + 10)) {
-            shouldSendBriefing = true;
-            briefingReason = `⏰ <b>Birinchi darsingiz boshlanishiga ${offset} daqiqa qoldi (${firstLesson.startTime}):</b>`;
-          }
-        } else if (user.notify_mode === 'custom_time') {
-          if (user.custom_morning_time === currentHHMM && currentMinFromMidnight < 18 * 60) {
-            shouldSendBriefing = true;
-            briefingReason = `🎯 <b>Belgilangan vaqtdagi dars jadvali (${currentHHMM}):</b>`;
-          }
-        } else if (user.notify_mode === 'standard_both') {
-          if (currentHHMM === '07:30') {
-            shouldSendBriefing = true;
-            briefingReason = '☀️ <b>Bugungi dars jadvalingiz:</b>';
-          }
+      for (const user of subscribers) {
+        const uid = user.telegram_id;
+        const groupName = user.group_name;
+        if (!groupName || user.notify_mode === 'disabled' || user.schedule_notifications === false) {
+          continue;
         }
 
-        if (shouldSendBriefing) {
-          const lockKey = `sched_sent:${uid}:${todayIso}:morning`;
-          if (await acquireNotificationLock(lockKey, 64800)) {
-            const sent = await sendDailyBriefingCard(bot, uid, groupName, dayOfWeek, briefingReason);
-            if (sent) {
-              await new Promise(r => setTimeout(r, 40));
+        const todayLessons = getCachedTodayLessons(groupName);
+        const { firstLesson } = edupageService.getFirstAndLastLessonOfDay(todayLessons);
+
+        // 1. Daily Morning / Shift Briefing
+        if (dayOfWeek < 6 && firstLesson) {
+          const pTiming = edupageService.PERIOD_TIMINGS[firstLesson.period];
+          const startStr = firstLesson.startTime || (pTiming ? pTiming.start : '08:00');
+          const [sh, sm] = startStr.split(':').map(Number);
+          const firstStartMin = (sh || 0) * 60 + (sm || 0);
+
+          let shouldSendBriefing = false;
+          let briefingReason = '';
+
+          if (user.notify_mode === 'shift_aware') {
+            // If 1st lesson < 13:00 -> 07:00; If 1st lesson >= 13:00 -> 11:30
+            if (firstStartMin < 13 * 60 && currentHHMM === '07:00') {
+              shouldSendBriefing = true;
+              briefingReason = '☀️ <b>Bugungi dars jadvalingiz (Ertalabki smena):</b>';
+            } else if (firstStartMin >= 13 * 60 && currentHHMM === '11:30') {
+              shouldSendBriefing = true;
+              briefingReason = `🌤 <b>Bugungi dars jadvalingiz (2-smena, ${firstLesson.startTime} da boshlanadi):</b>`;
+            }
+          } else if (user.notify_mode === 'offset_before_first') {
+            const offset = Number(user.offset_minutes) || 60;
+            const targetMin = firstStartMin - offset;
+            if (currentMinFromMidnight === targetMin || (currentMinFromMidnight >= targetMin && currentMinFromMidnight < targetMin + 10)) {
+              shouldSendBriefing = true;
+              briefingReason = `⏰ <b>Birinchi darsingiz boshlanishiga ${offset} daqiqa qoldi (${firstLesson.startTime}):</b>`;
+            }
+          } else if (user.notify_mode === 'custom_time') {
+            if (user.custom_morning_time === currentHHMM && currentMinFromMidnight < 18 * 60) {
+              shouldSendBriefing = true;
+              briefingReason = `🎯 <b>Belgilangan vaqtdagi dars jadvali (${currentHHMM}):</b>`;
+            }
+          } else if (user.notify_mode === 'standard_both') {
+            if (currentHHMM === '07:30') {
+              shouldSendBriefing = true;
+              briefingReason = '☀️ <b>Bugungi dars jadvalingiz:</b>';
             }
           }
-        }
-      }
 
-      // 2. Evening Preview for Tomorrow
-      if (tomorrowDayOfWeek < 6) {
-        let shouldSendEvening = false;
-        let eveningReason = '';
-
-        if (user.notify_mode === 'custom_time') {
-          if (user.custom_evening_time === currentHHMM && currentMinFromMidnight >= 18 * 60) {
-            shouldSendEvening = true;
-            eveningReason = `🌙 <b>Ertangi dars jadvali (${currentHHMM}):</b>`;
-          }
-        } else if (user.notify_mode === 'standard_both' || user.notify_mode === 'shift_aware') {
-          if (currentHHMM === '20:00') {
-            shouldSendEvening = true;
-            eveningReason = '🌙 <b>Ertangi kun dars jadvali:</b>';
-          }
-        }
-
-        if (shouldSendEvening) {
-          const tomorrowLessons = getCachedTomorrowLessons(groupName);
-          if (tomorrowLessons && tomorrowLessons.length > 0) {
-            const lockKey = `sched_sent:${uid}:${todayIso}:evening`;
+          if (shouldSendBriefing) {
+            const lockKey = `sched_sent:${uid}:${todayIso}:morning`;
             if (await acquireNotificationLock(lockKey, 64800)) {
-              const sent = await sendDailyBriefingCard(bot, uid, groupName, tomorrowDayOfWeek, eveningReason);
+              const sent = await sendDailyBriefingCard(bot, uid, groupName, dayOfWeek, briefingReason);
               if (sent) {
                 await new Promise(r => setTimeout(r, 40));
               }
             }
           }
         }
-      }
 
-      // 3. 5-Minute Pre-End Bell (pre_class_5min_bell)
-      if (dayOfWeek < 6 && user.pre_class_5min_bell !== false && todayLessons && todayLessons.length >= 2) {
-        // Group lessons by period number (1..8) to prevent false alerts between subgroups of the same period
-        const lessonsByPeriod = new Map();
-        for (const l of todayLessons) {
-          if (!l || !l.period) continue;
-          if (!lessonsByPeriod.has(l.period)) {
-            lessonsByPeriod.set(l.period, []);
+        // 2. Evening Preview for Tomorrow
+        if (tomorrowDayOfWeek < 6) {
+          let shouldSendEvening = false;
+          let eveningReason = '';
+
+          if (user.notify_mode === 'custom_time') {
+            if (user.custom_evening_time === currentHHMM && currentMinFromMidnight >= 18 * 60) {
+              shouldSendEvening = true;
+              eveningReason = `🌙 <b>Ertangi dars jadvali (${currentHHMM}):</b>`;
+            }
+          } else if (user.notify_mode === 'standard_both' || user.notify_mode === 'shift_aware') {
+            if (currentHHMM === '20:00') {
+              shouldSendEvening = true;
+              eveningReason = '🌙 <b>Ertangi kun dars jadvali:</b>';
+            }
           }
-          lessonsByPeriod.get(l.period).push(l);
+
+          if (shouldSendEvening) {
+            const tomorrowLessons = getCachedTomorrowLessons(groupName);
+            if (tomorrowLessons && tomorrowLessons.length > 0) {
+              const lockKey = `sched_sent:${uid}:${todayIso}:evening`;
+              if (await acquireNotificationLock(lockKey, 64800)) {
+                const sent = await sendDailyBriefingCard(bot, uid, groupName, tomorrowDayOfWeek, eveningReason);
+                if (sent) {
+                  await new Promise(r => setTimeout(r, 40));
+                }
+              }
+            }
+          }
         }
 
-        const sortedPeriods = Array.from(lessonsByPeriod.keys()).sort((a, b) => a - b);
-        for (let idx = 0; idx < sortedPeriods.length; idx++) {
-          const p = sortedPeriods[idx];
-          const nextPeriod = p + 1;
-          if (!lessonsByPeriod.has(nextPeriod)) continue;
-
-          const pTiming = edupageService.PERIOD_TIMINGS[p];
-          const bellMinute = pTiming ? pTiming.bell5MinBeforeEnd : null;
-
-          // In 10-minute cadence, check exact match or window [now, now+10)
-          if (bellMinute && (currentMinFromMidnight === bellMinute || (bellMinute >= currentMinFromMidnight && bellMinute < currentMinFromMidnight + 10))) {
-            const currLessons = lessonsByPeriod.get(p);
-            const nextLessons = lessonsByPeriod.get(nextPeriod);
-            const curr = currLessons[0];
-            const next = nextLessons[0];
-
-            // Check double-pair suppression: if same subject and same room continues, suppress alert
-            if (edupageService.isSameDoublePair(curr, next)) {
-              continue;
+        // 3. 5-Minute Pre-End Bell (pre_class_5min_bell)
+        if (dayOfWeek < 6 && user.pre_class_5min_bell !== false && todayLessons && todayLessons.length >= 2) {
+          // Group lessons by period number (1..8) to prevent false alerts between subgroups of the same period
+          const lessonsByPeriod = new Map();
+          for (const l of todayLessons) {
+            if (!l || !l.period) continue;
+            if (!lessonsByPeriod.has(l.period)) {
+              lessonsByPeriod.set(l.period, []);
             }
+            lessonsByPeriod.get(l.period).push(l);
+          }
 
-            const lockKey = `bell_5m:${uid}:${todayIso}:${p}`;
-            if (await acquireNotificationLock(lockKey, 36000)) {
-              const sent = await sendPreEndBellAlert(bot, uid, curr, next, user.building_change_alert !== false);
-              if (sent) {
-                await new Promise(r => setTimeout(r, 40));
+          const sortedPeriods = Array.from(lessonsByPeriod.keys()).sort((a, b) => a - b);
+          for (let idx = 0; idx < sortedPeriods.length; idx++) {
+            const p = sortedPeriods[idx];
+            const nextPeriod = p + 1;
+            if (!lessonsByPeriod.has(nextPeriod)) continue;
+
+            const pTiming = edupageService.PERIOD_TIMINGS[p];
+            const bellMinute = pTiming ? pTiming.bell5MinBeforeEnd : null;
+
+            // In 5-minute cadence, check exact match or window [now, now+5)
+            if (bellMinute && (currentMinFromMidnight === bellMinute || (bellMinute >= currentMinFromMidnight && bellMinute < currentMinFromMidnight + 5))) {
+              const currLessons = lessonsByPeriod.get(p);
+              const nextLessons = lessonsByPeriod.get(nextPeriod);
+              const curr = currLessons[0];
+              const next = nextLessons[0];
+
+              // Check double-pair suppression: if same subject and same room continues, suppress alert
+              if (edupageService.isSameDoublePair(curr, next)) {
+                continue;
+              }
+
+              const lockKey = `bell_5m:${uid}:${todayIso}:${p}`;
+              if (await acquireNotificationLock(lockKey, 36000)) {
+                const sent = await sendPreEndBellAlert(bot, uid, curr, next, user.building_change_alert !== false);
+                if (sent) {
+                  await new Promise(r => setTimeout(r, 40));
+                }
               }
             }
           }
@@ -1376,8 +1419,8 @@ async function runSmartScheduleIntervalTick(bot) {
         const [sh, sm] = startStr.split(':').map(Number);
         const startMin = (sh || 0) * 60 + (sm || 0);
 
-        if (currentMinFromMidnight === startMin - 20 || (currentMinFromMidnight >= startMin - 20 && currentMinFromMidnight < startMin - 10)) {
-          const lockKey = `note_rem:${note.id}:pre20m`;
+        if (currentMinFromMidnight === startMin - 20 || (currentMinFromMidnight >= startMin - 20 && currentMinFromMidnight < startMin - 15)) {
+          const lockKey = `note_rem:${note.id}:${note.target_date || todayIso}:${note.target_period || 0}:pre20m`;
           if (await acquireNotificationLock(lockKey, 36000)) {
             await db.updateNoteStatus(note.id, null, 'notified_before_class');
             await deliverNoteReminder(
@@ -1396,7 +1439,7 @@ async function runSmartScheduleIntervalTick(bot) {
       const tomorrowNotes = await db.getDueNotesForLesson(null, null, tomorrowIso);
       for (const note of tomorrowNotes) {
         if (note.status === 'completed' || note.status === 'cancelled') continue;
-        const lockKey = `note_rem:${note.id}:evening`;
+        const lockKey = `note_rem:${note.id}:${note.target_date || tomorrowIso}:${note.target_period || 0}:evening`;
         if (await acquireNotificationLock(lockKey, 43200)) {
           await db.updateNoteStatus(note.id, null, 'notified_evening');
           await deliverNoteReminder(

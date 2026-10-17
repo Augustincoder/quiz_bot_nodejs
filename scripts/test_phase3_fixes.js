@@ -79,7 +79,7 @@ async function runPhase3Tests() {
   console.log('==================================================');
 }
 
-runPhase3Tests().catch((err) => {
+runPhase3Tests().then(() => process.exit(0)).catch((err) => {
   console.error('❌ Phase 3 Verification Failed:', err);
   process.exit(1);
 });

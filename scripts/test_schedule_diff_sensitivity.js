@@ -165,6 +165,7 @@ function runTests() {
     process.exit(1);
   }
   console.log('🎉 All schedule diff sensitivity tests passed with 100% precision!\n');
+  process.exit(0);
 }
 
 runTests();

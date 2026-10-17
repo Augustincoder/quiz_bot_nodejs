@@ -13,7 +13,6 @@ const express = require("express");
 const http = require("http");
 const cors = require("cors");
 const Sentry = require("@sentry/node");
-const { nodeProfilingIntegration } = require("@sentry/profiling-node");
 
 const logger = require("./src/core/logger");
 const cron = require("node-cron");
@@ -27,17 +26,16 @@ const scheduleWatcher = require("./src/services/scheduleWatcherService");
 const watchdogService = require("./src/services/watchdogService");
 const { BOT_TOKEN } = require("./src/config/config");
 const dbService = require("./src/services/dbService");
-const { getState, States, isAdmin, clearState, getTashkentDayOfWeek } = require("./src/core/utils");
+const { getState, States, isAdmin, clearState, resetUserFlows, getTashkentDayOfWeek } = require("./src/core/utils");
 const { rateLimiterMiddleware } = require("./src/core/rateLimiter");
 const { initSocket } = require("./src/socket");
 
 // ─── Sentry Initialization ──────────────────────────────────
+// Note: nodeProfilingIntegration omitted to prevent native C++ symbol table leaks in 512MB RAM container
 if (process.env.SENTRY_DSN) {
   Sentry.init({
     dsn: process.env.SENTRY_DSN,
-    integrations: [nodeProfilingIntegration()],
     tracesSampleRate: 0.1,
-    profilesSampleRate: 0.1,
     environment: process.env.NODE_ENV || "production",
   });
 }
@@ -363,7 +361,7 @@ bot.on("message", async (ctx, next) => {
   // Bug 48 fix: Stale wizard state bleed prevention
   // If user enters a command or menu button, immediately clear pending wizard state and let command/menu run
   if (isCommand || isMainMenuButton) {
-    clearState(ctx);
+    await resetUserFlows(ctx.from?.id, ctx);
     return next();
   }
 
@@ -659,8 +657,8 @@ async function main() {
     timezone: "Asia/Tashkent",
   });
 
-  // 5. Smart Schedule v2.0: 10-minute caching-aligned interval scheduler & bell
-  const intervalCron = cron.schedule("*/10 * * * *", () => {
+  // 5. Smart Schedule v2.0: 5-minute caching-aligned interval scheduler & bell
+  const intervalCron = cron.schedule("*/5 6-22 * * *", () => {
     scheduleWatcher.runSmartScheduleIntervalTick(bot).catch((err) => {
       logger.error("Smart schedule interval tick error:", { error: err.message });
     });

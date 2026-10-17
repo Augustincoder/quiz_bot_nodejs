@@ -5,43 +5,89 @@ const https = require('https');
 const http = require('http');
 const { ADMIN_ID, ADMIN_IDS, SUBJECTS } = require('../config/config');
 
-// ─── TTLMap (Auto-expiring in-memory cache with bounded size & eviction) ───
+// ─── TTLMap (Zero-Timer Overhead, Bounded LRU-like Map with Periodic Sweep) ───
 class TTLMap {
   constructor(ttlMs = 3600000, maxSize = 2000) {
     this._map = new Map();
     this._ttl = ttlMs;
     this._maxSize = maxSize;
+    this._sweepInterval = setInterval(() => this.sweep(), Math.min(ttlMs, 5 * 60 * 1000));
+    if (this._sweepInterval.unref) this._sweepInterval.unref();
   }
   set(key, value) {
-    const existing = this._map.get(key);
-    if (existing?.timer) clearTimeout(existing.timer);
-
-    if (this._map.size >= this._maxSize && !this._map.has(key)) {
-      const oldestKey = this._map.keys().next().value;
-      if (oldestKey !== undefined) {
-        this.delete(oldestKey);
+    if (this._map.has(key)) {
+      this._map.delete(key);
+    } else if (this._map.size >= this._maxSize) {
+      this.sweep();
+      if (this._map.size >= this._maxSize) {
+        const oldestKey = this._map.keys().next().value;
+        if (oldestKey !== undefined) this._map.delete(oldestKey);
       }
     }
-
-    const timer = setTimeout(() => this._map.delete(key), this._ttl);
-    timer.unref();
-    this._map.set(key, { value, timer });
+    this._map.set(key, { value, expiresAt: Date.now() + this._ttl });
   }
-  get(key) { return this._map.get(key)?.value; }
-  has(key) { return this._map.has(key); }
+  get(key) {
+    const entry = this._map.get(key);
+    if (!entry) return undefined;
+    if (Date.now() > entry.expiresAt) {
+      this._map.delete(key);
+      return undefined;
+    }
+    return entry.value;
+  }
+  has(key) {
+    const entry = this._map.get(key);
+    if (!entry) return false;
+    if (Date.now() > entry.expiresAt) {
+      this._map.delete(key);
+      return false;
+    }
+    return true;
+  }
   delete(key) {
-    const existing = this._map.get(key);
-    if (existing?.timer) clearTimeout(existing.timer);
     return this._map.delete(key);
   }
   clear() {
-    for (const [, entry] of this._map) {
-      if (entry?.timer) clearTimeout(entry.timer);
-    }
     this._map.clear();
   }
+  sweep(now = Date.now()) {
+    for (const [k, entry] of this._map.entries()) {
+      if (now > entry.expiresAt) this._map.delete(k);
+    }
+  }
+  cleanup(now = Date.now()) {
+    this.sweep(now);
+  }
   keys() {
+    this.sweep();
     return this._map.keys();
+  }
+  *values() {
+    const now = Date.now();
+    for (const [k, entry] of this._map.entries()) {
+      if (now > entry.expiresAt) {
+        this._map.delete(k);
+      } else {
+        yield entry.value;
+      }
+    }
+  }
+  *entries() {
+    const now = Date.now();
+    for (const [k, entry] of this._map.entries()) {
+      if (now > entry.expiresAt) {
+        this._map.delete(k);
+      } else {
+        yield [k, entry.value];
+      }
+    }
+  }
+  destroy() {
+    if (this._sweepInterval) {
+      clearInterval(this._sweepInterval);
+      this._sweepInterval = null;
+    }
+    this._map.clear();
   }
   get size() {
     return this._map.size;
@@ -67,6 +113,24 @@ const clearState = (ctx) => {
     try {
       const { clearPendingUser } = require('./pendingStore');
       clearPendingUser(userId);
+    } catch {}
+  }
+};
+const resetUserFlows = async (userId, ctx) => {
+  if (ctx) clearState(ctx);
+  const uid = userId || ctx?.from?.id;
+  if (uid) {
+    try {
+      const { clearPendingUser } = require('./pendingStore');
+      clearPendingUser(uid);
+    } catch {}
+    try {
+      const pendingStore = require('./pendingStore');
+      await pendingStore.del(`note_wiz:${uid}`);
+    } catch {}
+    try {
+      const redisConnection = require('../services/redisService');
+      await redisConnection.del(`tg_session:${uid}`);
     } catch {}
   }
 };
@@ -435,7 +499,7 @@ function safeCallbackData(data, maxBytes = 64) {
 module.exports = {
   userNameCache,
   leaderboardCache, LEADERBOARD_TTL, States, STATE_LABELS, TTLMap,
-  setState, clearState, updateData, getData, getState,
+  setState, clearState, resetUserFlows, updateData, getData, getState,
   navKb, backToMainKb, progressBar, safePercent, grade, parseSuffix,
   safeAnswerCb, safeEdit, safeDelete,
   getUserName, parseDocxQuestions, parseTextQuestions,

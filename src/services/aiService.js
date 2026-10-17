@@ -163,16 +163,36 @@ function getAIUsageStats() {
 // 🛠 UTILITY FUNCTIONS
 // ============================================
 
-// AI matn ichidan JSON qismini tozalab oluvchi
+const MAX_AI_INPUT_CHARS = 15000;
+
+// AI matn ichidan JSON qismini tozalab oluvchi (Robust JSON Parser)
 function extractJSON(text) {
-    const match = text.match(/\[[\s\S]*\]/);
-    if (match) { 
-        try { 
-            return JSON.parse(match[0]); 
-        } catch (e) { 
-            logger.error('ai:json_parse_error', { error: e.message });
-            return null; 
-        } 
+    if (!text || typeof text !== 'string') return null;
+    let clean = text.trim();
+    // Markdown code blocklarni tozalaymiz (```json ... ``` yoki ``` ... ```)
+    clean = clean.replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i, '$1').trim();
+
+    // 1. Direct parse sinab ko'ramiz
+    try {
+        return JSON.parse(clean);
+    } catch {}
+
+    // 2. [ ... ] massivini qidiramiz
+    const match = clean.match(/\[[\s\S]*\]/);
+    if (match) {
+        let arrayStr = match[0];
+        try {
+            return JSON.parse(arrayStr);
+        } catch {
+            // Trailing comma larni olib tashlab qayta urinib ko'ramiz
+            try {
+                const fixed = arrayStr.replace(/,\s*([\]}])/g, '$1');
+                return JSON.parse(fixed);
+            } catch (e) {
+                logger.error('ai:json_parse_error', { error: e.message });
+                return null;
+            }
+        }
     }
     return null;
 }
@@ -260,8 +280,9 @@ async function generateQuizFromText(text, count) {
     }
 
     try {
+        const safeText = String(text || '').slice(0, MAX_AI_INPUT_CHARS);
         const prompt = `Matn asosida ${getCountInstruction(count)} variantli test tuz. Faqat JSON formatda qaytar. Boshqa so'z yozma.
-        Struktura: [{"question": "Savol?", "options": ["A", "B", "C", "D"], "correct_index": 0}]\n\nMatn:\n${text}`;
+        Struktura: [{"question": "Savol?", "options": ["A", "B", "C", "D"], "correct_index": 0}]\n\nMatn:\n${safeText}`;
         
         const result = await model.generateContent(prompt);
         const rawQuestions = extractJSON(result.response.text());
@@ -288,8 +309,9 @@ async function generateOptionsForQuestions(questionsText) {
     }
 
     try {
+        const safeQuestionsText = String(questionsText || '').slice(0, MAX_AI_INPUT_CHARS);
         const prompt = `Savollar ro'yxatiga 1 to'g'ri va 3 xato variant tuz. Faqat JSON formatda qaytar.
-        Struktura: [{"question": "Savol?", "options": ["A", "B", "C", "D"], "correct_index": 0}]\n\nSavollar:\n${questionsText}`;
+        Struktura: [{"question": "Savol?", "options": ["A", "B", "C", "D"], "correct_index": 0}]\n\nSavollar:\n${safeQuestionsText}`;
         
         const result = await model.generateContent(prompt);
         const rawQuestions = extractJSON(result.response.text());
@@ -315,8 +337,9 @@ async function analyzeEssay(text) {
     }
 
     try {
+        const safeText = String(text || '').slice(0, MAX_AI_INPUT_CHARS);
         const prompt = `Sen til o'qituvchisisan. O'quvchi senga matn yubordi. Grammatik, mantiqiy xatolarni top, tushuntir va 100 ballik tizimda bahola.
-        DIQQAT! Javobni FAKAT Telegram HTML formatida yoz! (Qalin uchun <b>matn</b>, qiya uchun <i>matn</i> ishlating. Hech qanday yulduzcha ** ishlatma!)\n\nO'quvchi matni:\n"${text}"`;
+        DIQQAT! Javobni FAKAT Telegram HTML formatida yoz! (Qalin uchun <b>matn</b>, qiya uchun <i>matn</i> ishlating. Hech qanday yulduzcha ** ishlatma!)\n\nO'quvchi matni:\n"${safeText}"`;
 
         const result = await model.generateContent(prompt);
         
@@ -350,6 +373,16 @@ async function generateQuizFromImage(localFilePath, mimeType, count) {
         Shu rasmdagi ma'lumotlar asosida ${getCountInstruction(count)} variantli test tuz.
         Javobing QAT'IY ravishda faqat quyidagi JSON formatida bo'lishi shart. Boshqa izoh yozma!
         Struktura: [{"question": "Savol matni?", "options": ["A", "B", "C", "D"], "correct_index": 0}]`;
+        
+        const result = await model.generateContent([
+            {
+                fileData: {
+                    mimeType: uploadResponse.file.mimeType,
+                    fileUri: uploadResponse.file.uri,
+                },
+            },
+            { text: prompt },
+        ]);
         
         let questions = null;
         try {

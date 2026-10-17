@@ -347,8 +347,14 @@ async function cbAdminReplyToUser(ctx) {
   // ─── Save reply state ─────────────────────────────
   // Admin sessiyasiga target user id ni yozamiz
   setState(ctx, States.ADMIN_REPLY);
-  ctx.session.replyTargetUserId = targetUserId;
-  ctx.session.replyOriginalMsgId = originalMsgId;
+  if (ctx.session) {
+    ctx.session.replyTargetUserId = targetUserId;
+    ctx.session.replyOriginalMsgId = originalMsgId;
+  }
+  await updateData(ctx, {
+    target_id: String(targetUserId),
+    target_msg_id: originalMsgId ? String(originalMsgId) : null,
+  });
 
   await safeEdit(ctx,
     `✉️ <b>JAVOB YOZISH</b>\n` +

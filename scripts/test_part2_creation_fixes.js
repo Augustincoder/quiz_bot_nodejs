@@ -179,7 +179,7 @@ j) Variant 10
   console.log('========================================');
 }
 
-runTests().catch(err => {
+runTests().then(() => process.exit(0)).catch(err => {
   console.error('❌ PART 2 TEST SUITE FAILED:', err);
   process.exit(1);
 });

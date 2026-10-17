@@ -196,7 +196,7 @@ async function runTests() {
   console.log('==================================================\n');
 }
 
-runTests().catch((err) => {
+runTests().then(() => process.exit(0)).catch((err) => {
   console.error('❌ Audit Stage 1 tests failed:', err);
   process.exit(1);
 });

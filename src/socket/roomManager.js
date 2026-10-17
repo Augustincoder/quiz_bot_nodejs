@@ -121,6 +121,21 @@ class RoomManager {
       this.rooms.delete(roomCode);
     }
   }
+
+  /**
+   * Cleans up dead, abandoned, or zombie rooms and frees associated timers/state
+   */
+  cleanupDeadRooms(now = Date.now()) {
+    const MAX_LIFETIME = 30 * 60 * 1000; // 30 minutes
+    for (const [roomCode, room] of this.rooms.entries()) {
+      const age = now - (room.createdAt || 0);
+      const isEnded = room.status === 'ended';
+      const noPlayers = !room.players || room.players.size === 0;
+      if (isEnded || age > MAX_LIFETIME || (noPlayers && age > 5 * 60 * 1000)) {
+        this.deleteRoom(roomCode);
+      }
+    }
+  }
 }
 
 module.exports = new RoomManager();

@@ -75,7 +75,7 @@ async function testWeekendLogic() {
   console.log('\n🎉 All weekend schedule tests passed successfully!');
 }
 
-testWeekendLogic().catch(err => {
+testWeekendLogic().then(() => process.exit(0)).catch(err => {
   console.error('Test error:', err);
   process.exit(1);
 });

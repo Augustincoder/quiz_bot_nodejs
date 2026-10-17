@@ -4,11 +4,11 @@ const dbService = require('../services/dbService');
 const { getMainKeyboard } = require('../keyboards/keyboards');
 const sessionService = require('../services/sessionService');
 const {
-  userNameCache, clearState, safeEdit, safeAnswerCb, backToMainKb, escapeHtml,
+  userNameCache, clearState, resetUserFlows, safeEdit, safeAnswerCb, backToMainKb, escapeHtml,
 } = require('../core/utils');
 
 async function cmdStart(ctx) {
-  clearState(ctx);
+  await resetUserFlows(ctx.from?.id, ctx);
   const chatId = ctx.chat.id;
 
   // ─── GURUHLAR UCHUN TOZA INTERFEYS VA KUTISH ZALI ────────────
@@ -164,7 +164,7 @@ ${classNotice}━━━━━━━━━━━━━━━━
 }
 
 async function cbBackToMain(ctx) {
-  clearState(ctx);
+  await resetUserFlows(ctx.from?.id, ctx);
   await safeAnswerCb(ctx);
   const firstName = escapeHtml(ctx.from.first_name || 'Talaba');
   const welcomeText = `🏛 <b>Asosiy Menyu</b>\n\nNimadan boshlaymiz, ${firstName}?`;
@@ -172,7 +172,7 @@ async function cbBackToMain(ctx) {
 }
 
 async function cmdStop(ctx) {
-  clearState(ctx);
+  await resetUserFlows(ctx.from?.id, ctx);
   const chatId = ctx.chat.id;
   const userId = ctx.from.id;
   const isGroup = ctx.chat.type !== 'private'; // Guruh ekanligini aniqlaymiz
@@ -212,7 +212,7 @@ async function cmdStop(ctx) {
 }
 
 async function cmdMenu(ctx) {
-  clearState(ctx);
+  await resetUserFlows(ctx.from?.id, ctx);
   await ctx.reply('🏛 <b>Asosiy Menyu</b>\n\nQuyidagi bo\'limlardan birini tanlang:', { parse_mode: 'HTML', ...getMainKeyboard() });
 }
 

@@ -1393,10 +1393,11 @@ async function cbReplyStart(ctx) {
 
 async function onReplyMessage(ctx) {
   const data = await getData(ctx);
+  const targetUserId = parseInt(data.target_id || ctx.session?.replyTargetUserId, 10);
+  const targetMsgId  = (data.target_msg_id || ctx.session?.replyOriginalMsgId)
+    ? parseInt(data.target_msg_id || ctx.session?.replyOriginalMsgId, 10)
+    : null;
   clearState(ctx);
-
-  const targetUserId = parseInt(data.target_id, 10);
-  const targetMsgId  = data.target_msg_id ? parseInt(data.target_msg_id, 10) : null;
 
   if (!targetUserId || Number.isNaN(targetUserId)) {
     return ctx.reply('❌ Noto\'g\'ri foydalanuvchi ID.');

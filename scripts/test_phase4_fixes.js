@@ -71,7 +71,9 @@ async function runTests() {
   console.log(`\n🎉 All Phase 4 tests passed! (${passedCount}/4)`);
 }
 
-runTests().catch(err => {
+runTests().then(() => {
+  process.exit(0);
+}).catch(err => {
   console.error('\n❌ Phase 4 Test failed:', err);
   process.exit(1);
 });

@@ -347,13 +347,16 @@ async function cmdHafta(ctx) {
       if (!photoResult.fileId && sentMsg?.photo?.length > 0) {
         const bestPhoto = sentMsg.photo[sentMsg.photo.length - 1];
         if (bestPhoto?.file_id) {
+          const scheduleWatcher = require('../services/scheduleWatcherService');
+          const rawSched = await edupageService.getRawSchedule(className).catch(() => null);
+          const computedHash = photoResult?.scheduleHash || (rawSched ? scheduleWatcher.computeScheduleHash(rawSched) : null);
           dbService.upsertTimetableCache({
             groupName: className,
             groupNormalized: edupageService.normalizeGroupName(className),
             theme: userTheme,
             fileId: bestPhoto.file_id,
             channelMessageId: null,
-            scheduleHash: null,
+            scheduleHash: computedHash,
           }).catch(() => {});
         }
       }
@@ -688,6 +691,7 @@ const PREF_LABELS = {
 };
 
 async function renderNotifySettings(ctx, alertMessage = null) {
+  clearState(ctx);
   const userId = ctx.from?.id;
   if (!userId) return;
 
@@ -754,10 +758,13 @@ async function cbV2ModeShift(ctx) {
 async function cbV2Offset(ctx, mins) {
   const userId = ctx.from?.id;
   if (!userId) return;
-  await dbService.upsertUserScheduleSettings(userId, {
+  const ok = await dbService.upsertUserScheduleSettings(userId, {
     notify_mode: 'offset_before_first',
     offset_minutes: Number(mins),
   });
+  if (!ok) {
+    return renderNotifySettings(ctx, '⚠️ Bazada saqlashda xatolik yuz berdi.');
+  }
   return renderNotifySettings(ctx, `✅ Darsdan ${mins} daqiqa oldin eslatish belgilandi!`);
 }
 
@@ -989,6 +996,7 @@ function register(bot) {
 
   // 10-Minute Custom Preset Triggers (v2_ctime:HH:mm)
   bot.action(/^v2_ctime:(\d{2}:\d{2})$/, async (ctx) => {
+    clearState(ctx);
     const timeMatch = ctx.callbackQuery?.data?.match(/^v2_ctime:(\d{2}:\d{2})$/);
     if (!timeMatch) return;
     const time = timeMatch[1];
@@ -1018,6 +1026,12 @@ function register(bot) {
   });
 }
 
+function cleanup() {
+  roomsPaginationCache.clear();
+  activeThemeSwitches.clear();
+  activeHaftaRequests.clear();
+}
+
 module.exports = {
   register,
   cmdTimetable,
@@ -1032,4 +1046,5 @@ module.exports = {
   getPeriodNowAndNext,
   onCustomTimeInput,
   snapTo10MinuteInterval,
+  cleanup,
 };

@@ -53,9 +53,20 @@ function clearPendingUser(userId) {
   del(`note_wiz:${userId}`).catch(() => {});
 }
 
+function cleanup(now = Date.now()) {
+  if (typeof pendingShelfSaves.cleanup === 'function') {
+    pendingShelfSaves.cleanup(now);
+  }
+  if (typeof generalPendingStore.cleanup === 'function') {
+    generalPendingStore.cleanup(now);
+  }
+}
+
 module.exports = {
   pendingShelfSaves,
+  generalPendingStore,
   clearPendingUser,
+  cleanup,
   set,
   get,
   del,

@@ -46,6 +46,7 @@ RUN apt-get update \
 # 2. Production Environment defaults
 ENV NODE_ENV=production \
     PORT=8080 \
+    MALLOC_ARENA_MAX=2 \
     NODE_OPTIONS="--expose-gc --max-old-space-size=300"
 
 # 3. Create required runtime directory structure & permissions

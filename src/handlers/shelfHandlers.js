@@ -15,18 +15,15 @@ const logger = require("../core/logger");
 // ==========================================
 // ─── TESTNI JAVONGA SAQLASH (REDIS ORQALI) ────────────────────
 async function cbShelfSaveInit(ctx) {
-  await ctx.answerCbQuery("⏳ Saqlanmoqda...").catch(() => {});
+  await ctx.answerCbQuery().catch(() => {});
   const chatId = ctx.chat.id;
 
   try {
-    // 1. RAM o'rniga ishonchli Redis xotirasidan o'qiymiz
     const rawData = await redisConnection.get(`shelf_pending:${chatId}`);
-    
-    // Agar xotira muddati tugagan bo'lsa yoki allaqachon saqlangan bo'lsa
     if (!rawData) {
       return safeEdit(
         ctx, 
-        "⚠️ <b>Ma'lumot topilmadi!</b>\n\nBu test allaqachon saqlangan yoki xotira muddati (24 soat) tugagan. Iltimos, menyudan yangi test ishlashni boshlang.", 
+        "⚠️ <b>Ma'lumot topilmadi!</b>\n\nBu test allaqachon saqlangan yoki xotira muddati tugagan. Iltimos, yangi test yakunlab qaytadan urinib ko'ring.", 
         { 
           parse_mode: "HTML", 
           ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]]) 
@@ -35,39 +32,35 @@ async function cbShelfSaveInit(ctx) {
     }
 
     const data = JSON.parse(rawData);
+    const shelf = await dbService.getUserShelf(ctx.from.id).catch(() => ({}));
+    const folders = Object.keys(shelf || {});
 
-    // 2. Ma'lumotlarni asosiy bazaga (PostgreSQL) yozamiz
-    // (Loyihangizdagi dbService funksiyasiga moslab yozilgan)
-    await dbService.saveToShelf(ctx.from.id, {
-      test_id: data.testId,
-      test_name: data.testName,
-      subject: data.subject,
-      questions: data.questions,
-      progress: data.progress
+    const buttons = [];
+    folders.forEach(f => {
+      buttons.push([Markup.button.callback(`📁 ${f} papkasiga`, `sh_save_${f}`)]);
     });
+    if (data.subject && !folders.includes(data.subject)) {
+      buttons.push([Markup.button.callback(`📁 "${data.subject}" papkasiga`, `sh_save_${data.subject}`)]);
+    }
+    buttons.push([Markup.button.callback("➕ Yangi papka ochish", "sh_new_folder")]);
+    buttons.push([Markup.button.callback("❌ Bekor qilish", "back_to_main")]);
 
-    // 3. Saqlab bo'lingach, qulupnaydek toza bo'lishi uchun Redis'dan tozalab tashlaymiz
-    await redisConnection.del(`shelf_pending:${chatId}`);
-
-    // 4. Foydalanuvchiga muvaffaqiyatli saqlanganini bildiramiz
-    await safeEdit(
+    return safeEdit(
       ctx,
-      `📥 <b>Muvaffaqiyatli saqlandi!</b>\n\n📚 Fan: <b>${escapeHtml(data.subject)}</b>\n🔖 Blok: <b>${escapeHtml(data.testName)}</b>\n\nSiz bu testni shaxsiy javoningizga saqladingiz. Xohlagan vaqtingiz <i>"Javon"</i> menyusi orqali qayta ishlashingiz mumkin. ✅`,
+      `📥 <b>Testni Javonga Saqlash</b>\n\n` +
+      `📚 Fan: <b>${escapeHtml(data.subject || 'Noma\'lum')}</b>\n` +
+      `🔖 Blok: <b>${escapeHtml(data.testName || data.block_name || 'Test')}</b>\n\n` +
+      `Testni qaysi papkaga saqlamoqchisiz? Quyidagilardan tanlang yoki yangi papka oching:`,
       {
         parse_mode: "HTML",
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback("📚 Javonga o'tish", "my_shelf")],
-          [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]
-        ])
+        ...Markup.inlineKeyboard(buttons),
       }
     );
-
   } catch (error) {
     console.error(`Javonga saqlashda xatolik [Chat: ${chatId}]:`, error.message);
-    
-    await safeEdit(
+    return safeEdit(
       ctx,
-      "❌ <b>Tizimli xatolik!</b>\n\nJavonga saqlashda kutilmagan xatolik yuz berdi. Iltimos, birozdan so'ng yana urinib ko'ring.",
+      "❌ <b>Xatolik yuz berdi!</b>\n\nIltimos, qaytadan urinib ko'ring.",
       { 
         parse_mode: "HTML", 
         ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]]) 

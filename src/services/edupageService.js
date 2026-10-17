@@ -1890,6 +1890,7 @@ function findUpcomingCourseOccurrences(fullGroupTimetable, subjectName, targetLe
 
   const DAY_LABELS = ['Dush', 'Sesh', 'Chor', 'Pay', 'Juma', 'Shan'];
   const results = [];
+  const seenSlots = new Set();
 
   for (let offset = 0; offset <= 14; offset++) {
     const checkDate = new Date(startTz.getTime() + offset * 86400000);
@@ -1912,7 +1913,8 @@ function findUpcomingCourseOccurrences(fullGroupTimetable, subjectName, targetLe
         if (!item || !item.subject) continue;
         if (item.isContinuation) continue;
         const itemNorm = normalizeSubjectKey(item.subject).toLowerCase();
-        if (itemNorm !== baseNorm && !itemNorm.includes(baseNorm) && !baseNorm.includes(itemNorm)) {
+        // Exact match so other subjects (e.g. "Raqamli iqtisodiyot" vs "Iqtisodiyot") do not collide
+        if (itemNorm !== baseNorm) {
           continue;
         }
 
@@ -1927,6 +1929,9 @@ function findUpcomingCourseOccurrences(fullGroupTimetable, subjectName, targetLe
         }
 
         const itemLessonType = normalizeLessonType(item);
+        const slotKey = `${dateIso}:${p}:${itemLessonType}`;
+        if (seenSlots.has(slotKey)) continue;
+        seenSlots.add(slotKey);
 
         results.push({
           dateIso,

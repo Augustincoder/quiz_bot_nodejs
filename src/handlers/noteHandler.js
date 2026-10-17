@@ -4,7 +4,7 @@ const db = require('../services/dbService');
 const scheduleService = require('../services/scheduleService');
 const edupageService = require('../services/edupageService');
 const pendingStore = require('../core/pendingStore');
-const { escapeHtml, truncateText, safeCallbackData } = require('../core/utils');
+const { escapeHtml, truncateText, safeCallbackData, clearState, isAdmin } = require('../core/utils');
 const logger = require('../core/logger');
 
 const NOTE_STATE_TTL = 15 * 60 * 1000; // 15 daqiqa
@@ -132,6 +132,7 @@ async function renderSubjectSelectionMenu(ctx, subjects, extractedContent, isEdi
  * /note and /groupnote main command handler
  */
 async function handleNoteCommand(ctx, isGroupShared = false) {
+  clearState(ctx);
   const userId = ctx.from?.id;
   if (!userId) return;
 
@@ -285,6 +286,7 @@ async function handleNoteCommand(ctx, isGroupShared = false) {
  * Handles /mynotes command to display active pending notes
  */
 async function handleMyNotesCommand(ctx) {
+  clearState(ctx);
   const userId = ctx.from?.id;
   if (!userId) return;
 
@@ -335,12 +337,12 @@ async function handleNoteCallback(ctx) {
     if (!note) {
       return ctx.answerCbQuery('⚠️ Eslatma topilmadi', { show_alert: true }).catch(() => {});
     }
-    const { isAdmin } = require('../core/utils');
-    if (note.is_group_shared && String(note.creator_id) !== String(userId) && !isAdmin(userId)) {
+    const isUserAdmin = isAdmin(userId);
+    if (note.is_group_shared && String(note.creator_id) !== String(userId) && !isUserAdmin) {
       return ctx.answerCbQuery('⚠️ Guruh eslatmasini faqat uni yaratgan sardor yoki admin o‘zgartira oladi!', { show_alert: true }).catch(() => {});
     }
     await ctx.answerCbQuery('✅ Topshiriq bajarildi!').catch(() => {});
-    await db.updateNoteStatus(noteId, userId, 'completed');
+    await db.updateNoteStatus(noteId, isUserAdmin ? null : userId, 'completed');
     return ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
   }
 
@@ -351,15 +353,18 @@ async function handleNoteCallback(ctx) {
     if (!note) {
       return ctx.answerCbQuery('⚠️ Eslatma topilmadi', { show_alert: true }).catch(() => {});
     }
-    const { isAdmin } = require('../core/utils');
     if (note.is_group_shared && String(note.creator_id) !== String(userId) && !isAdmin(userId)) {
       return ctx.answerCbQuery('⚠️ Guruh eslatmasini faqat uni yaratgan sardor yoki admin o‘zgartira oladi!', { show_alert: true }).catch(() => {});
     }
 
     const now = new Date(Date.now() + 15 * 60 * 1000);
     let noteTargetDate = null;
-    if (note.target_date && note.target_start_time) {
-      const parsed = new Date(`${note.target_date}T${note.target_start_time}:00+05:00`);
+    if (note.target_date) {
+      const pTiming = edupageService.PERIOD_TIMINGS[note.target_period] || { start: '08:00' };
+      const rawTime = note.target_start_time || pTiming.start;
+      const [hh, mm] = String(rawTime).split(':').map(Number);
+      const padTime = `${String(hh || 8).padStart(2, '0')}:${String(mm || 0).padStart(2, '0')}`;
+      const parsed = new Date(`${note.target_date}T${padTime}:00+05:00`);
       if (!isNaN(parsed.getTime())) {
         noteTargetDate = parsed;
       }

@@ -40,7 +40,8 @@ async function advanceQuestion(roomCode) {
   const subQ = Array.isArray(q.questions) ? q.questions[0] : q;
   const text = subQ.question || q.question || "";
   const options = subQ.options || q.options;
-  room.currentAnswer = subQ.correct_option || q.correct_option || q.answer || "";
+  const rawAns = subQ.correct_index ?? q.correct_index ?? subQ.correct_option ?? q.correct_option ?? q.answer ?? "";
+  room.currentAnswer = String(rawAns);
   room.currentExplanation = subQ.explanation || q.explanation;
   room.currentPointValue = 10; // Default Kahoot points
 

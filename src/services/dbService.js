@@ -1399,12 +1399,29 @@ function invalidateSubscribersCache() {
   activeSubscribersCacheExpiresAt = 0;
 }
 
-// Due notes L1 in-memory cache (1-minute TTL)
+// Due notes L1 in-memory cache (1-minute TTL, max 50 items to avoid day-over-day unbounded growth)
 const dueNotesCache = new Map();
 const DUE_NOTES_CACHE_TTL_MS = 60 * 1000;
+const MAX_DUE_NOTES_CACHE = 50;
+
+function setDueNotesCache(dateStr, data, expiresAt) {
+  if (dueNotesCache.size >= MAX_DUE_NOTES_CACHE && !dueNotesCache.has(dateStr)) {
+    const oldestKey = dueNotesCache.keys().next().value;
+    if (oldestKey !== undefined) dueNotesCache.delete(oldestKey);
+  }
+  dueNotesCache.set(dateStr, { data, expiresAt });
+}
 
 function invalidateDueNotesCache() {
   dueNotesCache.clear();
+}
+
+function cleanupDueNotesCache(now = Date.now()) {
+  for (const [key, val] of dueNotesCache.entries()) {
+    if (val && val.expiresAt <= now) {
+      dueNotesCache.delete(key);
+    }
+  }
 }
 
 /**
@@ -1614,8 +1631,8 @@ async function getDueNotesForLesson(telegramId, groupName, dateStr) {
       .eq('target_date', dateStr);
 
     if (telegramId && groupName) {
-      const cleanGroup = String(groupName).replace(/[,()"\\]/g, '').trim();
-      query = query.or(`creator_id.eq.${Number(telegramId)},and(is_group_shared.eq.true,group_name.eq.${cleanGroup})`);
+      const safeGroup = String(groupName).replace(/"/g, '').trim();
+      query = query.or(`creator_id.eq.${Number(telegramId)},and(is_group_shared.eq.true,group_name.eq."${safeGroup}")`);
     } else if (groupName) {
       query = query.eq('group_name', groupName);
     } else if (telegramId) {
@@ -1632,14 +1649,14 @@ async function getDueNotesForLesson(telegramId, groupName, dateStr) {
         .eq('target_date', dateStr);
       const resData = altData || [];
       if (isGlobalDateQuery) {
-        dueNotesCache.set(dateStr, { data: resData, expiresAt: now + DUE_NOTES_CACHE_TTL_MS });
+        setDueNotesCache(dateStr, resData, now + DUE_NOTES_CACHE_TTL_MS);
       }
       return resData;
     }
 
     const resData = data || [];
     if (isGlobalDateQuery) {
-      dueNotesCache.set(dateStr, { data: resData, expiresAt: now + DUE_NOTES_CACHE_TTL_MS });
+      setDueNotesCache(dateStr, resData, now + DUE_NOTES_CACHE_TTL_MS);
     }
     return resData;
   } catch (err) {
@@ -1743,15 +1760,21 @@ async function getUserActiveNotes(telegramId, groupName = null) {
   if (!supabase || !telegramId) return [];
   try {
     const uid = Number(telegramId);
+    const edupageService = require('./edupageService');
+    const nowTz = edupageService.getTashkentNow();
+    const todayIso = `${nowTz.getFullYear()}-${String(nowTz.getMonth() + 1).padStart(2, '0')}-${String(nowTz.getDate()).padStart(2, '0')}`;
+
     let query = supabase
       .from('course_notes')
       .select('*')
-      .in('status', ['pending', 'notified_evening'])
+      .in('status', ['pending', 'notified_evening', 'snoozed'])
+      .gte('target_date', todayIso)
       .order('target_date', { ascending: true })
       .order('target_period', { ascending: true });
 
     if (groupName) {
-      query = query.or(`creator_id.eq.${uid},and(is_group_shared.eq.true,group_name.eq.${groupName})`);
+      const safeGroup = String(groupName).replace(/"/g, '').trim();
+      query = query.or(`creator_id.eq.${uid},and(is_group_shared.eq.true,group_name.eq."${safeGroup}")`);
     } else {
       query = query.eq('creator_id', uid);
     }
@@ -1762,10 +1785,12 @@ async function getUserActiveNotes(telegramId, groupName = null) {
       const altQuery = supabase
         .from('class_notes')
         .select('*')
-        .eq('status', 'pending')
+        .in('status', ['pending', 'snoozed'])
+        .gte('target_date', todayIso)
         .order('target_date', { ascending: true });
       if (groupName) {
-        altQuery.or(`creator_id.eq.${uid},and(is_group_note.eq.true,group_name.eq.${groupName})`);
+        const safeGroup = String(groupName).replace(/"/g, '').trim();
+        altQuery.or(`creator_id.eq.${uid},and(is_group_note.eq.true,group_name.eq."${safeGroup}")`);
       } else {
         altQuery.eq('creator_id', uid);
       }
@@ -1843,5 +1868,6 @@ module.exports = {
   _userStatsQueues: userStatsQueues,
   invalidateSubscribersCache,
   invalidateDueNotesCache,
+  cleanupDueNotesCache,
 };
 

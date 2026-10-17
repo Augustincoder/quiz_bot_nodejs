@@ -65,7 +65,7 @@ async function runTests() {
   console.log(`\n🎉 All Part 1 Execution tests passed! (${passedCount}/7)`);
 }
 
-runTests().catch(err => {
+runTests().then(() => process.exit(0)).catch(err => {
   console.error('\n❌ Part 1 Test failed:', err);
   process.exit(1);
 });

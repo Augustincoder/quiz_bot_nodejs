@@ -104,6 +104,17 @@ class Mutex {
   get size() {
     return this._locks.size;
   }
+
+  /**
+   * Stale/orphaned locks tozalash (Memory hygiene)
+   */
+  cleanup() {
+    for (const [key, entry] of this._locks.entries()) {
+      if (!entry || entry.count <= 0) {
+        this._locks.delete(key);
+      }
+    }
+  }
 }
 
 const defaultMutex = new Mutex();

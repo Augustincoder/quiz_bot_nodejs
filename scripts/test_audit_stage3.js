@@ -211,7 +211,7 @@ async function runStage3Tests() {
   console.log('==================================================\n');
 }
 
-runStage3Tests().catch((err) => {
+runStage3Tests().then(() => process.exit(0)).catch((err) => {
   console.error('Fatal test error:', err);
   process.exit(1);
 });

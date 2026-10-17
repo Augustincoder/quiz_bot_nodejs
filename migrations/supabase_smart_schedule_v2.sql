@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS public.user_schedule_settings (
   telegram_id BIGINT PRIMARY KEY,
   group_name TEXT,
   notify_mode TEXT NOT NULL DEFAULT 'shift_aware' CHECK (notify_mode IN ('shift_aware', 'offset_before_first', 'custom_time', 'standard_both', 'disabled')),
-  offset_minutes INTEGER NOT NULL DEFAULT 60 CHECK (offset_minutes IN (15, 30, 60, 120)),
+  offset_minutes INTEGER NOT NULL DEFAULT 60 CHECK (offset_minutes IN (10, 15, 20, 30, 60, 120)),
   custom_morning_time TEXT DEFAULT '07:00',
   custom_evening_time TEXT DEFAULT '20:00',
   pre_class_5min_bell BOOLEAN NOT NULL DEFAULT true,

@@ -3,15 +3,17 @@ const redis = require('./redisService');
 const logger = require('../core/logger');
 const { TTLMap } = require('../core/utils');
 
-// 1 kun (86400 soniya) saqlanadi
+// 1 kun (86400 soniya) saqlanadi Redis ichida
 const TTL = 86400; 
 // Poll vaqtinchalik xaritasi uchun 1 soatlik TTL (xotira to'lishini oldini olish)
 const POLL_TTL = 3600; 
+// Lokal xotira keshida testlar 1 soat (3600 soniya) saqlanadi (tashlab ketilgan testlar RAMni to'ldirmasligi uchun)
+const LOCAL_TEST_TTL = 3600;
 
 // Bounded in-memory caches to prevent split-brain during transient Redis disconnects with zero memory leak
-const localActiveTestCache = new TTLMap(TTL * 1000, 2000);
-const localPollMapCache = new TTLMap(POLL_TTL * 1000, 5000);
-const localWaitingRoomCache = new TTLMap(300 * 1000, 1000);
+const localActiveTestCache = new TTLMap(LOCAL_TEST_TTL * 1000, 500);
+const localPollMapCache = new TTLMap(POLL_TTL * 1000, 2000);
+const localWaitingRoomCache = new TTLMap(300 * 1000, 500);
 
 // ─── Active Tests ────────────────────────────────────────────
 async function getActiveTest(chatId) {
@@ -142,10 +144,23 @@ async function deleteWaitingRoom(chatId) {
   }
 }
 
+function cleanupExpired(now = Date.now()) {
+  if (typeof localActiveTestCache.cleanup === 'function') {
+    localActiveTestCache.cleanup(now);
+  }
+  if (typeof localPollMapCache.cleanup === 'function') {
+    localPollMapCache.cleanup(now);
+  }
+  if (typeof localWaitingRoomCache.cleanup === 'function') {
+    localWaitingRoomCache.cleanup(now);
+  }
+}
+
 module.exports = {
   getActiveTest, setActiveTest, deleteActiveTest,
   getPollChat, setPollChat, deletePollChat,
   getWaitingRoom, setWaitingRoom, deleteWaitingRoom,
+  cleanupExpired,
   _localActiveTestCache: localActiveTestCache,
   _localPollMapCache: localPollMapCache,
   _localWaitingRoomCache: localWaitingRoomCache,

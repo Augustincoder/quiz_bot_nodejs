@@ -106,7 +106,7 @@ async function runPhase1Tests() {
   console.log('==================================================');
 }
 
-runPhase1Tests().catch((err) => {
+runPhase1Tests().then(() => process.exit(0)).catch((err) => {
   console.error('❌ Phase 1 Verification Failed:', err);
   process.exit(1);
 });

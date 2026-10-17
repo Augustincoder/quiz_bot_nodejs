@@ -199,9 +199,10 @@ async function cbAiTestsType(ctx) {
 async function onAiTestsText(ctx) {
   const text = ctx.message.text;
   if (!text) return;
+  const adminId = ctx.from?.id;
   
   // 🔒 Rate limit tekshiruvi
-  const limitCheck = checkAdminAILimit(ctx.from.id);
+  const limitCheck = checkAdminAILimit(adminId);
   if (!limitCheck.allowed) {
     return ctx.reply(limitCheck.message, { parse_mode: 'HTML' });
   }

@@ -96,7 +96,7 @@ async function runTests() {
   console.log('\n🎉 ALL CLASSROOM & BUILDING TESTS PASSED SUCCESSFULLY!');
 }
 
-runTests().catch(err => {
+runTests().then(() => process.exit(0)).catch(err => {
   console.error('❌ Test failed:', err);
   process.exit(1);
 });

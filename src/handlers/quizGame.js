@@ -326,12 +326,13 @@ async function cbPostStart(ctx) {
     }
 
     if (ctx.chat.type !== "private") {
+      const initiatorName = ctx.from?.first_name || "Muallif";
       await sessionService.setWaitingRoom(chatId, {
         subjectKey,
         testId,
         testData,
         initiatorId: ctx.from.id,
-        readyUsers: new Set(),
+        readyUsers: { [ctx.from.id]: initiatorName },
       });
       return sendWaitingRoomMessage(
         ctx,
@@ -1019,10 +1020,12 @@ async function sendNextInlineMistake(ctx) {
   }
 }
 
-// Interaktiv javobni tekshirish (HIMOYALANGAN)
+// Interaktiv javobni tekshirish (HIMOYALANGAN & IDEMPOTENT)
 async function cbWmAns(ctx) {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const unlock = await mutex.lock(`wm_ans:${chatId}`);
   try {
-    const chatId = ctx.chat.id;
     clearWmTimer(chatId);
 
     // Redisdan o'qiymiz
@@ -1085,12 +1088,14 @@ async function cbWmAns(ctx) {
       );
     }
   } catch (error) {
-    console.error(`[cbWmAns Xatosi - Chat: ${ctx.chat.id}]:`, error);
+    console.error(`[cbWmAns Xatosi - Chat: ${ctx.chat?.id}]:`, error);
     await ctx
       .answerCbQuery("❌ Javobni tekshirishda xatolik yuz berdi!", {
         show_alert: true,
       })
       .catch(() => { });
+  } finally {
+    unlock();
   }
 }
 
@@ -1372,4 +1377,5 @@ module.exports = {
   sendNextQuestion,
   initAndStartTest,
   cbOfficialTests,
+  cbSubject,
 };

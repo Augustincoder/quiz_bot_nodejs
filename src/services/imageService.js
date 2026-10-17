@@ -1456,7 +1456,7 @@ async function generateScheduleImage(className, schedule, themeName = 'dark', op
 
   const displayGroupName = resolveRawGroupName(className);
 
-  const svgString = `
+  let svgString = `
 <svg width="${SVG_W}" height="${svgH}" viewBox="0 0 ${SVG_W} ${svgH}"
      xmlns="http://www.w3.org/2000/svg"
      style="background-color: ${themeConfig.canvasBg}; font-family: 'Inter', sans-serif;">
@@ -1487,13 +1487,20 @@ async function generateScheduleImage(className, schedule, themeName = 'dark', op
     return svgString;
   }
 
-  return renderSemaphore.run(() => {
-    return sharp(Buffer.from(svgString))
-      .png({
-        compressionLevel: 4,
-        effort: 1,
-      })
-      .toBuffer();
+  return renderSemaphore.run(async () => {
+    let inputBuf = Buffer.from(svgString);
+    try {
+      const outputBuffer = await sharp(inputBuf)
+        .png({
+          compressionLevel: 4,
+          effort: 1,
+        })
+        .toBuffer();
+      return outputBuffer;
+    } finally {
+      inputBuf = null;
+      svgString = null;
+    }
   });
 }
 
