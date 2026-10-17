@@ -125,7 +125,7 @@ async function cbCreateTest(ctx) {
     page = parseInt(ctx.callbackQuery.data.replace("create_test_", ""), 10) || 0;
   }
 
-  const tests = await dbService.getUserCreatedTests(ctx.from.id);
+  const tests = await dbService.getUserCreatedTests(ctx.from.id, false);
   const subjects = {};
   for (const t of tests) {
     if (!subjects[t.subject]) subjects[t.subject] = [];
@@ -1552,7 +1552,7 @@ async function cbMyTests(ctx) {
     page = parseInt(ctx.callbackQuery.data.replace("my_tests_", ""), 10);
   }
 
-  const tests = await dbService.getUserCreatedTests(ctx.from.id);
+  const tests = await dbService.getUserCreatedTests(ctx.from.id, false);
   if (!tests || tests.length === 0) {
     return safeEdit(
       ctx,

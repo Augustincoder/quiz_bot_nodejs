@@ -102,7 +102,9 @@ async function runPhase2Tests() {
   console.log('==================================================');
 }
 
-runPhase2Tests().catch((err) => {
+runPhase2Tests().then(() => {
+  process.exit(0);
+}).catch((err) => {
   console.error('❌ Phase 2 Verification Failed:', err);
   process.exit(1);
 });

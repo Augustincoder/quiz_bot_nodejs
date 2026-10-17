@@ -4,7 +4,7 @@ const { Server } = require("socket.io");
 const { socketAuthMiddleware } = require("./auth");
 const roomManager = require("./roomManager");
 const { supabase } = require("../lib/supabase");
-const { advanceQuestion } = require('./gameLoop');
+const { advanceQuestion, showLeaderboard } = require('./gameLoop');
 
 let io;
 
@@ -156,32 +156,27 @@ function initSocket(httpServer) {
 
         // If all players answered, cancel active timer and show leaderboard (Bug 38 fix)
         if (room.kahootAnswers.size >= room.players.size) {
-            if (room.actionTimer) {
-              clearTimeout(room.actionTimer);
-              room.actionTimer = null;
-            }
-            if (room.readTimer) {
-              clearTimeout(room.readTimer);
-              room.readTimer = null;
-            }
-            io.to(roomCode).emit('game:leaderboard', { 
-                correctAnswer: room.currentAnswer,
-                explanation: room.currentExplanation,
-                leaderboard: Array.from(room.players.values()).sort((a,b) => b.score - a.score)
-            });
+            showLeaderboard(roomCode, room);
         }
     });
     
     socket.on("game:leaderboard_ack", async ({ roomCode }) => {
       if (!isValidRoomCode(roomCode)) return;
       const room = await roomManager.getRoom(roomCode);
-      if (!room) return;
+      if (!room || room.status !== 'leaderboard') return;
       
       // Use authenticated socket userId instead of untrusted client payload ackId
       room.leaderboardAcks = room.leaderboardAcks || new Set();
       room.leaderboardAcks.add(userId);
       
-      if (room.leaderboardAcks.size >= room.players.size) {
+      const activePlayersCount = Array.from(room.players.values()).filter(p => !p.disconnected).length;
+      const targetCount = activePlayersCount > 0 ? activePlayersCount : room.players.size;
+
+      if (room.leaderboardAcks.size >= targetCount) {
+         if (room.leaderboardTimer) {
+           clearTimeout(room.leaderboardTimer);
+           room.leaderboardTimer = null;
+         }
          advanceQuestion(roomCode);
       }
     });

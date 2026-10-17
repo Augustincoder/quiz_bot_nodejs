@@ -205,16 +205,34 @@ async function getTopUsers(limit = 10) {
   }
 }
 
-async function getAllUserStats() {
+async function getAllUserStats(options = {}) {
+  if (!supabase) return [];
+  const includeHistory = options.includeHistory !== false;
+  const selectFields = includeHistory
+    ? 'user_id, total_correct, total_wrong, tests_completed, history'
+    : 'user_id, total_correct, total_wrong, tests_completed';
+
+  const PAGE_SIZE = 1000;
+  let from = 0;
+  const allRows = [];
+
   try {
-    const { data, error } = await supabase
-      .from('user_stats')
-      .select('user_id, total_correct, total_wrong, tests_completed, history');
-    if (error) throw error;
-    return data || [];
+    while (true) {
+      const { data, error } = await supabase
+        .from('user_stats')
+        .select(selectFields)
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      allRows.push(...data);
+      if (data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+    return allRows;
   } catch (err) {
     logger.error('getAllUserStats error:', { error: err.message });
-    return [];
+    return allRows.length > 0 ? allRows : [];
   }
 }
 
@@ -524,11 +542,14 @@ async function getUserTest(testId) {
   }
 }
 
-async function getUserCreatedTests(creatorId) {
+async function getUserCreatedTests(creatorId, includeQuestions = true) {
   try {
+    const selectFields = includeQuestions
+      ? 'id, subject, block_name, created_at, questions'
+      : 'id, subject, block_name, created_at';
     const { data, error } = await supabase
       .from('user_tests')
-      .select('id, subject, block_name, created_at, questions')
+      .select(selectFields)
       .eq('creator_id', String(creatorId))
       .order('id', { ascending: false });
     if (error) throw error;
@@ -722,43 +743,69 @@ async function updateUserShelf(userId, shelf) {
 
 async function saveTestToShelf(userId, folderName, testInfo) {
   const uid = String(userId);
-  try {
-    const stats = await getUserStats(uid);
-    if (stats._fetchFailed) {
-      logger.error('saveTestToShelf aborted: could not retrieve user stats due to DB error', { userId: uid });
-      return 'error';
-    }
-    let shelf = stats.shelf || {};
+  const prevPromise = userStatsQueues.get(uid) || Promise.resolve();
 
-    if (!shelf[folderName]) shelf[folderName] = [];
+  const currentPromise = (async () => {
+    try {
+      await prevPromise;
+    } catch {}
 
-    const isExist = shelf[folderName].find(t => String(t.testId) === String(testInfo.testId));
-    if (isExist) return 'exist';
+    try {
+      const stats = await getUserStats(uid);
+      if (stats._fetchFailed) {
+        logger.error('saveTestToShelf aborted: could not retrieve user stats due to DB error', { userId: uid });
+        return 'error';
+      }
+      let shelf = stats.shelf || {};
 
-    shelf[folderName].push({
-      testId: testInfo.testId,
-      testName: testInfo.testName,
-      subject: testInfo.subject,
-      questions: testInfo.questions,
-      saved_at: new Date().toISOString(),
-      progress: testInfo.progress || null,
-    });
+      if (!shelf[folderName]) shelf[folderName] = [];
 
-    const { error } = await supabase.from('user_stats').update({ shelf }).eq('user_id', uid);
-    if (error) {
+      const isExist = shelf[folderName].find(t => String(t.testId) === String(testInfo.testId));
+      if (isExist) return 'exist';
+
+      const compactQuestions = Array.isArray(testInfo.questions)
+        ? testInfo.questions.map(q => ({
+            question: q.question,
+            options: q.options,
+            correct_index: q.correct_index,
+            explanation: q.explanation,
+          }))
+        : [];
+
+      shelf[folderName].push({
+        testId: testInfo.testId,
+        testName: testInfo.testName,
+        subject: testInfo.subject,
+        questions: compactQuestions,
+        saved_at: new Date().toISOString(),
+        progress: testInfo.progress || null,
+      });
+
+      const { error } = await supabase.from('user_stats').update({ shelf }).eq('user_id', uid);
+      if (error) {
+        stats.shelf = shelf;
+        delete stats._fetchFailed;
+        const { error: upsertErr } = await supabase.from('user_stats').upsert(stats, { onConflict: 'user_id' });
+        if (upsertErr) throw upsertErr;
+      }
+
       stats.shelf = shelf;
       delete stats._fetchFailed;
-      const { error: upsertErr } = await supabase.from('user_stats').upsert(stats, { onConflict: 'user_id' });
-      if (upsertErr) throw upsertErr;
+      await redis.set(`cache:user_stats:${uid}`, JSON.stringify(stats), 'EX', 300).catch(() => {});
+      return 'saved';
+    } catch (e) {
+      logger.error('Javonga saqlashda xato:', { userId: uid, error: e.message });
+      return 'error';
     }
+  })();
 
-    stats.shelf = shelf;
-    delete stats._fetchFailed;
-    await redis.set(`cache:user_stats:${uid}`, JSON.stringify(stats), 'EX', 300).catch(() => {});
-    return 'saved';
-  } catch (e) {
-    logger.error('Javonga saqlashda xato:', { userId: uid, error: e.message });
-    return 'error';
+  userStatsQueues.set(uid, currentPromise);
+  try {
+    return await currentPromise;
+  } finally {
+    if (userStatsQueues.get(uid) === currentPromise) {
+      userStatsQueues.delete(uid);
+    }
   }
 }
 
@@ -1567,7 +1614,8 @@ async function getDueNotesForLesson(telegramId, groupName, dateStr) {
       .eq('target_date', dateStr);
 
     if (telegramId && groupName) {
-      query = query.or(`creator_id.eq.${Number(telegramId)},and(is_group_shared.eq.true,group_name.eq.${groupName})`);
+      const cleanGroup = String(groupName).replace(/[,()"\\]/g, '').trim();
+      query = query.or(`creator_id.eq.${Number(telegramId)},and(is_group_shared.eq.true,group_name.eq.${cleanGroup})`);
     } else if (groupName) {
       query = query.eq('group_name', groupName);
     } else if (telegramId) {

@@ -11,13 +11,56 @@ if (!process.env.REDIS_URL) {
   const dummy = new EventEmitter();
   dummy.isDummy = true;
   const inMemoryStore = new Map();
+  const inMemoryTimers = new Map();
+
+  const clearKeyTimer = (k) => {
+    const t = inMemoryTimers.get(k);
+    if (t) {
+      clearTimeout(t);
+      inMemoryTimers.delete(k);
+    }
+  };
+
   dummy.get = async (k) => inMemoryStore.get(k) ?? null;
   dummy.getBuffer = async (k) => inMemoryStore.get(k) ?? null;
-  dummy.set = async (k, v) => { inMemoryStore.set(k, String(v)); return 'OK'; };
-  dummy.del = async (k) => { const has = inMemoryStore.has(k); inMemoryStore.delete(k); return has ? 1 : 0; };
-  dummy.incr = async (k) => { const val = (Number(inMemoryStore.get(k)) || 0) + 1; inMemoryStore.set(k, String(val)); return val; };
-  dummy.pexpire = async () => 1;
-  dummy.expire = async () => 1;
+  dummy.set = async (k, v, ...args) => {
+    clearKeyTimer(k);
+    inMemoryStore.set(k, String(v));
+    if (args.length >= 2) {
+      const mode = String(args[0]).toUpperCase();
+      const val = Number(args[1]);
+      if (mode === 'EX' && val > 0) {
+        dummy.expire(k, val);
+      } else if (mode === 'PX' && val > 0) {
+        dummy.pexpire(k, val);
+      }
+    }
+    return 'OK';
+  };
+  dummy.del = async (k) => {
+    clearKeyTimer(k);
+    const has = inMemoryStore.has(k);
+    inMemoryStore.delete(k);
+    return has ? 1 : 0;
+  };
+  dummy.incr = async (k) => {
+    const val = (Number(inMemoryStore.get(k)) || 0) + 1;
+    inMemoryStore.set(k, String(val));
+    return val;
+  };
+  dummy.pexpire = async (k, ms) => {
+    clearKeyTimer(k);
+    if (ms > 0 && inMemoryStore.has(k)) {
+      const t = setTimeout(() => {
+        inMemoryStore.delete(k);
+        inMemoryTimers.delete(k);
+      }, ms);
+      if (t.unref) t.unref();
+      inMemoryTimers.set(k, t);
+    }
+    return 1;
+  };
+  dummy.expire = async (k, sec) => dummy.pexpire(k, Number(sec) * 1000);
   dummy.exists = async (k) => inMemoryStore.has(k) ? 1 : 0;
   dummy.sadd = async (k, ...members) => {
     let set = inMemoryStore.get(k);

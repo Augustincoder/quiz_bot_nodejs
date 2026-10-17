@@ -33,6 +33,7 @@ class RoomManager {
       readTimer: null,
       actionTimer: null,
       cooldownTimer: null,
+      leaderboardTimer: null,
       idleTimer,
       kahootAnswers: new Map(),
       leaderboardAcks: new Set(),
@@ -106,6 +107,7 @@ class RoomManager {
       if (room.readTimer) clearTimeout(room.readTimer);
       if (room.actionTimer) clearTimeout(room.actionTimer);
       if (room.cooldownTimer) clearTimeout(room.cooldownTimer);
+      if (room.leaderboardTimer) clearTimeout(room.leaderboardTimer);
       if (room.idleTimer) clearTimeout(room.idleTimer);
       if (room.endTimer) clearTimeout(room.endTimer);
       if (room.players) {

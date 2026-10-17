@@ -38,6 +38,7 @@ async function runTests() {
   const mockCtx1 = {
     from: { id: 2014973670 },
     chat: { id: 2014973670 },
+    session: { state: null, data: {} },
     message: {
       message_id: 101,
       media_group_id: 'test_mg_99999',
@@ -53,6 +54,7 @@ async function runTests() {
   const mockCtx2 = {
     from: { id: 2014973670 },
     chat: { id: 2014973670 },
+    session: { state: null, data: {} },
     message: {
       message_id: 102,
       media_group_id: 'test_mg_99999',
@@ -73,8 +75,11 @@ async function runTests() {
   assert.strictEqual(replies.length, 0, 'Debouncer should prevent immediate reply until all media arrives');
   console.log('  ✅ Debouncer buffered photo 1 and photo 2 without premature state transition');
 
-  // Wait 900ms for debouncer to process buffer
-  await new Promise(r => setTimeout(r, 900));
+  // Wait for debouncer (750ms) + async DB call to process buffer
+  for (let i = 0; i < 60; i++) {
+    if (sentMediaGroups.length > 0) break;
+    await new Promise(r => setTimeout(r, 100));
+  }
 
   assert.strictEqual(sentMediaGroups.length, 1, 'sendMediaGroup preview should have been called once');
   const preview = sentMediaGroups[0];
@@ -90,6 +95,7 @@ async function runTests() {
   console.log('  ✅ Album confirmation prompt formatted correctly');
 
   console.log('\n📊 All Admin Fixes Verified Successfully!');
+  process.exit(0);
 }
 
 runTests().catch(err => {

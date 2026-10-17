@@ -105,8 +105,13 @@ const MAX_DOCX_SIZE  = 20 * 1024 * 1024; // 20MB
  * Key → { data, expiry }
  */
 const _cache = new Map();
+const MAX_ADMIN_CACHE_SIZE = 500;
 
 function cacheSet(key, data, ttl = CACHE_TTL_MS) {
+  if (_cache.size >= MAX_ADMIN_CACHE_SIZE && !_cache.has(key)) {
+    const oldestKey = _cache.keys().next().value;
+    if (oldestKey !== undefined) _cache.delete(oldestKey);
+  }
   _cache.set(key, { data, expiry: Date.now() + ttl });
 }
 

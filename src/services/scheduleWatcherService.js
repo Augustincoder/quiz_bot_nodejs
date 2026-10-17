@@ -1173,13 +1173,15 @@ async function deliverNoteReminder(bot, note, subscribers, titleHeader) {
 }
 
 /**
- * 1-Minute Precision Smart Notification & Bell Scheduler Tick
- * (Runs every minute in Asia/Tashkent timezone).
+ * 10-Minute Caching-Aligned Smart Schedule & Bell Interval Scheduler Tick
+ * (Runs every 10 minutes in Asia/Tashkent timezone, minimizing CPU and DB load).
  * @param {object} bot Telegram bot instance
  */
-async function runSmartScheduleMinuteTick(bot) {
-  if (isMinuteTickRunning) return;
-  isMinuteTickRunning = true;
+let isIntervalTickRunning = false;
+
+async function runSmartScheduleIntervalTick(bot) {
+  if (isIntervalTickRunning) return;
+  isIntervalTickRunning = true;
 
   try {
     const db = getDbService();
@@ -1254,7 +1256,8 @@ async function runSmartScheduleMinuteTick(bot) {
           }
         } else if (user.notify_mode === 'offset_before_first') {
           const offset = Number(user.offset_minutes) || 60;
-          if (currentMinFromMidnight === firstStartMin - offset) {
+          const targetMin = firstStartMin - offset;
+          if (currentMinFromMidnight === targetMin || (currentMinFromMidnight >= targetMin && currentMinFromMidnight < targetMin + 10)) {
             shouldSendBriefing = true;
             briefingReason = `⏰ <b>Birinchi darsingiz boshlanishiga ${offset} daqiqa qoldi (${firstLesson.startTime}):</b>`;
           }
@@ -1333,7 +1336,8 @@ async function runSmartScheduleMinuteTick(bot) {
           const pTiming = edupageService.PERIOD_TIMINGS[p];
           const bellMinute = pTiming ? pTiming.bell5MinBeforeEnd : null;
 
-          if (bellMinute && currentMinFromMidnight === bellMinute) {
+          // In 10-minute cadence, check exact match or window [now, now+10)
+          if (bellMinute && (currentMinFromMidnight === bellMinute || (bellMinute >= currentMinFromMidnight && bellMinute < currentMinFromMidnight + 10))) {
             const currLessons = lessonsByPeriod.get(p);
             const nextLessons = lessonsByPeriod.get(nextPeriod);
             const curr = currLessons[0];
@@ -1372,7 +1376,7 @@ async function runSmartScheduleMinuteTick(bot) {
         const [sh, sm] = startStr.split(':').map(Number);
         const startMin = (sh || 0) * 60 + (sm || 0);
 
-        if (currentMinFromMidnight >= startMin - 20 && currentMinFromMidnight <= startMin - 15) {
+        if (currentMinFromMidnight === startMin - 20 || (currentMinFromMidnight >= startMin - 20 && currentMinFromMidnight < startMin - 10)) {
           const lockKey = `note_rem:${note.id}:pre20m`;
           if (await acquireNotificationLock(lockKey, 36000)) {
             await db.updateNoteStatus(note.id, null, 'notified_before_class');
@@ -1406,9 +1410,9 @@ async function runSmartScheduleMinuteTick(bot) {
       }
     }
   } catch (err) {
-    logger.error('runSmartScheduleMinuteTick error:', { error: err.message });
+    logger.error('runSmartScheduleIntervalTick error:', { error: err.message });
   } finally {
-    isMinuteTickRunning = false;
+    isIntervalTickRunning = false;
   }
 }
 
@@ -1422,7 +1426,8 @@ module.exports = {
   getSimplifiedSchedule,
   formatChangeAlert,
   getWatcherStatus,
-  runSmartScheduleMinuteTick,
+  runSmartScheduleIntervalTick,
+  runSmartScheduleMinuteTick: runSmartScheduleIntervalTick,
   sendDailyBriefingCard,
   sendPreEndBellAlert,
   deliverNoteReminder,

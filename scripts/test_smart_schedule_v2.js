@@ -548,6 +548,107 @@ async function main() {
   });
 
   // =========================================================================
+  // 8. Smart Alert 2.0 Enhanced Suite: 10-Min Snapping, /settings & Next Lesson
+  // =========================================================================
+  console.log('\n--- Suite 8: Smart Alert 2.0 Enhanced Suite ---');
+
+  const { snapTo10MinuteInterval } = require('../src/handlers/scheduleHandler');
+  const keyboards = require('../src/keyboards/keyboards');
+
+  await runTest('8.1: snapTo10MinuteInterval rejects 11:23 and snaps to 11:20 with isExact10: false', () => {
+    const res = snapTo10MinuteInterval('11:23');
+    assert.ok(res, 'Should parse 11:23');
+    assert.strictEqual(res.isExact10, false, '11:23 is not an exact 10-minute interval');
+    assert.strictEqual(res.snappedTime, '11:20', '11:23 should snap to nearest 11:20');
+  });
+
+  await runTest('8.2: snapTo10MinuteInterval accepts exact 11:30 and 12:20 with isExact10: true', () => {
+    const res1 = snapTo10MinuteInterval('11:30');
+    assert.strictEqual(res1.isExact10, true);
+    assert.strictEqual(res1.snappedTime, '11:30');
+
+    const res2 = snapTo10MinuteInterval('12:20');
+    assert.strictEqual(res2.isExact10, true);
+    assert.strictEqual(res2.snappedTime, '12:20');
+  });
+
+  await runTest('8.3: snapTo10MinuteInterval rounds 11:26 to 11:30 and 23:58 to 00:00', () => {
+    const res1 = snapTo10MinuteInterval('11:26');
+    assert.strictEqual(res1.isExact10, false);
+    assert.strictEqual(res1.snappedTime, '11:30');
+
+    const res2 = snapTo10MinuteInterval('23:58');
+    assert.strictEqual(res2.isExact10, false);
+    assert.strictEqual(res2.snappedTime, '00:00');
+  });
+
+  await runTest('8.4: snapTo10MinuteInterval returns null for invalid input formats', () => {
+    assert.strictEqual(snapTo10MinuteInterval(''), null);
+    assert.strictEqual(snapTo10MinuteInterval('invalid'), null);
+    assert.strictEqual(snapTo10MinuteInterval('25:00'), null);
+    assert.strictEqual(snapTo10MinuteInterval('12:65'), null);
+  });
+
+  await runTest('8.5: getAllUpcomingLessonsForGroup returns next lesson with full timing & date', () => {
+    const db = edupageService.getCachedIndexedDatabaseSync();
+    const allGroups = Array.from(db?.classesByName?.keys() || []);
+    const testGroup = allGroups.find(g => g.includes('BHA')) || allGroups[0];
+    assert.ok(testGroup, 'Test group must exist');
+
+    const mondayMorning = new Date('2026-10-19T06:00:00+05:00');
+    const upcoming = scheduleService.getAllUpcomingLessonsForGroup(testGroup, mondayMorning, 4);
+    assert.ok(Array.isArray(upcoming), 'Should return array');
+    if (upcoming.length > 0) {
+      const next = upcoming[0];
+      assert.ok(next.dateIso, 'Must include dateIso');
+      assert.ok(next.period >= 1 && next.period <= 8, 'Period must be valid 1..8');
+      assert.ok(next.startTime, 'Must include startTime');
+      assert.ok(next.subject, 'Must include subject');
+
+      const singleNext = scheduleService.getNextUpcomingLessonForGroup(testGroup, mondayMorning);
+      assert.deepStrictEqual(singleNext, next, 'getNextUpcomingLessonForGroup must match first upcoming lesson');
+    }
+  });
+
+  await runTest('8.6: getScheduleV2SettingsKeyboard provides 10-min offsets (10, 20, 30, 60) and /mynotes shortcut', () => {
+    const mockPrefs = {
+      notify_mode: 'offset_before_first',
+      offset_minutes: 20,
+      pre_class_5min_bell: true,
+      building_change_alert: true,
+    };
+    const kb = keyboards.getScheduleV2SettingsKeyboard(mockPrefs);
+    assert.ok(kb && kb.reply_markup && kb.reply_markup.inline_keyboard, 'Inline keyboard must exist');
+    const flatButtons = kb.reply_markup.inline_keyboard.flat();
+
+    assert.ok(flatButtons.some(b => b.callback_data === 'v2_offset_10'), 'Must contain 10 daq offset button');
+    assert.ok(flatButtons.some(b => b.callback_data === 'v2_offset_20' && b.text.includes('🔘')), '20 daq button should be selected');
+    assert.ok(flatButtons.some(b => b.callback_data === 'v2_offset_30'), 'Must contain 30 daq offset button');
+    assert.ok(flatButtons.some(b => b.callback_data === 'v2_offset_60'), 'Must contain 60 daq offset button');
+    assert.ok(flatButtons.some(b => b.callback_data === 'note_mynotes'), 'Must contain note_mynotes shortcut');
+  });
+
+  await runTest('8.7: 10-minute interval scheduler alignment covers TSUE timetable grid', () => {
+    // TSUE lesson starts: 08:00, 09:30, 11:00, 13:00, 14:30, 16:00, 17:30, 19:00
+    // 20 minutes before class must all fall on 10-minute boundaries:
+    const classStarts = ['08:00', '09:30', '11:00', '13:00', '14:30', '16:00', '17:30', '19:00'];
+    for (const cs of classStarts) {
+      const [h, m] = cs.split(':').map(Number);
+      const startMin = h * 60 + m;
+      const noteReminderMin = startMin - 20;
+      assert.strictEqual(noteReminderMin % 10, 0, `20-min pre-class reminder for ${cs} must align with 10-minute cron interval`);
+    }
+
+    // Standard & shift briefings (07:00, 07:30, 11:30, 20:00, 20:30) must all be divisible by 10:
+    const briefings = ['07:00', '07:30', '11:30', '20:00', '20:30'];
+    for (const b of briefings) {
+      const [h, m] = b.split(':').map(Number);
+      const mins = h * 60 + m;
+      assert.strictEqual(mins % 10, 0, `Briefing time ${b} must align with 10-minute cron interval`);
+    }
+  });
+
+  // =========================================================================
   // Summary
   // =========================================================================
   console.log(`\n========================================`);

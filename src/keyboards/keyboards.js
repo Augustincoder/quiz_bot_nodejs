@@ -172,14 +172,14 @@ function getScheduleV2SettingsKeyboard(prefs) {
       `${mode === 'shift_aware' ? '🔘' : '⚪️'} 🌗 Smenaga mos (Avto)`,
       'v2_mode_shift'
     )],
-    // Row 2: Offset before first lesson
+    // Row 2: 10-minute interval offsets before first lesson
     [
-      Markup.button.callback(`${mode === 'offset_before_first' && offset === 15 ? '🔘' : '⚪️'} 15 daq`, 'v2_offset_15'),
+      Markup.button.callback(`${mode === 'offset_before_first' && offset === 10 ? '🔘' : '⚪️'} 10 daq`, 'v2_offset_10'),
+      Markup.button.callback(`${mode === 'offset_before_first' && offset === 20 ? '🔘' : '⚪️'} 20 daq`, 'v2_offset_20'),
       Markup.button.callback(`${mode === 'offset_before_first' && offset === 30 ? '🔘' : '⚪️'} 30 daq`, 'v2_offset_30'),
       Markup.button.callback(`${mode === 'offset_before_first' && offset === 60 ? '🔘' : '⚪️'} 1 soat`, 'v2_offset_60'),
-      Markup.button.callback(`${mode === 'offset_before_first' && offset === 120 ? '🔘' : '⚪️'} 2 soat`, 'v2_offset_120'),
     ],
-    // Row 3: Custom HH:mm or Standard
+    // Row 3: Custom 10-min HH:mm or Standard
     [
       Markup.button.callback(`${mode === 'custom_time' ? '🔘' : '⚪️'} 🎯 Aniq vaqt (${prefs.custom_morning_time || '07:00'})`, 'v2_mode_custom'),
       Markup.button.callback(`${mode === 'standard_both' ? '🔘' : '⚪️'} 🌅+🌙 Standart`, 'v2_mode_standard'),
@@ -191,7 +191,12 @@ function getScheduleV2SettingsKeyboard(prefs) {
     [
       Markup.button.callback(`🏢 Bino almashinuvi: ${bld ? 'YOQILGAN ✅' : 'O\'CHIQ ❌'}`, 'v2_toggle_bld'),
     ],
-    // Row 5: Disable / Back
+    // Row 5: Notes & Group settings shortcuts
+    [
+      Markup.button.callback('📝 Vazifalarim (/mynotes)', 'note_mynotes'),
+      Markup.button.callback('✏️ Guruhni sozlash', 'schedule_settings'),
+    ],
+    // Row 6: Disable / Back
     [
       Markup.button.callback(`${mode === 'disabled' ? '🔘' : '⚪️'} 🔕 O'chirish`, 'v2_mode_disabled'),
       Markup.button.callback('⬅️ Orqaga', 'schedule_menu'),

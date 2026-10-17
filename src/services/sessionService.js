@@ -1,16 +1,17 @@
 'use strict';
 const redis = require('./redisService');
 const logger = require('../core/logger');
+const { TTLMap } = require('../core/utils');
 
 // 1 kun (86400 soniya) saqlanadi
 const TTL = 86400; 
 // Poll vaqtinchalik xaritasi uchun 1 soatlik TTL (xotira to'lishini oldini olish)
 const POLL_TTL = 3600; 
 
-// Local in-memory caches to prevent split-brain state during transient Redis disconnects (Bug 51)
-const localActiveTestCache = new Map();
-const localPollMapCache = new Map();
-const localWaitingRoomCache = new Map();
+// Bounded in-memory caches to prevent split-brain during transient Redis disconnects with zero memory leak
+const localActiveTestCache = new TTLMap(TTL * 1000, 2000);
+const localPollMapCache = new TTLMap(POLL_TTL * 1000, 5000);
+const localWaitingRoomCache = new TTLMap(300 * 1000, 1000);
 
 // ─── Active Tests ────────────────────────────────────────────
 async function getActiveTest(chatId) {

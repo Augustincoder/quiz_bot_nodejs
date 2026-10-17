@@ -208,6 +208,7 @@ Object.values(handlers).forEach(h => h.register && h.register(bot));
 bot.command("start", (ctx) => (handlers.start.cbStart || handlers.start.cmdStart)(ctx));
 bot.command("profile", (ctx) => handlers.profile.cbProfile(ctx));
 bot.command("schedule", (ctx) => (handlers.schedule.cbSchedule || handlers.schedule.cmdTimetable)(ctx));
+bot.command(["settings", "sozlamalar"], (ctx) => (handlers.schedule.cbNotifySettings || handlers.schedule.cbSettings)(ctx));
 
 bot.command("testcron_bugun", async (ctx) => {
   if (!isAdmin(ctx.from?.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
@@ -658,10 +659,10 @@ async function main() {
     timezone: "Asia/Tashkent",
   });
 
-  // 5. Smart Schedule v2.0: 1-minute precision scheduler & 5-minute pre-end bell
-  const minuteCron = cron.schedule("* * * * *", () => {
-    scheduleWatcher.runSmartScheduleMinuteTick(bot).catch((err) => {
-      logger.error("Smart schedule minute tick error:", { error: err.message });
+  // 5. Smart Schedule v2.0: 10-minute caching-aligned interval scheduler & bell
+  const intervalCron = cron.schedule("*/10 * * * *", () => {
+    scheduleWatcher.runSmartScheduleIntervalTick(bot).catch((err) => {
+      logger.error("Smart schedule interval tick error:", { error: err.message });
     });
   }, {
     timezone: "Asia/Tashkent",
@@ -672,9 +673,9 @@ async function main() {
     watcherNightCron,
     nightPrewarmStartCron,
     nightPrewarmStopCron,
-    minuteCron,
+    intervalCron,
   ];
-  logger.info("⏰ Dars jadvali avtomatik tarqatish, Smart Schedule v2 daqiqalik dispetcher, Realtime Watcher va Tungi CDN Worker faollashtirildi");
+  logger.info("⏰ Dars jadvali avtomatik tarqatish, Smart Schedule v2 10-daqiqalik keshga mos dispetcher, Realtime Watcher va Tungi CDN Worker faollashtirildi");
   watchdogService.startWatchdog();
 
   // Initial watcher snapshot baseline in background

@@ -209,7 +209,58 @@ async function handleNoteCommand(ctx, isGroupShared = false) {
     }
   }
 
-  // 2. Out of class / Fallback: show subject list prioritizing today's classes
+  // 2. SMART NEXT LESSON DETECTION: Out of class, find upcoming lessons across group schedule
+  const upcomingLessons = scheduleService.getAllUpcomingLessonsForGroup(groupName, now, 4);
+  if (upcomingLessons && upcomingLessons.length > 0) {
+    const nextLesson = upcomingLessons[0];
+    const typeLabel = nextLesson.lessonType === 'practice' ? "Amaliyot" : (nextLesson.lessonType === 'lecture' ? "Ma'ruza" : "Dars");
+
+    await pendingStore.set(`note_wiz:${userId}`, {
+      step: extracted ? 'AWAITING_OCCURRENCE' : 'AWAITING_CONTENT_THEN_OCCURRENCE',
+      groupName,
+      isGroupShared,
+      selectedSubject: nextLesson.baseSubject || nextLesson.subject,
+      currentLessonTypeCode: nextLesson.lessonType,
+      occurrences: upcomingLessons,
+      content: extracted,
+    }, NOTE_STATE_TTL);
+
+    if (extracted) {
+      const dayIntro = nextLesson.isToday
+        ? 'Bugungi eng yaqin dars'
+        : (nextLesson.isTomorrow ? 'Ertangi birinchi dars' : `${nextLesson.dateDisplay} (${nextLesson.dayLabel}) darsi`);
+
+      return ctx.reply(
+        `🎯 <b>Keyingi darsingiz aniqlandi (${dayIntro}):</b>\n` +
+        `📘 <b>${escapeHtml(nextLesson.subject)}</b> (${typeLabel})\n` +
+        `📅 <b>Vaqt:</b> ${nextLesson.dateDisplay} (${nextLesson.dayLabel}) • ${nextLesson.period}-para (${nextLesson.startTime})\n` +
+        (nextLesson.room ? `🏢 <b>Xona:</b> ${escapeHtml(nextLesson.room)}\n` : '') +
+        `📝 <b>Topshiriq:</b> <i>${escapeHtml(extracted.text.slice(0, 120))}</i>\n\n` +
+        `👇 <b>Ushbu topshiriqni shu dars oldidan eslataymi?</b>`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: buildOccurrencesKeyboard(upcomingLessons, null),
+        }
+      );
+    } else {
+      return ctx.reply(
+        `🎯 <b>Keyingi darsingiz:</b> <b>${escapeHtml(nextLesson.subject)}</b> (${nextLesson.dateDisplay}, ${nextLesson.period}-para)\n\n` +
+        `✍️ <b>Domla bergan topshiriqni yuboring</b> (matn, doska rasmi, ovozli xabar yoki fayl):\n` +
+        `<i>Yoki pastdagi tugma orqali boshqa fanni tanlang:</i>`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '📚 Boshqa fanni tanlash', callback_data: 'np:subj' }],
+              [{ text: '❌ Bekor qilish', callback_data: 'nc:cancel' }],
+            ],
+          },
+        }
+      );
+    }
+  }
+
+  // 3. Fallback: show subject list prioritizing today's classes
   const subjects = scheduleService.getGroupUniqueSubjectsSorted(groupName, now);
   if (!subjects || subjects.length === 0) {
     return ctx.reply(
@@ -325,7 +376,15 @@ async function handleNoteCallback(ctx) {
       note.target_lesson_type || 'any'
     );
 
-    const nextOcc = occurrences.find(o => note.target_lesson_type === 'any' || o.lessonType === note.target_lesson_type) || occurrences[0];
+    let nextOcc = occurrences.find(o => note.target_lesson_type === 'any' || o.lessonType === note.target_lesson_type) || occurrences[0];
+
+    // Smart Fallback: If no future occurrence of the same subject is found, find the group's next upcoming lesson
+    if (!nextOcc) {
+      const groupUpcoming = scheduleService.getAllUpcomingLessonsForGroup(note.group_name, searchFrom, 1);
+      if (groupUpcoming.length > 0) {
+        nextOcc = groupUpcoming[0];
+      }
+    }
 
     if (!nextOcc) {
       return ctx.answerCbQuery('⚠️ Keyingi dars jadvalda topilmadi', { show_alert: true }).catch(() => {});
@@ -420,12 +479,13 @@ async function handleNoteCallback(ctx) {
       // Immediately consume wizard state to prevent rapid double-click duplicate creation
       await pendingStore.del(`note_wiz:${userId}`);
 
+      const savedSubject = occ.baseSubject || occ.subject || wiz.selectedSubject;
       const saved = await db.createCourseNote({
         creator_id: userId,
         group_name: wiz.groupName,
         is_group_shared: Boolean(wiz.isGroupShared),
-        subject_name: wiz.selectedSubject,
-        subject_norm: edupageService.normalizeSubjectKey(wiz.selectedSubject).toLowerCase(),
+        subject_name: savedSubject,
+        subject_norm: edupageService.normalizeSubjectKey(savedSubject).toLowerCase(),
         target_lesson_type: occ.lessonType,
         target_date: occ.dateIso,
         target_period: occ.period,
@@ -449,11 +509,11 @@ async function handleNoteCallback(ctx) {
       return ctx.editMessageText(
         `✅ <b>Topshiriq muvaffaqiyatli saqlandi!</b>\n\n` +
         `${scopeBadge}\n` +
-        `📘 <b>Fan:</b> ${escapeHtml(wiz.selectedSubject)}\n` +
+        `📘 <b>Fan:</b> ${escapeHtml(savedSubject)}\n` +
         `🎯 <b>Dars turi:</b> ${typeLabel}\n` +
         `📅 <b>Sana va vaqt:</b> ${occ.dateDisplay} • ${occ.period}-para (${occ.startTime})\n` +
         `📝 <b>Topshiriq:</b> <i>${escapeHtml(wiz.content.text.slice(0, 200))}</i>\n\n` +
-        `🔔 <i>Bot sizga darsdan 1 kun oldin kechqurun (20:00) va dars boshlanishidan 20 daqiqa oldin eslatadi!</i>`,
+        `🔔 <i>Bot sizga ushbu dars kuni 20 daqiqa oldin hamda darsdan 1 kun oldin kechqurun (20:30 da) eslatadi!</i>`,
         { parse_mode: 'HTML' }
       ).catch(() => {});
     } finally {

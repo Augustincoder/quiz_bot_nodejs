@@ -793,55 +793,143 @@ async function cbV2ModeDisabled(ctx) {
   return renderNotifySettings(ctx, '🔕 Kunlik eslatmalar o‘chirildi');
 }
 
+/**
+ * Validates and snaps time string to the nearest 10-minute interval.
+ * Returns null if string format is invalid.
+ */
+function snapTo10MinuteInterval(timeStr) {
+  if (!timeStr || typeof timeStr !== 'string') return null;
+  const match = timeStr.trim().match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+  if (!match) return null;
+
+  const hh = parseInt(match[1], 10);
+  const mm = parseInt(match[2], 10);
+
+  const isExact10 = (mm % 10 === 0);
+  if (isExact10) {
+    const formatted = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+    return {
+      isValid: true,
+      isExact10: true,
+      original: formatted,
+      snappedTime: formatted,
+      hh,
+      mm,
+    };
+  }
+
+  // Round to nearest 10 minutes: e.g. 11:23 -> 11:20; 11:27 -> 11:30
+  let roundedMM = Math.round(mm / 10) * 10;
+  let finalHH = hh;
+  let finalMM = roundedMM;
+
+  if (finalMM === 60) {
+    finalMM = 0;
+    finalHH = (finalHH + 1) % 24;
+  }
+
+  const snappedTime = `${String(finalHH).padStart(2, '0')}:${String(finalMM).padStart(2, '0')}`;
+  return {
+    isValid: true,
+    isExact10: false,
+    original: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`,
+    snappedTime,
+    hh: finalHH,
+    mm: finalMM,
+  };
+}
+
 async function cbV2ModeCustom(ctx) {
   const userId = ctx.from?.id;
   if (!userId) return;
-  const { setState, States } = require('../core/utils');
   if (ctx.session) {
     ctx.session.state = 'sched:custom_time';
   }
   await safeAnswerCb(ctx);
+
+  const customPresetsKb = {
+    inline_keyboard: [
+      [
+        { text: '☀️ 07:00', callback_data: 'v2_ctime:07:00' },
+        { text: '☀️ 07:30', callback_data: 'v2_ctime:07:30' },
+        { text: '☀️ 08:00', callback_data: 'v2_ctime:08:00' },
+      ],
+      [
+        { text: '🌤 11:30', callback_data: 'v2_ctime:11:30' },
+        { text: '🌤 12:20', callback_data: 'v2_ctime:12:20' },
+        { text: '🌤 13:00', callback_data: 'v2_ctime:13:00' },
+      ],
+      [
+        { text: '🌙 19:00', callback_data: 'v2_ctime:19:00' },
+        { text: '🌙 20:00', callback_data: 'v2_ctime:20:00' },
+        { text: '🌙 20:30', callback_data: 'v2_ctime:20:30' },
+      ],
+      [
+        { text: '⬅️ Orqaga', callback_data: 'schedule_notify_settings' },
+      ],
+    ],
+  };
+
   return ctx.reply(
-    '🎯 <b>Dars jadvali uchun qulay vaqtni kiriting:</b>\n\n' +
-    '• <b>00:00 – 17:59:</b> Bugungi kun jadvali uchun (ertalabki/kunduzgi)\n' +
-    '• <b>18:00 – 23:59:</b> Ertangi kun jadvali anonsi uchun (kechki)\n\n' +
-    'Format: <code>HH:mm</code> (masalan: <code>07:15</code> yoki <code>20:30</code>)',
-    { parse_mode: 'HTML' }
+    '🎯 <b>Dars jadvali eslatmasi uchun qulay vaqtni tanlang:</b>\n\n' +
+    '⚠️ <b>Muhim qoida:</b> Server yuklamasini kamaytirish uchun vaqt <b>faqat 10 daqiqalik intervalda</b> (masalan: <code>07:00</code>, <code>07:30</code>, <code>11:30</code>, <code>12:20</code>, <code>20:30</code>) qabul qilinadi. Daqiqagacha ixtiyoriy vaqt (masalan: 11:23) qo‘yilsa, avtomatik eng yaqin 10 daqiqalik vaqtga moslanadi.\n\n' +
+    '• <b>00:00 – 17:50:</b> Bugungi kun jadvali uchun (ertalabki/kunduzgi)\n' +
+    '• <b>18:00 – 23:50:</b> Ertangi kun jadvali anonsi uchun (kechki)\n\n' +
+    '👇 <i>Tayyor tugmalardan tanlang yoki o‘z vaqtingizni yozib yuboring (Format: <code>HH:mm</code>):</i>',
+    { parse_mode: 'HTML', reply_markup: customPresetsKb }
   );
 }
 
 async function onCustomTimeInput(ctx) {
   const text = (ctx.message?.text || '').trim();
-  const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
-  if (!timeRegex.test(text)) {
-    return ctx.reply('⚠️ Noto‘g‘ri vaqt formati! Iltimos, <code>HH:mm</code> formatida kiriting (Masalan: <code>07:00</code> yoki <code>20:30</code>):', { parse_mode: 'HTML' });
+  const snapResult = snapTo10MinuteInterval(text);
+
+  if (!snapResult) {
+    return ctx.reply(
+      '⚠️ <b>Noto‘g‘ri vaqt formati!</b>\n\n' +
+      'Iltimos, vaqtni <code>HH:mm</code> ko‘rinishida va <b>har 10 daqiqalik intervalda</b> kiriting.\n' +
+      'Masalan: <code>07:00</code>, <code>07:30</code>, <code>11:30</code>, <code>12:20</code>, <code>20:30</code>',
+      { parse_mode: 'HTML' }
+    );
   }
 
-  const [hh] = text.split(':').map(Number);
   const userId = ctx.from?.id;
   if (ctx.session) ctx.session.state = null;
 
-  if (hh < 18) {
+  const { snappedTime, hh, isExact10, original } = snapResult;
+  const isMorning = hh < 18;
+
+  if (isMorning) {
     await dbService.upsertUserScheduleSettings(userId, {
       notify_mode: 'custom_time',
-      custom_morning_time: text,
+      custom_morning_time: snappedTime,
     });
-    return ctx.reply(
-      `✅ <b>Eslatma vaqti saqlandi:</b> <code>${text}</code>\n\n` +
-      `Har kuni soat <code>${text}</code> da <b>bugungi</b> dars jadvalingiz yuboriladi (ertalabki/kunduzgi rejim: 00:00–17:59).`,
-      { parse_mode: 'HTML' }
-    );
   } else {
     await dbService.upsertUserScheduleSettings(userId, {
       notify_mode: 'custom_time',
-      custom_evening_time: text,
+      custom_evening_time: snappedTime,
     });
+  }
+
+  if (!isExact10) {
     return ctx.reply(
-      `✅ <b>Eslatma vaqti saqlandi:</b> <code>${text}</code>\n\n` +
-      `Har kuni soat <code>${text}</code> da <b>ertangi</b> dars jadvalingiz yuboriladi (kechki anons rejimi: 18:00–23:59).`,
+      `⚠️ <b>Daqiqagacha tanlash bekor qilingan!</b>\n` +
+      `Siz kiritgan <code>${original}</code> vaqti rad etildi, chunki server eslatmalari faqat <b>10 daqiqalik intervallarda</b> ishlaydi.\n\n` +
+      `🎯 Siz uchun eng yaqin qulay vaqt qabul qilindi: <b><code>${snappedTime}</code></b>\n\n` +
+      (isMorning
+        ? `☀️ Har kuni soat <code>${snappedTime}</code> da <b>bugungi</b> dars jadvalingiz yuboriladi.`
+        : `🌙 Har kuni soat <code>${snappedTime}</code> da <b>ertangi</b> dars jadvalingiz anonsi yuboriladi.`),
       { parse_mode: 'HTML' }
     );
   }
+
+  return ctx.reply(
+    `✅ <b>Eslatma vaqti saqlandi:</b> <code>${snappedTime}</code>\n\n` +
+    (isMorning
+      ? `☀️ Har kuni soat <code>${snappedTime}</code> da <b>bugungi</b> dars jadvalingiz yuboriladi (ertalabki/kunduzgi rejim).`
+      : `🌙 Har kuni soat <code>${snappedTime}</code> da <b>ertangi</b> dars jadvalingiz yuboriladi (kechki anons rejimi).`),
+    { parse_mode: 'HTML' }
+  );
 }
 
 function register(bot) {
@@ -850,13 +938,14 @@ function register(bot) {
   bot.command('xonalar', cmdXonalar);
   bot.command('timetable', cmdTimetable);
   bot.command('schedule', cmdTimetable);
-  bot.command('notify_settings', cbNotifySettings);
+  bot.command(['settings', 'sozlamalar', 'notify_settings'], cbNotifySettings);
 
   // Reply Keyboard triggers
   bot.hears('📅 Bugungi jadval', cmdJadval);
   bot.hears('🖼 Haftalik jadval', cmdHafta);
   bot.hears('🏢 Bo\'sh xonalar', cmdXonalar);
   bot.hears('⚙️ Guruhni sozlash', cmdTimetableHelp);
+  bot.hears(['⚙️ Sozlamalar', '⚙️ Smart Alert sozlamalari'], cbNotifySettings);
 
   // Inline Button triggers
   bot.action('schedule_menu', cmdTimetable);
@@ -886,7 +975,9 @@ function register(bot) {
 
   // Smart Schedule v2 interactive triggers
   bot.action('v2_mode_shift', cbV2ModeShift);
+  bot.action('v2_offset_10', (ctx) => cbV2Offset(ctx, 10));
   bot.action('v2_offset_15', (ctx) => cbV2Offset(ctx, 15));
+  bot.action('v2_offset_20', (ctx) => cbV2Offset(ctx, 20));
   bot.action('v2_offset_30', (ctx) => cbV2Offset(ctx, 30));
   bot.action('v2_offset_60', (ctx) => cbV2Offset(ctx, 60));
   bot.action('v2_offset_120', (ctx) => cbV2Offset(ctx, 120));
@@ -895,8 +986,37 @@ function register(bot) {
   bot.action('v2_toggle_bell', cbV2ToggleBell);
   bot.action('v2_toggle_bld', cbV2ToggleBld);
   bot.action('v2_mode_disabled', cbV2ModeDisabled);
-}
 
+  // 10-Minute Custom Preset Triggers (v2_ctime:HH:mm)
+  bot.action(/^v2_ctime:(\d{2}:\d{2})$/, async (ctx) => {
+    const timeMatch = ctx.callbackQuery?.data?.match(/^v2_ctime:(\d{2}:\d{2})$/);
+    if (!timeMatch) return;
+    const time = timeMatch[1];
+    const [hh] = time.split(':').map(Number);
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    if (hh < 18) {
+      await dbService.upsertUserScheduleSettings(userId, {
+        notify_mode: 'custom_time',
+        custom_morning_time: time,
+      });
+    } else {
+      await dbService.upsertUserScheduleSettings(userId, {
+        notify_mode: 'custom_time',
+        custom_evening_time: time,
+      });
+    }
+    return renderNotifySettings(ctx, `✅ Eslatma vaqti saqlandi: ${time}`);
+  });
+
+  // Notes shortcut from settings
+  bot.action('note_mynotes', async (ctx) => {
+    await safeAnswerCb(ctx);
+    const noteHandler = require('./noteHandler');
+    return noteHandler.handleMyNotesCommand(ctx);
+  });
+}
 
 module.exports = {
   register,
@@ -905,7 +1025,11 @@ module.exports = {
   cmdJadval,
   cmdHafta,
   cmdXonalar,
+  cbNotifySettings,
+  cbSettings: cbNotifySettings,
+  renderNotifySettings,
   buildRoomPageKb,
   getPeriodNowAndNext,
   onCustomTimeInput,
+  snapTo10MinuteInterval,
 };

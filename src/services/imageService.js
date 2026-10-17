@@ -12,8 +12,10 @@ sharp.concurrency(1);
 // Concurrency Semaphore (Bug 28 fix): limits parallel Sharp rendering to 2 concurrent jobs
 // Prevents C++ native off-heap memory spikes and container OOM kills (SIGKILL 137)
 class RenderSemaphore {
-  constructor(maxConcurrency = 2) {
+  constructor(maxConcurrency = 2, maxQueueSize = 50, timeoutMs = 15000) {
     this.maxConcurrency = maxConcurrency;
+    this.maxQueueSize = maxQueueSize;
+    this.timeoutMs = timeoutMs;
     this.current = 0;
     this.queue = [];
   }
@@ -23,7 +25,27 @@ class RenderSemaphore {
       this.current++;
       return;
     }
-    return new Promise((resolve) => this.queue.push(resolve));
+
+    if (this.queue.length >= this.maxQueueSize) {
+      throw new Error(`RenderSemaphore queue limit exceeded (${this.maxQueueSize})`);
+    }
+
+    return new Promise((resolve, reject) => {
+      let timer = null;
+      const callback = () => {
+        if (timer) clearTimeout(timer);
+        resolve();
+      };
+
+      timer = setTimeout(() => {
+        const idx = this.queue.indexOf(callback);
+        if (idx !== -1) this.queue.splice(idx, 1);
+        reject(new Error(`RenderSemaphore acquire timeout (${this.timeoutMs}ms)`));
+      }, this.timeoutMs);
+      if (timer.unref) timer.unref();
+
+      this.queue.push(callback);
+    });
   }
 
   release() {

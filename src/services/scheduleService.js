@@ -364,6 +364,93 @@ function getGroupUniqueSubjectsSorted(className, nowTashkent = null) {
   }));
 }
 
+/**
+ * Searches upcoming lessons for a group across the entire timetable
+ * (Starts from now, scans today's remaining lessons then future days Mon-Sat)
+ * @param {string} className
+ * @param {Date|null} nowTashkent
+ * @param {number} maxLessons
+ */
+function getAllUpcomingLessonsForGroup(className, nowTashkent = null, maxLessons = 5) {
+  const canonical = getCanonicalGroupName(className) || className;
+  try {
+    const { getTashkentNow, normalizeSubjectKey, normalizeLessonType } = require('./edupageService');
+    const now = getTashkentNow(nowTashkent);
+    const nowMins = now.getHours() * 60 + now.getMinutes();
+    const DAY_LABELS = ['Dush', 'Sesh', 'Chor', 'Pay', 'Juma', 'Shan'];
+    const results = [];
+
+    for (let offset = 0; offset <= 14; offset++) {
+      const checkDate = new Date(now.getTime() + offset * 86400000);
+      const dayOfWeek = (checkDate.getDay() + 6) % 7; // 0=Mon .. 5=Sat, 6=Sun
+      if (dayOfWeek === 6) continue; // Sunday off
+
+      const dayLessons = getGroupScheduleForDay(canonical, dayOfWeek, checkDate);
+      if (!dayLessons || dayLessons.length === 0) continue;
+
+      const yyyy = checkDate.getFullYear();
+      const mm = String(checkDate.getMonth() + 1).padStart(2, '0');
+      const dd = String(checkDate.getDate()).padStart(2, '0');
+      const dateIso = `${yyyy}-${mm}-${dd}`;
+      const dateDisplay = `${dd}.${mm}`;
+
+      const sortedLessons = [...dayLessons].sort((a, b) => a.period - b.period);
+      for (const lesson of sortedLessons) {
+        if (!lesson || !lesson.subject) continue;
+        if (lesson.isContinuation) continue;
+
+        // If today (offset === 0), skip lessons that have already ended
+        if (offset === 0) {
+          const [eh, em] = (lesson.endTime || '09:20').split(':').map(Number);
+          const endMin = (eh || 0) * 60 + (em || 0);
+          if (endMin <= nowMins) {
+            continue;
+          }
+        }
+
+        const baseSubject = normalizeSubjectKey(lesson.subject);
+        const lessonType = normalizeLessonType(lesson);
+
+        results.push({
+          dateIso,
+          dateDisplay,
+          dayLabel: DAY_LABELS[dayOfWeek],
+          offsetDays: offset,
+          period: lesson.period,
+          startTime: lesson.startTime,
+          endTime: lesson.endTime,
+          subject: lesson.subject,
+          baseSubject,
+          lessonType,
+          room: lesson.room || '',
+          teacher: lesson.teacher || '',
+          isToday: offset === 0,
+          isTomorrow: offset === 1,
+        });
+
+        if (results.length >= maxLessons) break;
+      }
+
+      if (results.length >= maxLessons) break;
+    }
+
+    return results;
+  } catch (err) {
+    logger.warn('getAllUpcomingLessonsForGroup error:', { className, error: err.message });
+    return [];
+  }
+}
+
+/**
+ * Returns the single next upcoming lesson for a group
+ * @param {string} className
+ * @param {Date|null} nowTashkent
+ */
+function getNextUpcomingLessonForGroup(className, nowTashkent = null) {
+  const upcoming = getAllUpcomingLessonsForGroup(className, nowTashkent, 1);
+  return upcoming.length > 0 ? upcoming[0] : null;
+}
+
 module.exports = {
   fetchTodaySchedule,
   fetchWeeklyScheduleImage,
@@ -382,4 +469,6 @@ module.exports = {
   getActiveOrRecentLessonContext,
   getUpcomingSubjectOccurrences,
   getGroupUniqueSubjectsSorted,
+  getAllUpcomingLessonsForGroup,
+  getNextUpcomingLessonForGroup,
 };

@@ -16,6 +16,7 @@ async function advanceQuestion(roomCode) {
   if (room.readTimer) { clearTimeout(room.readTimer); room.readTimer = null; }
   if (room.actionTimer) { clearTimeout(room.actionTimer); room.actionTimer = null; }
   if (room.cooldownTimer) { clearTimeout(room.cooldownTimer); room.cooldownTimer = null; }
+  if (room.leaderboardTimer) { clearTimeout(room.leaderboardTimer); room.leaderboardTimer = null; }
 
   // Reset room state for new question
   room.lockedPlayers = new Set();
@@ -70,14 +71,35 @@ async function advanceQuestion(roomCode) {
     room.actionTimer = setTimeout(() => {
         // Bug 38 fix: verify that question index has not advanced before firing
         if (room.status === 'action' && room.currentIndex === qIndex + 1) {
-            io.to(roomCode).emit('game:leaderboard', { 
-                correctAnswer: room.currentAnswer,
-                explanation: room.currentExplanation,
-                leaderboard: Array.from(room.players.values()).sort((a,b) => b.score - a.score)
-            });
+            showLeaderboard(roomCode, room);
         }
     }, 20000); // 20s Kahoot timer
   }, readTimerMs);
+}
+
+function showLeaderboard(roomCode, room) {
+  if (!room || room.status === 'ended') return;
+  room.status = 'leaderboard';
+  if (room.actionTimer) { clearTimeout(room.actionTimer); room.actionTimer = null; }
+  if (room.readTimer) { clearTimeout(room.readTimer); room.readTimer = null; }
+  if (room.leaderboardTimer) { clearTimeout(room.leaderboardTimer); room.leaderboardTimer = null; }
+
+  const io = getIoInstance();
+  io.to(roomCode).emit('game:leaderboard', { 
+    correctAnswer: room.currentAnswer,
+    explanation: room.currentExplanation,
+    leaderboard: Array.from(room.players.values()).sort((a,b) => b.score - a.score)
+  });
+
+  // Auto-advance fallback (prevents game freeze if an AFK/disconnected player never sends ack)
+  const autoAdvanceTimer = setTimeout(() => {
+    room.leaderboardTimer = null;
+    if (room.status === 'leaderboard') {
+      advanceQuestion(roomCode).catch(console.error);
+    }
+  }, 8000);
+  if (autoAdvanceTimer.unref) autoAdvanceTimer.unref();
+  room.leaderboardTimer = autoAdvanceTimer;
 }
 
 async function handleGameEnd(roomCode, room) {
@@ -111,6 +133,6 @@ async function handleGameEnd(roomCode, room) {
     room.endTimer = endTimer;
 }
 
-module.exports = { advanceQuestion };
+module.exports = { advanceQuestion, showLeaderboard };
 
 
