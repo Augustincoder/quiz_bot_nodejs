@@ -1034,7 +1034,16 @@ async function processMediaGroupBroadcast(buffer) {
     }
 
     // 2. Send confirmation prompt
-    const previewCaption = caption ? `\n\n📝 <b>Matn:</b>\n${escapeHtml(caption.slice(0, 500))}` : '';
+    const capLen = caption ? caption.length : 0;
+    let previewCaption = '';
+    if (caption) {
+      const capText = capLen <= 3000 ? escapeHtml(caption) : escapeHtml(caption.slice(0, 3000)) + '\n\n✂️ <i>... (preview uchun qisqartirildi)</i>';
+      previewCaption = `\n\n📝 <b>Matn (${capLen} ta belgi):</b>\n${capText}`;
+      if (capLen > 1024) {
+        previewCaption += `\n\n⚠️ <b>DIQQAT:</b> Album (media group) izohi (caption) ko'pi bilan 1024 ta belgi bo'lishi mumkin!`;
+      }
+    }
+
     await ctx.reply(
       `📋 <b>ALBUM XABAR PREVIEW (${items.length} ta media)</b>\n` +
       `━━━━━━━━━━━━━━━━━━━━\n\n` +
@@ -1064,11 +1073,14 @@ async function cbAdminBroadcast(ctx) {
   const usersCount = await dbService.getUserCount();
 
   await safeEdit(ctx,
-    `📢 <b>OMMAVIY XABAR</b>\n` +
+    `📢 <b>OMMAVIY XABAR YUBORISH</b>\n` +
     `━━━━━━━━━━━━━━━━━━━━\n\n` +
     `👥 Qabul qiluvchilar: <b>${usersCount} ta</b>\n\n` +
-    `✍️ <b>Xabar matnini yuboring:</b>\n\n` +
-    `<i>💡 HTML formatlash, rasm, video yoki bir nechta rasmli album yuborishingiz mumkin</i>`,
+    `✍️ <b>Xabar matnini yoki mediasini yuboring:</b>\n\n` +
+    `📏 <b>Matn limitlari:</b>\n` +
+    `• Sof matnli xabar: <b>4,096 ta belgi</b>gacha\n` +
+    `• Rasm/video/media ostidagi izoh: <b>1,024 ta belgi</b>gacha\n\n` +
+    `<i>💡 HTML formatlash, rasm, video yoki bir nechta rasmli album yuborishingiz mumkin.</i>`,
     {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([[
@@ -1139,14 +1151,31 @@ async function onBroadcastMessage(ctx) {
     setState(ctx, States.ADMIN_BROADCAST_CONFIRM);
 
     const usersCount = await dbService.getUserCount();
-    const previewText = text ? escapeHtml(text.slice(0, 500)) : '<i>[Media xabar]</i>';
+    const textLen = text ? text.length : 0;
+    let previewText = '<i>[Media xabar]</i>';
+    let lengthNotice = '';
+
+    if (text) {
+      if (textLen <= 3500) {
+        previewText = escapeHtml(text);
+      } else {
+        previewText = escapeHtml(text.slice(0, 3500)) + '\n\n✂️ <i>... (preview uchun qisqartirildi, foydalanuvchilarga to‘liq yuboriladi)</i>';
+      }
+      lengthNotice = `📊 Xabar uzunligi: <b>${textLen} ta belgi</b> (Maksimal: ${hasMedia ? '1024' : '4096'} ta)\n`;
+    }
+
+    let mediaWarning = '';
+    if (hasMedia && textLen > 1024) {
+      mediaWarning = `\n⚠️ <b>DIQQAT:</b> Telegramda rasm/video ostidagi izoh (caption) ko‘pi bilan <b>1024 ta belgi</b> bo‘lishi mumkin! Siz yuborgan matn esa <b>${textLen} ta belgi</b>. Agar matn to‘liq yetib borishini istasangiz, xabarni rasmsiz (faqat matn sifatida) yuboring (sof matnda 4096 tagacha ruxsat etiladi)!\n`;
+    }
 
     await ctx.reply(
       `📋 <b>XABAR PREVIEW</b>\n` +
       `━━━━━━━━━━━━━━━━━━━━\n\n` +
-      `👥 Qabul qiluvchilar: <b>${usersCount} ta</b>\n\n` +
-      `📨 <b>Xabar:</b>\n${previewText}\n\n` +
-      `⚠️ <b>Tasdiqlaysizmi?</b>`,
+      `👥 Qabul qiluvchilar: <b>${usersCount} ta</b>\n` +
+      `${lengthNotice}${mediaWarning}\n` +
+      `📨 <b>Xabar matni:</b>\n${previewText}\n\n` +
+      `⚠️ <b>Barcha foydalanuvchilarga yuborilsinmi?</b>`,
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
