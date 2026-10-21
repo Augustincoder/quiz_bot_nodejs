@@ -404,7 +404,7 @@ async function dispatchGroupAlerts(groupName, diffs, usersList, currentHash = nu
 
   // If usersList is already filtered, use it; otherwise filter from all users
   const rawUsers = (usersList || []).filter(u => {
-    if (!u || !u.telegram_id || !u.class_name || u.is_banned || u.is_blocked) return false;
+    if (!u || !u.telegram_id || !u.class_name || u.is_banned) return false;
     const uNorm = normalizeGroupName(u.class_name);
     if (uNorm === normGroup || uNorm === rawNormGroup) return true;
 
@@ -558,7 +558,7 @@ async function notifyGroupScheduleChanged(groupName, newHash) {
   }
 
   const rawUsers = (users || []).filter(u => {
-    if (!u || !u.telegram_id || !u.class_name || u.is_banned || u.is_blocked) return false;
+    if (!u || !u.telegram_id || !u.class_name || u.is_banned) return false;
     const uCanonical = edupageService.getCanonicalGroupName(u.class_name) || u.class_name;
     const uNorm = normalizeGroupName(uCanonical);
     const uRawNorm = normalizeGroupName(u.class_name);
@@ -747,7 +747,7 @@ async function checkScheduleChanges(forceOrOptions = false) {
     // Group active users by normalized group name for fast O(1) matching
     const usersByGroupNorm = new Map();
     for (const u of (broadcastUsers || [])) {
-      if (!u.telegram_id || !u.class_name || u.is_banned || u.is_blocked) continue;
+      if (!u.telegram_id || !u.class_name || u.is_banned) continue;
       const uCanonical = edupageService.getCanonicalGroupName(u.class_name) || u.class_name;
       const uNorm = normalizeGroupName(uCanonical);
       const uRawNorm = normalizeGroupName(u.class_name);
@@ -1009,7 +1009,7 @@ async function forceAlertGroup(groupName) {
   }
 
   const matchingUsers = (users || []).filter(u => {
-    if (!u || !u.telegram_id || !u.class_name || u.is_banned || u.is_blocked) return false;
+    if (!u || !u.telegram_id || !u.class_name || u.is_banned) return false;
     const uCanonical = edupageService.getCanonicalGroupName(u.class_name) || u.class_name;
     const uNorm = normalizeGroupName(uCanonical);
     const uRawNorm = normalizeGroupName(u.class_name);

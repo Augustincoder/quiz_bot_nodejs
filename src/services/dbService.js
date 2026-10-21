@@ -410,12 +410,12 @@ async function getBroadcastRecipients() {
     while (true) {
       const { data, error } = await supabase
         .from('users')
-        .select('telegram_id, is_banned, is_blocked')
+        .select('telegram_id, is_banned')
         .or('is_banned.is.null,is_banned.eq.false')
         .range(from, from + pageSize - 1);
       if (error) throw error;
       if (!data || data.length === 0) break;
-      const valid = data.filter(u => !u.is_banned && !u.is_blocked);
+      const valid = data.filter(u => !u.is_banned);
       allIds.push(...valid.map(u => u.telegram_id));
       if (data.length < pageSize) break;
       from += pageSize;
@@ -901,7 +901,7 @@ async function markUserBlocked(userId, isBlocked = true) {
       await redis.set(`user_blocked:${uid}`, isBlocked ? '1' : '0', 'EX', 86400 * 7).catch(() => {});
     }
     if (supabase) {
-      await supabase.from('users').update({ is_blocked: isBlocked }).eq('telegram_id', uid);
+      await supabase.from('users').update({ is_banned: isBlocked }).eq('telegram_id', uid);
     }
     invalidateSubscribersCache();
     logger.debug('Updated user blocked status', { userId: uid, isBlocked });
@@ -922,12 +922,12 @@ async function isUserBlocked(userId) {
 
     const { data, error } = await supabase
       .from('users')
-      .select('is_blocked')
+      .select('is_banned')
       .eq('telegram_id', uid)
       .maybeSingle();
 
     if (error) throw error;
-    const isBlocked = data?.is_blocked === true;
+    const isBlocked = data?.is_banned === true;
     if (redis) {
       await redis.set(`user_blocked:${uid}`, isBlocked ? '1' : '0', 'EX', 3600).catch(() => {});
     }
@@ -950,7 +950,7 @@ async function getScheduleBroadcastUsers() {
     while (true) {
       const { data, error } = await supabase
         .from('users')
-        .select('telegram_id, class_name, is_banned, is_blocked')
+        .select('telegram_id, class_name, is_banned')
         .not('class_name', 'is', null)
         .or('is_banned.is.null,is_banned.eq.false')
         .range(from, from + pageSize - 1);
@@ -961,7 +961,7 @@ async function getScheduleBroadcastUsers() {
       if (data.length < pageSize) break;
       from += pageSize;
     }
-    return allUsers.filter(u => u.class_name && u.class_name.trim() && !u.is_banned && !u.is_blocked);
+    return allUsers.filter(u => u.class_name && u.class_name.trim() && !u.is_banned);
   } catch (err) {
     logger.error('getScheduleBroadcastUsers error:', { error: err.message });
     return [];

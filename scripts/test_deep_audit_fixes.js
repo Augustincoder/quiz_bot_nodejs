@@ -1,5 +1,6 @@
 'use strict';
 
+process.env.BOT_TOKEN = process.env.BOT_TOKEN || '123456:dummy_test_token';
 const assert = require('assert');
 
 async function runAuditFixesTests() {

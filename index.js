@@ -432,7 +432,7 @@ async function queueSchedules(isTomorrow = false) {
     let users = await dbService.getScheduleBroadcastUsers();
     if (!users || users.length === 0) {
       const all = await dbService.getAllUsers();
-      users = (all || []).filter((u) => u.class_name && !u.is_banned && !u.is_blocked);
+      users = (all || []).filter((u) => u.class_name && !u.is_banned);
     }
     if (!users || users.length === 0) return;
 

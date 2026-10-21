@@ -5,6 +5,7 @@
  * Comprehensive Verification & Regression Test Suite
  */
 
+process.env.BOT_TOKEN = process.env.BOT_TOKEN || '123456:dummy_test_token';
 const assert = require('assert');
 const edupageService = require('../src/services/edupageService');
 const scheduleService = require('../src/services/scheduleService');
