@@ -401,7 +401,16 @@ async function dispatchGroupAlerts(groupName, diffs, usersList, currentHash = nu
   });
 
   // Deduplicate by telegram_id
-  const matchingUsers = Array.from(new Map(rawUsers.map(u => [String(u.telegram_id), u])).values());
+  const matchingUsers = [];
+  const seenIds = new Set();
+  for (let i = 0; i < rawUsers.length; i++) {
+    const u = rawUsers[i];
+    const id = String(u.telegram_id);
+    if (!seenIds.has(id)) {
+      seenIds.add(id);
+      matchingUsers.push(u);
+    }
+  }
 
   // Invalidate rendered weekly image cache for this group
   await scheduleService.invalidateImageCache(groupName).catch(() => {});
@@ -548,7 +557,16 @@ async function notifyGroupScheduleChanged(groupName, newHash) {
     return uNorm === normGroup || uRawNorm === normGroup || (rawNormGroup && (uNorm === rawNormGroup || uRawNorm === rawNormGroup));
   });
 
-  const matchingUsers = Array.from(new Map(rawUsers.map(u => [String(u.telegram_id), u])).values());
+  const matchingUsers = [];
+  const seenIds = new Set();
+  for (let i = 0; i < rawUsers.length; i++) {
+    const u = rawUsers[i];
+    const id = String(u.telegram_id);
+    if (!seenIds.has(id)) {
+      seenIds.add(id);
+      matchingUsers.push(u);
+    }
+  }
   if (matchingUsers.length === 0) return;
 
   let oldSchedule = null;
