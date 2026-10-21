@@ -621,7 +621,7 @@ async function updateUserClass(telegramId, className) {
       if (error) {
         logger.warn('Supabase updateUserClass returned error', { error: error.message, uid });
       }
-      await supabase.from('user_schedule_settings').update({ group_name: canonical }).eq('telegram_id', uid).catch(() => {});
+      await supabase.from('user_schedule_settings').update({ group_name: canonical }).eq('telegram_id', uid);
       invalidateSubscribersCache();
     } catch (e) {
       logger.error('updateUserClass error:', { telegramId: uid, error: e.message });
@@ -1372,11 +1372,14 @@ async function upsertUserScheduleSettings(telegramId, patch) {
       }
 
       if (Object.keys(userUpdates).length > 0) {
-        await supabase
-          .from('users')
-          .update(userUpdates)
-          .eq('telegram_id', uid)
-          .catch(() => {});
+        try {
+          await supabase
+            .from('users')
+            .update(userUpdates)
+            .eq('telegram_id', uid);
+        } catch {
+          // ignore
+        }
       }
 
       invalidateSubscribersCache();
@@ -1431,7 +1434,10 @@ function cleanupDueNotesCache(now = Date.now()) {
  * @param {boolean} forceRefresh
  */
 async function getAllActiveScheduleSubscribers(forceRefresh = false) {
-  if (!supabase) return [];
+  if (!supabase) {
+    if (!activeSubscribersCache || forceRefresh) activeSubscribersCache = [];
+    return activeSubscribersCache;
+  }
   const now = Date.now();
   if (!forceRefresh && activeSubscribersCache && now < activeSubscribersCacheExpiresAt) {
     return activeSubscribersCache;
