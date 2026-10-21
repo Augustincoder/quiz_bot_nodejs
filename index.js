@@ -460,10 +460,17 @@ async function queueSchedules(isTomorrow = false) {
       }
     }
 
+    const classIdCache = new Map();
     const eligibleUsers = users.filter((u) => {
       if (!u.class_name || !u.telegram_id) return false;
       if (db && classesWithLessons.size > 0) {
-        const classId = edupageService.findClassId(db, u.class_name);
+        let classId;
+        if (classIdCache.has(u.class_name)) {
+          classId = classIdCache.get(u.class_name);
+        } else {
+          classId = edupageService.findClassId(db, u.class_name);
+          classIdCache.set(u.class_name, classId);
+        }
         if (classId && !classesWithLessons.has(classId)) {
           return false; // Skip groups without lessons on this day (e.g. Saturday for 94% of groups)
         }
