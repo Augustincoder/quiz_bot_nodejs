@@ -1443,11 +1443,20 @@ async function generateScheduleImage(className, schedule, themeName = 'dark', op
       const baseX = DAY_W + (pNum - 1) * cellW;
       const c = resolveColors(lesson);
 
-      const combinedLesson = lessons.length > 1 ? {
-        ...lesson,
-        room: [...new Set(lessons.map(l => l.room).filter(Boolean))].join(', ') || lesson.room,
-        teacher: [...new Set(lessons.map(l => l.teacher).filter(Boolean))].join(', ') || lesson.teacher,
-      } : lesson;
+      let combinedLesson = lesson;
+      if (lessons.length > 1) {
+        const { rooms, teachers } = lessons.reduce((acc, l) => {
+          if (l.room && !acc.rooms.includes(l.room)) acc.rooms.push(l.room);
+          if (l.teacher && !acc.teachers.includes(l.teacher)) acc.teachers.push(l.teacher);
+          return acc;
+        }, { rooms: [], teachers: [] });
+
+        combinedLesson = {
+          ...lesson,
+          room: rooms.length > 0 ? rooms.join(', ') : lesson.room,
+          teacher: teachers.length > 0 ? teachers.join(', ') : lesson.teacher,
+        };
+      }
 
       cardsHtml += buildCardSvg(combinedLesson, baseX, baseY, span, cellW, c);
       pNum += span;
