@@ -1468,18 +1468,18 @@ async function cbFinishCreation(ctx) {
       for (let i = 0; i < questions.length; i += CHUNK_SIZE) {
         chunks.push(questions.slice(i, i + CHUNK_SIZE));
       }
-
       // Har bir qismni alohida blok qilib yozamiz
-      for (let i = 0; i < chunks.length; i++) {
+      const promises = chunks.map((chunk, i) => {
         const chunkName = `${baseBlockName} (${i + 1}-qism)`;
-        const tId = await dbService.saveUserTest(
+        return dbService.saveUserTest(
           ctx.from.id,
           subject,
           chunkName,
-          chunks[i],
+          chunk,
         );
-        testIds.push(tId);
-      }
+      });
+      const ids = await Promise.all(promises);
+      testIds.push(...ids);
     }
   }
 
