@@ -406,29 +406,32 @@ async function prewarmAllTimetables(telegram, options = {}) {
         let rawSchedule = null;
         let scheduleHash = null;
 
-        for (const theme of ALL_THEMES) {
-          if (workerState.shouldStop) break;
+        try {
+          rawSchedule = await edupageService.getRawSchedule(groupName);
+          if (!rawSchedule || Object.keys(rawSchedule).length === 0) {
+            workerState.skipped += ALL_THEMES.length;
+            workerState.processed += ALL_THEMES.length;
+            continue;
+          }
+          scheduleHash = computeScheduleHash(rawSchedule);
+        } catch (err) {
+          logger.error(`Failed to fetch schedule for ${groupName}`, { error: err.message });
+          workerState.failed += ALL_THEMES.length;
+          workerState.processed += ALL_THEMES.length;
+          continue;
+        }
+
+        await Promise.all(ALL_THEMES.map(async (theme) => {
+          if (workerState.shouldStop) return;
           if (stopHourTashkent != null && isTashkentCutoffReached(stopHourTashkent)) {
             logger.info(`⏰ Nightly pre-warm cutoff reached during theme processing (${stopHourTashkent}:00 Asia/Tashkent). Stopping.`);
-            break;
+            return;
           }
 
           workerState.currentTheme = theme;
           workerState.processed++;
 
           try {
-            // Lazy fetch schedule only when needed
-            if (!rawSchedule) {
-              rawSchedule = await edupageService.getRawSchedule(groupName);
-              if (!rawSchedule || Object.keys(rawSchedule).length === 0) {
-                const remaining = ALL_THEMES.length - ALL_THEMES.indexOf(theme);
-                workerState.skipped += remaining;
-                workerState.processed += (remaining - 1);
-                break; // No schedule in EduPage, skip this group
-              }
-              scheduleHash = computeScheduleHash(rawSchedule);
-            }
-
             // Check if already in Supabase/Redis cache with valid file_id
             const existing = await dbService.getTimetableCache(norm, theme);
 
@@ -436,7 +439,7 @@ async function prewarmAllTimetables(telegram, options = {}) {
             const existingFileId = existing?.file_id || existing?.fileId;
             if (existing && existingFileId && existing.schedule_hash === scheduleHash) {
               workerState.skipped++;
-              continue;
+              return;
             }
 
             // Generate missing or outdated theme
@@ -444,7 +447,7 @@ async function prewarmAllTimetables(telegram, options = {}) {
             let imageBuffer = await imageService.generateScheduleImage(groupName, rawSchedule, theme);
             if (!imageBuffer) {
               workerState.failed++;
-              continue;
+              return;
             }
 
             // Upload to Telegram Storage Channel CDN
@@ -478,14 +481,14 @@ async function prewarmAllTimetables(telegram, options = {}) {
               workerState.failed++;
             }
 
-            // Pacing pause to protect Render RAM/CPU and Telegram Rate Limits
-            await sleep(delayMs);
           } catch (jobErr) {
             workerState.failed++;
             logger.error(`Error processing pre-warm for ${groupName} [${theme}]`, { error: jobErr.message });
-            await sleep(2000);
           }
-        }
+        }));
+
+        // Pacing pause to protect Render RAM/CPU and Telegram Rate Limits
+        await sleep(delayMs);
 
         // Release schedule reference and trigger gc between groups
         rawSchedule = null;

@@ -205,7 +205,7 @@ async function handleContactMessages(ctx, next) {
     if (targetAdmins.length === 0) {
       logger.warn('No ADMIN_ID configured to receive user contact messages.');
     } else {
-      for (const targetAdminId of targetAdmins) {
+      await Promise.allSettled(targetAdmins.map(async (targetAdminId) => {
         try {
           await ctx.telegram.sendMessage(targetAdminId, adminHeader, { 
             parse_mode: 'HTML' 
@@ -264,7 +264,7 @@ async function handleContactMessages(ctx, next) {
         } catch (adminErr) {
           logger.error('Failed to notify admin of contact message', { targetAdminId, error: adminErr.message });
         }
-      }
+      }));
     }
 
     // ─── 4. USER CONFIRMATION (Enhanced) ───────────────
