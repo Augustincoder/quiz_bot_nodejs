@@ -618,7 +618,9 @@ async function getGroupBuildings(className) {
 function buildIndexedDatabase(raw, defaultNum) {
   const t0 = Date.now();
   const tables = raw?.r?.dbiAccessorRes?.tables || [];
-  const findRows = (tid) => tables.find(t => t.id === tid)?.data_rows ?? [];
+  // Optimize tables lookups to O(1)
+  const tablesById = Object.fromEntries(tables.map(t => [t.id, t.data_rows || []]));
+  const findRows = (tid) => tablesById[tid] ?? [];
 
   const rooms = Object.fromEntries(findRows('classrooms').map(r => [r.id, r.short || r.name]));
   const periods = Object.fromEntries(findRows('periods').map(p => [p.id, p]));
