@@ -419,6 +419,7 @@ async function dispatchGroupAlerts(groupName, diffs, usersList, currentHash = nu
   // Deduplicate by telegram_id
   const matchingUsers = deduplicateUsers(rawUsers);
 
+
   // Invalidate rendered weekly image cache for this group
   await scheduleService.invalidateImageCache(groupName).catch(() => {});
 
@@ -565,6 +566,7 @@ async function notifyGroupScheduleChanged(groupName, newHash) {
   });
 
   const matchingUsers = deduplicateUsers(rawUsers);
+
   if (matchingUsers.length === 0) return;
 
   let oldSchedule = null;
@@ -933,6 +935,7 @@ async function checkScheduleChanges(forceOrOptions = false) {
         // Deduplicate
         const uniqueMatching = deduplicateUsers(matchingUsers);
 
+
         if (uniqueMatching.length === 0) {
           // Inactive/Unused group: Only purge stale cache metadata. DO NOT generate images or send alerts to save server RAM/CPU!
           logger.debug(`Schedule changed for inactive group "${item.groupName}" (0 registered users). Image rendering skipped to save resources.`);
@@ -1014,6 +1017,7 @@ async function forceAlertGroup(groupName) {
   });
 
   const uniqueUsers = deduplicateUsers(matchingUsers);
+
   if (uniqueUsers.length === 0) {
     return { success: false, error: 'Guruhda ro\'yxatdan o\'tgan talabalar topilmadi', groupName: canonical, usersCount: 0 };
   }
