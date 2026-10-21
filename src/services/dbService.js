@@ -410,12 +410,13 @@ async function getBroadcastRecipients() {
     while (true) {
       const { data, error } = await supabase
         .from('users')
-        .select('telegram_id')
+        .select('telegram_id, is_banned, is_blocked')
         .or('is_banned.is.null,is_banned.eq.false')
         .range(from, from + pageSize - 1);
       if (error) throw error;
       if (!data || data.length === 0) break;
-      allIds.push(...data.map(u => u.telegram_id));
+      const valid = data.filter(u => !u.is_banned && !u.is_blocked);
+      allIds.push(...valid.map(u => u.telegram_id));
       if (data.length < pageSize) break;
       from += pageSize;
     }
@@ -949,7 +950,7 @@ async function getScheduleBroadcastUsers() {
     while (true) {
       const { data, error } = await supabase
         .from('users')
-        .select('telegram_id, class_name, is_banned')
+        .select('telegram_id, class_name, is_banned, is_blocked')
         .not('class_name', 'is', null)
         .or('is_banned.is.null,is_banned.eq.false')
         .range(from, from + pageSize - 1);
@@ -960,7 +961,7 @@ async function getScheduleBroadcastUsers() {
       if (data.length < pageSize) break;
       from += pageSize;
     }
-    return allUsers.filter(u => u.class_name && u.class_name.trim() && !u.is_banned);
+    return allUsers.filter(u => u.class_name && u.class_name.trim() && !u.is_banned && !u.is_blocked);
   } catch (err) {
     logger.error('getScheduleBroadcastUsers error:', { error: err.message });
     return [];
@@ -1167,17 +1168,28 @@ async function getAllCachedTimetables() {
 }
 
 async function clearAllTimetableCache() {
+  fallbackTimetableCache.clear();
   if (redis) {
     try {
       if (typeof redis.scanStream === 'function') {
-        const stream = redis.scanStream({ match: 'cache:timetable_cdn:*', count: 100 });
-        stream.on('data', async (keys) => {
-          if (keys && keys.length > 0) {
-            await redis.del(keys).catch(() => {});
-          }
-        });
-        stream.on('end', () => {
-          logger.info('Finished scanning and clearing Redis timetable CDN cache.');
+        await new Promise((resolve, reject) => {
+          const stream = redis.scanStream({ match: 'cache:timetable_cdn:*', count: 100 });
+          stream.on('data', (keys) => {
+            if (keys && keys.length > 0) {
+              stream.pause();
+              redis.del(keys)
+                .catch(delErr => logger.warn('Redis del batch error during scan:', { error: delErr.message }))
+                .finally(() => stream.resume());
+            }
+          });
+          stream.on('error', (err) => {
+            logger.error('Redis scanStream error during timetable cache clearance:', { error: err.message });
+            reject(err);
+          });
+          stream.on('end', () => {
+            logger.info('Finished scanning and clearing Redis timetable CDN cache.');
+            resolve();
+          });
         });
       } else {
         const keys = await redis.keys('cache:timetable_cdn:*');

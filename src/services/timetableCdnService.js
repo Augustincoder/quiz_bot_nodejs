@@ -346,10 +346,10 @@ async function prewarmAllTimetables(telegram, options = {}) {
         broadcastUsers.map((u) => (u.class_name || '').trim()).filter(Boolean)
       );
 
-      // 2. Gather all groups from groups.json
+      // 2. Gather all groups from groups.json (non-blocking async read)
       let allGroups = [];
       try {
-        const rawJson = fs.readFileSync(path.join(__dirname, '../data/groups.json'), 'utf8');
+        const rawJson = await fs.promises.readFile(path.join(__dirname, '../data/groups.json'), 'utf8');
         allGroups = JSON.parse(rawJson);
       } catch (e) {
         logger.error('Failed to read groups.json for pre-warm', { error: e.message });

@@ -76,8 +76,23 @@ function initWorkers(bot, scheduleService) {
           if (retrySec && retrySec <= 30) {
             logger.warn(`Alert rate limit hit. Waiting ${retrySec}s`, { userId: uid });
             await new Promise(r => setTimeout(r, (retrySec + 1) * 1000));
-            await bot.telegram.sendMessage(uid, message, { parse_mode: 'HTML' });
-            if (job.id) await markUserSentInJob(job.id, uid);
+            try {
+              await bot.telegram.sendMessage(uid, message, { parse_mode: 'HTML' });
+              if (job.id) await markUserSentInJob(job.id, uid);
+            } catch (retryErr) {
+              const retryBlocked = retryErr?.message?.includes('blocked') ||
+                retryErr?.message?.includes('deactivated') ||
+                retryErr?.message?.includes('chat not found') ||
+                retryErr?.response?.error_code === 403;
+              if (retryBlocked) {
+                logger.info('User blocked bot during rate limit retry, marking blocked', { userId: uid });
+                dbService.markUserBlocked(uid, true).catch(() => {});
+                if (job.id) await markUserSentInJob(job.id, uid);
+              } else {
+                logger.error('Alert retry failed after backoff, re-throwing for BullMQ', { userId: uid, error: retryErr.message });
+                throw retryErr;
+              }
+            }
           } else {
             logger.error('Alert sending failed, flagging job for BullMQ retry', { userId: uid, error: err.message });
             throw err; // Allow BullMQ attempts and backoff to retry remaining users
@@ -118,8 +133,23 @@ function initWorkers(bot, scheduleService) {
           if (retrySec && retrySec <= 30) {
             logger.warn(`Batch broadcast rate limit hit. Waiting ${retrySec}s`, { userId: uid });
             await new Promise(r => setTimeout(r, (retrySec + 1) * 1000));
-            await bot.telegram.sendMessage(uid, message, { parse_mode: 'HTML' });
-            if (job.id) await markUserSentInJob(job.id, uid);
+            try {
+              await bot.telegram.sendMessage(uid, message, { parse_mode: 'HTML' });
+              if (job.id) await markUserSentInJob(job.id, uid);
+            } catch (retryErr) {
+              const retryBlocked = retryErr?.message?.includes('blocked') ||
+                retryErr?.message?.includes('deactivated') ||
+                retryErr?.message?.includes('chat not found') ||
+                retryErr?.response?.error_code === 403;
+              if (retryBlocked) {
+                logger.info('User blocked bot during batch broadcast retry, marking blocked', { userId: uid });
+                dbService.markUserBlocked(uid, true).catch(() => {});
+                if (job.id) await markUserSentInJob(job.id, uid);
+              } else {
+                logger.error('Batch broadcast retry failed after backoff, re-throwing for BullMQ', { userId: uid, error: retryErr.message });
+                throw retryErr;
+              }
+            }
           } else {
             logger.error('Batch broadcast failed for user, throwing for BullMQ retry', { userId: uid, error: err.message });
             throw err;

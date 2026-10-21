@@ -1869,25 +1869,27 @@ async function onContactMessage(ctx) {
     if (targetAdmins.length === 0) {
       logger.warn('No ADMIN_ID configured to receive user contact messages.');
     } else {
-      for (const targetAdminId of targetAdmins) {
-        await ctx.telegram.sendMessage(
-          targetAdminId,
-          `📨 <b>YANGI MUROJAAT</b>\n` +
-          `━━━━━━━━━━━━━━━━━━━━\n\n` +
-          `👤 <a href="tg://user?id=${ctx.from.id}">${fName}</a>\n` +
-          `🆔 <code>${ctx.from.id}</code>\n\n` +
-          `💬 ${escapeHtml(msgText)}`,
-          {
-            parse_mode: 'HTML',
-            ...Markup.inlineKeyboard([[
-              Markup.button.callback(
-                '↩️ Javob berish',
-                `reply_${ctx.from.id}_${ctx.message.message_id}`
-              ),
-            ]]),
-          }
-        ).catch(adminErr => logger.error('Failed to notify admin of contact message', { targetAdminId, error: adminErr.message }));
-      }
+      await Promise.allSettled(
+        targetAdmins.map(targetAdminId =>
+          ctx.telegram.sendMessage(
+            targetAdminId,
+            `📨 <b>YANGI MUROJAAT</b>\n` +
+            `━━━━━━━━━━━━━━━━━━━━\n\n` +
+            `👤 <a href="tg://user?id=${ctx.from.id}">${fName}</a>\n` +
+            `🆔 <code>${ctx.from.id}</code>\n\n` +
+            `💬 ${escapeHtml(msgText)}`,
+            {
+              parse_mode: 'HTML',
+              ...Markup.inlineKeyboard([[
+                Markup.button.callback(
+                  '↩️ Javob berish',
+                  `reply_${ctx.from.id}_${ctx.message.message_id}`
+                ),
+              ]]),
+            }
+          ).catch(adminErr => logger.error('Failed to notify admin of contact message', { targetAdminId, error: adminErr.message }))
+        )
+      );
     }
 
     await ctx.reply(
