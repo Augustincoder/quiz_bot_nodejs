@@ -32,6 +32,22 @@ function getBroadcastQueue() {
   }
 }
 
+/**
+ * Efficiently deduplicate users by their telegram_id
+ * @param {Array} users
+ * @returns {Array}
+ */
+function deduplicateUsers(users) {
+  const obj = {};
+  for (let i = 0; i < users.length; i++) {
+    const u = users[i];
+    if (u && u.telegram_id != null) {
+      obj[String(u.telegram_id)] = u;
+    }
+  }
+  return Object.values(obj);
+}
+
 const DAY_NAMES = ['Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba'];
 const PERIOD_TIMES = {
   1: { start: '08:00', end: '09:20' },
@@ -401,11 +417,8 @@ async function dispatchGroupAlerts(groupName, diffs, usersList, currentHash = nu
   });
 
   // Deduplicate by telegram_id
-  const _matchingUsersMap = new Map();
-  for (const u of rawUsers) {
-    _matchingUsersMap.set(String(u.telegram_id), u);
-  }
-  const matchingUsers = Array.from(_matchingUsersMap.values());
+  const matchingUsers = deduplicateUsers(rawUsers);
+
 
   // Invalidate rendered weekly image cache for this group
   await scheduleService.invalidateImageCache(groupName).catch(() => {});
@@ -552,11 +565,8 @@ async function notifyGroupScheduleChanged(groupName, newHash) {
     return uNorm === normGroup || uRawNorm === normGroup || (rawNormGroup && (uNorm === rawNormGroup || uRawNorm === rawNormGroup));
   });
 
-  const _matchingUsersMap = new Map();
-  for (const u of rawUsers) {
-    _matchingUsersMap.set(String(u.telegram_id), u);
-  }
-  const matchingUsers = Array.from(_matchingUsersMap.values());
+  const matchingUsers = deduplicateUsers(rawUsers);
+
   if (matchingUsers.length === 0) return;
 
   let oldSchedule = null;
@@ -923,11 +933,8 @@ async function checkScheduleChanges(forceOrOptions = false) {
         ];
 
         // Deduplicate
-        const _uniqueMatchingMap = new Map();
-        for (const u of matchingUsers) {
-          _uniqueMatchingMap.set(String(u.telegram_id), u);
-        }
-        const uniqueMatching = Array.from(_uniqueMatchingMap.values());
+        const uniqueMatching = deduplicateUsers(matchingUsers);
+
 
         if (uniqueMatching.length === 0) {
           // Inactive/Unused group: Only purge stale cache metadata. DO NOT generate images or send alerts to save server RAM/CPU!
@@ -1009,11 +1016,8 @@ async function forceAlertGroup(groupName) {
     return uNorm === norm || uRawNorm === norm || uNorm === rawNorm || uRawNorm === rawNorm;
   });
 
-  const _uniqueUsersMap = new Map();
-  for (const u of matchingUsers) {
-    _uniqueUsersMap.set(String(u.telegram_id), u);
-  }
-  const uniqueUsers = Array.from(_uniqueUsersMap.values());
+  const uniqueUsers = deduplicateUsers(matchingUsers);
+
   if (uniqueUsers.length === 0) {
     return { success: false, error: 'Guruhda ro\'yxatdan o\'tgan talabalar topilmadi', groupName: canonical, usersCount: 0 };
   }
