@@ -1103,21 +1103,22 @@ async function deleteTimetableCache(groupInput, theme = null) {
 
   const keysToDelete = new Set([primaryNorm, rawNorm, rawClean].filter(Boolean));
 
+  const redisKeys = [];
   for (const n of keysToDelete) {
     if (theme) {
       const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
       fallbackTimetableCache.delete(`cache:timetable_cdn:${n}:${validTheme}`);
-      if (redis) await redis.del(`cache:timetable_cdn:${n}:${validTheme}`).catch(() => {});
+      redisKeys.push(`cache:timetable_cdn:${n}:${validTheme}`);
     } else {
       ['dark', 'light', 'vibrant'].forEach(t => {
         fallbackTimetableCache.delete(`cache:timetable_cdn:${n}:${t}`);
+        redisKeys.push(`cache:timetable_cdn:${n}:${t}`);
       });
-      if (redis) {
-        ['dark', 'light', 'vibrant'].forEach(t => {
-          redis.del(`cache:timetable_cdn:${n}:${t}`).catch(() => {});
-        });
-      }
     }
+  }
+
+  if (redis && redisKeys.length > 0) {
+    await redis.del(redisKeys).catch(() => {});
   }
 
   if (supabase) {
