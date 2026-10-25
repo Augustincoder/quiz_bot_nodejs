@@ -713,6 +713,22 @@ async function checkScheduleChanges(forceOrOptions = false) {
       return { checked: false, reason: 'empty_tables' };
     }
 
+    // Circuit Breaker active guard: Do not report 'ok_unchanged' or overwrite live baselines when live network failed
+    if (indexedDb.isFromCircuitBreakerFallback) {
+      lastCheckedAt = Date.now();
+      lastCheckStatus = 'warn_circuit_breaker_cache';
+      logger.warn('Schedule Watcher: EduPage network currently unreachable (Circuit Breaker active). Serving cached timetable without falsely overwriting baselines.');
+      isChecking = false;
+      return {
+        checked: false,
+        unchanged: true,
+        changedGroupsCount: 0,
+        changedGroups: [],
+        durationMs: Date.now() - t0,
+        reason: 'circuit_breaker_active',
+      };
+    }
+
     // Fast-path: When live EduPage timetable byte payload is 100% unchanged,
     // and baseline is established, and no force flag is set, skip re-evaluating 1,367 groups.
     if (isBaselineReady && indexedDb.isUnchanged && !forceDeepCheck && !forceCheckAllActive && !targetNorm) {

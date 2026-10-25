@@ -45,8 +45,17 @@ const httpsAgent = new https.Agent({
   keepAlive: true,
   maxSockets: 8,
   maxFreeSockets: 2,
-  keepAliveMsecs: 4000, // 4s: safely lower than EduPage Apache server's 10-second keep-alive timeout
+  keepAliveMsecs: 1000,
   timeout: 30000,
+});
+
+// Auto-destroy idle sockets after 6 seconds so we never reuse a dead socket closed by Apache (EduPage keep-alive timeout is 10s)
+httpsAgent.on('free', (socket) => {
+  const idleTimer = setTimeout(() => {
+    socket.destroy();
+  }, 6000);
+  socket.once('agentRemove', () => clearTimeout(idleTimer));
+  socket.once('close', () => clearTimeout(idleTimer));
 });
 
 const DEFAULT_HEADERS = {
@@ -408,7 +417,7 @@ async function resolveDefaultNum() {
   }
 
   // Fast return fallback if circuit breaker is open (prevents 15s timeout during outages)
-  if (!canAttemptEduPageNetwork()) {
+  if (isEduPageCircuitOpen()) {
     return cachedDefaultNum || FALLBACK_DEFAULT_NUM;
   }
 
@@ -442,13 +451,19 @@ async function resolveDefaultNum() {
  * Returns deterministic signature string to detect if any schedule version or table was modified.
  */
 async function getMetadataSignature() {
+  // If circuit breaker is actively OPEN, fast-fail without wasting 20s network latency
+  if (isEduPageCircuitOpen()) {
+    logger.debug('EduPage Circuit Breaker is active; skipping metadata probe signature');
+    return null;
+  }
+
   try {
     const currentYear = new Date().getFullYear();
     const payload = { __args: [null, currentYear], __gsh: '00000000' };
     const res = await fetchWithRetry(
-      () => httpPost('/timetable/server/ttviewer.js?__func=getTTViewerData', payload, 10000),
+      () => httpPost('/timetable/server/ttviewer.js?__func=getTTViewerData', payload, 20000),
       1,
-      500
+      1000
     );
 
     const defaultNum = res?.r?.regular?.default_num || '';
@@ -459,6 +474,9 @@ async function getMetadataSignature() {
     const changeEvent = res?.r?._changeEvents?.['dbi:global_settings'] || 0;
 
     if (!defaultNum && !ttNum) return null;
+
+    // Successful metadata probe confirms EduPage API is healthy and reachable
+    recordEduPageSuccess();
 
     // Update cached defaultNum if fresh
     if (defaultNum && String(defaultNum).trim()) {
@@ -855,12 +873,34 @@ let circuitBreakerState = 'CLOSED'; // 'CLOSED' | 'OPEN' | 'HALF_OPEN'
 let consecutiveFailures = 0;
 let nextCircuitRetryTime = 0;
 let isHalfOpenProbeInFlight = false;
+let probeInFlightStartedAt = 0;
 const FAILURE_THRESHOLD = 3;
 const CIRCUIT_RESET_TIMEOUT_MS = 45000; // 45 seconds
+const PROBE_TIMEOUT_MS = 30000; // 30 seconds max for half-open probe
+
+/**
+ * Read-only check: Returns true if circuit breaker is currently open (blocking network calls).
+ * Safe to call from helper functions without triggering state changes or locking probe.
+ */
+function isEduPageCircuitOpen() {
+  if (circuitBreakerState === 'CLOSED') return false;
+  const now = Date.now();
+  if (circuitBreakerState === 'OPEN') {
+    return now < nextCircuitRetryTime;
+  }
+  if (circuitBreakerState === 'HALF_OPEN') {
+    if (isHalfOpenProbeInFlight && (now - probeInFlightStartedAt < PROBE_TIMEOUT_MS)) {
+      return true;
+    }
+    return false;
+  }
+  return false;
+}
 
 function recordEduPageFailure(err) {
   consecutiveFailures++;
   isHalfOpenProbeInFlight = false;
+  probeInFlightStartedAt = 0;
   if (consecutiveFailures >= FAILURE_THRESHOLD || circuitBreakerState === 'HALF_OPEN') {
     circuitBreakerState = 'OPEN';
     nextCircuitRetryTime = Date.now() + CIRCUIT_RESET_TIMEOUT_MS;
@@ -876,23 +916,35 @@ function recordEduPageSuccess() {
   consecutiveFailures = 0;
   nextCircuitRetryTime = 0;
   isHalfOpenProbeInFlight = false;
+  probeInFlightStartedAt = 0;
 }
 
 function canAttemptEduPageNetwork() {
   if (circuitBreakerState === 'CLOSED') return true;
+
+  const now = Date.now();
   if (circuitBreakerState === 'OPEN') {
-    if (Date.now() >= nextCircuitRetryTime) {
+    if (now >= nextCircuitRetryTime) {
       circuitBreakerState = 'HALF_OPEN';
       isHalfOpenProbeInFlight = true;
+      probeInFlightStartedAt = now;
       logger.info('🔄 EduPage Circuit Breaker testing recovery (HALF_OPEN probe request)...');
       return true;
     }
     return false;
   }
+
   // When in HALF_OPEN, throttle concurrent requests to exactly 1 probe in flight
   if (circuitBreakerState === 'HALF_OPEN') {
+    // Auto-expire stranded / abandoned probe if > 30s
+    if (isHalfOpenProbeInFlight && (now - probeInFlightStartedAt >= PROBE_TIMEOUT_MS)) {
+      logger.warn('⚠️ EduPage Circuit Breaker HALF_OPEN probe expired or abandoned (>30s). Re-allowing probe.');
+      isHalfOpenProbeInFlight = false;
+    }
+
     if (!isHalfOpenProbeInFlight) {
       isHalfOpenProbeInFlight = true;
+      probeInFlightStartedAt = now;
       return true;
     }
     return false;
@@ -1071,7 +1123,7 @@ function getCachedIndexedDatabaseSync() {
 // Non-blocking background revalidation guard
 let isBackgroundRevalidating = false;
 function revalidateInBackground() {
-  if (isBackgroundRevalidating || !canAttemptEduPageNetwork()) return;
+  if (isBackgroundRevalidating || isEduPageCircuitOpen()) return;
   isBackgroundRevalidating = true;
   getOrFetchIndexedData(true)
     .catch(err => {
@@ -1090,7 +1142,7 @@ async function getOrFetchIndexedData(forceRefresh = false) {
 
   // Fast path 1: L1 In-Memory Cache Hit (Stale-While-Revalidate)
   if (!forceRefresh && l1IndexedDatabase) {
-    if (now - l1CacheTime >= L1_CACHE_TTL && canAttemptEduPageNetwork()) {
+    if (now - l1CacheTime >= L1_CACHE_TTL && !isEduPageCircuitOpen()) {
       revalidateInBackground();
     }
     return l1IndexedDatabase;
@@ -1203,6 +1255,7 @@ async function getOrFetchIndexedData(forceRefresh = false) {
       } else {
         logger.warn('⚡ EduPage Circuit Breaker is OPEN. Serving from L1 memory or L3 disk cache without network latency.');
         if (l1IndexedDatabase) {
+          l1IndexedDatabase.isFromCircuitBreakerFallback = true;
           return l1IndexedDatabase;
         }
         const diskRaw = await readDiskCacheSafe();
@@ -1210,6 +1263,7 @@ async function getOrFetchIndexedData(forceRefresh = false) {
           try {
             l1IndexedDatabase = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || defaultNum || FALLBACK_DEFAULT_NUM);
             l1CacheTime = Date.now() - L1_CACHE_TTL + 30000;
+            l1IndexedDatabase.isFromCircuitBreakerFallback = true;
             return l1IndexedDatabase;
           } catch (diskErr) {
             logger.error('Failed to read L3 Disk Cache during circuit break', { error: diskErr.message });
@@ -1226,6 +1280,7 @@ async function getOrFetchIndexedData(forceRefresh = false) {
       lastRawTimetableHash = raw._rawHash || null;
       l1IndexedDatabase = buildIndexedDatabase(raw, defaultNum);
       l1IndexedDatabase.isUnchanged = false;
+      l1IndexedDatabase.isFromCircuitBreakerFallback = false;
       l1CacheTime = Date.now();
 
       // Async atomic write to L3 Disk Cache (guarantees zero corruption across reboots)
@@ -1554,7 +1609,7 @@ async function warmUpCache() {
 
     // 2. Fetch fresh from network / Redis in background only if L1 is expired or missing
     if (!l1IndexedDatabase || (Date.now() - l1CacheTime >= L1_CACHE_TTL)) {
-      if (canAttemptEduPageNetwork()) {
+      if (!isEduPageCircuitOpen()) {
         logger.info('Pre-warming EduPage schedule cache in background...');
         await getOrFetchIndexedData(false);
         logger.info('EduPage schedule cache successfully pre-warmed');
@@ -1998,6 +2053,7 @@ module.exports = {
   getLastRawTimetableHash: () => lastRawTimetableHash,
   resetRawTimetableHash: () => { lastRawTimetableHash = null; },
   canAttemptEduPageNetwork,
+  isEduPageCircuitOpen,
   recordEduPageFailure,
   recordEduPageSuccess,
   _getCircuitBreakerState: () => ({
