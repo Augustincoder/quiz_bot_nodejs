@@ -929,6 +929,8 @@ function buildIndexedDatabase(raw, defaultNum) {
     _cardCount: cards.length,
     _classCount: rawClasses.length,
     _lessonCount: Object.keys(lessonMap).length,
+    isUnchanged: false,
+    isFromCircuitBreakerFallback: false,
   };
 }
 
