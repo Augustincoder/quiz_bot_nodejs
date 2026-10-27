@@ -2,6 +2,12 @@
 process.env.TZ = process.env.TZ || "Asia/Tashkent";
 require("dotenv").config();
 
+// Enforce IPv4-first DNS order across all outbound connections (Telegram, Supabase, EduPage)
+const dns = require("dns");
+if (typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
+
 
 // Enforce libvips/sharp limits to stay safely within Render 512MB RAM
 const sharp = require("sharp");

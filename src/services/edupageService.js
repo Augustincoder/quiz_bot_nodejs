@@ -2,7 +2,15 @@
 
 const fs = require('fs');
 const path = require('path');
+const dns = require('dns');
+const http = require('http');
 const https = require('https');
+const url = require('url');
+
+// Enforce IPv4-first DNS resolution order across Node.js to eliminate IPv6 blackhole timeouts in container environments (e.g. Northflank, Docker, Kubernetes)
+if (typeof dns.setDefaultResultOrder === 'function') {
+  dns.setDefaultResultOrder('ipv4first');
+}
 const zlib = require('zlib');
 const util = require('util');
 const crypto = require('crypto');
@@ -47,7 +55,60 @@ const httpsAgent = new https.Agent({
   maxFreeSockets: 2,
   keepAliveMsecs: 1000,
   timeout: 30000,
+  family: 4, // Strict IPv4 socket creation to bypass container IPv6 blackhole drops
 });
+
+let customProxyAgent = null;
+/**
+ * Resolves active HTTPS agent (custom proxy tunnel or direct keepAlive IPv4 agent)
+ */
+function getActiveEduPageAgent() {
+  const proxyUrl = process.env.EDUPAGE_PROXY_URL || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+  if (!proxyUrl) return httpsAgent;
+  if (customProxyAgent) return customProxyAgent;
+
+  try {
+    const parsedProxy = new url.URL(proxyUrl);
+    customProxyAgent = new https.Agent({
+      keepAlive: true,
+      family: 4,
+      createConnection: (options, callback) => {
+        const connectReq = http.request({
+          host: parsedProxy.hostname,
+          port: parsedProxy.port || 8080,
+          method: 'CONNECT',
+          path: `${options.hostname || 'tsue.edupage.org'}:${options.port || 443}`,
+          headers: {
+            Host: `${options.hostname || 'tsue.edupage.org'}:${options.port || 443}`,
+            ...(parsedProxy.username ? {
+              'Proxy-Authorization': `Basic ${Buffer.from(`${decodeURIComponent(parsedProxy.username)}:${decodeURIComponent(parsedProxy.password || '')}`).toString('base64')}`
+            } : {})
+          }
+        });
+        connectReq.on('connect', (res, socket) => {
+          if (res.statusCode === 200) {
+            const tlsSocket = https.connect({
+              socket,
+              servername: options.hostname || 'tsue.edupage.org',
+            }, () => callback(null, tlsSocket));
+            tlsSocket.on('error', (err) => callback(err));
+          } else {
+            callback(new Error(`Proxy CONNECT rejected with status ${res.statusCode}`));
+          }
+        });
+        connectReq.on('error', (err) => callback(err));
+        connectReq.setTimeout(15000, () => {
+          connectReq.destroy(new Error('Proxy CONNECT timed out after 15s'));
+        });
+        connectReq.end();
+      }
+    });
+    return customProxyAgent;
+  } catch (err) {
+    logger.error('Failed to configure EduPage proxy agent, falling back to direct connection', { error: err.message });
+    return httpsAgent;
+  }
+}
 
 // Auto-destroy idle sockets after 6 seconds so we never reuse a dead socket closed by Apache (EduPage keep-alive timeout is 10s)
 httpsAgent.on('free', (socket) => {
@@ -298,10 +359,13 @@ function httpPost(path, payload, timeoutMs = 45000) {
     const postData = typeof payload === 'string' ? payload : JSON.stringify(payload);
     let isSettled = false;
 
+    const agent = getActiveEduPageAgent();
+
     const req = https.request({
       hostname: 'tsue.edupage.org',
       path,
-      agent: httpsAgent,
+      agent,
+      family: 4,
       method: 'POST',
       headers: {
         ...DEFAULT_HEADERS,
@@ -416,8 +480,8 @@ async function resolveDefaultNum() {
     return cachedDefaultNum;
   }
 
-  // Fast return fallback if circuit breaker is open (prevents 15s timeout during outages)
-  if (isEduPageCircuitOpen()) {
+  // Fast return fallback if circuit breaker is not CLOSED (prevents cascading 15s timeout during outages)
+  if (circuitBreakerState !== 'CLOSED' || isEduPageCircuitOpen()) {
     return cachedDefaultNum || FALLBACK_DEFAULT_NUM;
   }
 
@@ -451,8 +515,8 @@ async function resolveDefaultNum() {
  * Returns deterministic signature string to detect if any schedule version or table was modified.
  */
 async function getMetadataSignature() {
-  // If circuit breaker is actively OPEN, fast-fail without wasting 20s network latency
-  if (isEduPageCircuitOpen()) {
+  // If circuit breaker is actively OPEN or HALF_OPEN, fast-fail without wasting 20s network latency
+  if (circuitBreakerState !== 'CLOSED' || isEduPageCircuitOpen()) {
     logger.debug('EduPage Circuit Breaker is active; skipping metadata probe signature');
     return null;
   }
@@ -1234,6 +1298,7 @@ async function getOrFetchIndexedData(forceRefresh = false) {
           if (l1IndexedDatabase) {
             logger.warn('EduPage network request failed; serving existing memory cache', { error: networkErr.message });
             l1CacheTime = Date.now() - L1_CACHE_TTL + 60000;
+            l1IndexedDatabase.isFromCircuitBreakerFallback = true;
             return l1IndexedDatabase;
           }
 
@@ -1244,6 +1309,7 @@ async function getOrFetchIndexedData(forceRefresh = false) {
               logger.warn('EduPage network request failed; restored from L3 Disk Cache', { error: networkErr.message });
               l1IndexedDatabase = buildIndexedDatabase(diskRaw, diskRaw._defaultNum || defaultNum || FALLBACK_DEFAULT_NUM);
               l1CacheTime = Date.now() - L1_CACHE_TTL + 60000;
+              l1IndexedDatabase.isFromCircuitBreakerFallback = true;
               return l1IndexedDatabase;
             } catch (diskErr) {
               logger.error('Failed to read L3 Disk Cache', { error: diskErr.message });
