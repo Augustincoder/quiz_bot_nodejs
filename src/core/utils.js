@@ -156,6 +156,7 @@ const States = {
   ADM_CREATE_TEST_ID:      'adm_create:test_id',
   ADM_CREATE_FORMAT:       'adm_create:format',
   ADM_CREATE_CONTENT:      'adm_create:content',
+  ADM_WAITING_TIMETABLE_UPLOAD: 'adm:waiting_timetable_upload',
   CREATE_AI_TEXT:          'create:ai_text',
   CREATE_AI_QUESTIONS:     'create:ai_questions',
   AI_ESSAY_ANALYSIS:       'ai:essay_analysis',

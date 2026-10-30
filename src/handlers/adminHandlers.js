@@ -255,6 +255,10 @@ function buildDashboardKb() {
       Markup.button.callback('📈 Batafsil stat.',          'admin_stats'),
     ],
     [
+      Markup.button.callback('🌐 EduPage Holati',          'admin_edupage_status'),
+      Markup.button.callback('📥 Jadval Yuklash',          'admin_upload_timetable_prompt'),
+    ],
+    [
       Markup.button.callback('🔄 Yangilash',               'admin_refresh_dashboard'),
       Markup.button.callback('🏠 Asosiy Menyu',            'back_to_main'),
     ],
@@ -1906,11 +1910,183 @@ async function onContactMessage(ctx) {
 // 🔗 REGISTRATION
 // ============================================
 
+
+// ============================================
+// 🌐 EDUPAGE RESILIENCE & EMERGENCY MANAGEMENT
+// ============================================
+
+async function cmdEduPageStatus(ctx) {
+  try {
+    const status = edupageService.getEduPageDiagnosticStatus();
+    const stateEmoji = status.circuitBreakerState === 'CLOSED' ? '🟢' : (status.circuitBreakerState === 'HALF_OPEN' ? '🟡' : '🔴');
+    const transportEmoji = status.activeTransport === 'direct' ? '🌐 Direct (To\'g\'ridan-to\'g\'ri)' : (status.activeTransport === 'proxy' ? '🛡️ Proxy (Proksi orqali)' : '🪞 Mirror (Cloudflare Worker)');
+
+    const msg =
+      `📊 <b>EduPage Tizim Holati & Diagnostika</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `• <b>Circuit Breaker:</b> ${stateEmoji} <code>${status.circuitBreakerState}</code>\n` +
+      `• <b>Ketma-ket xatoliklar:</b> <code>${status.consecutiveFailures}</code>\n` +
+      (status.nextCircuitRetryInSec > 0 ? `• <b>Keyingi sinovgacha:</b> <code>${status.nextCircuitRetryInSec}s</code>\n` : '') +
+      `• <b>Faol kanal:</b> ${transportEmoji}\n` +
+      `• <b>Proksi sozlangan:</b> ${status.proxyConfigured ? '✅ Ha' : '❌ Yo\'q'}\n` +
+      `• <b>Maxsus URL / Mirror:</b> ${status.customBaseUrlConfigured ? '✅ Ha' : '❌ Yo\'q'}\n` +
+      `• <b>Sessiya Cookie:</b> ${status.sessionCookieActive ? '✅ Faol' : '⏳ Yangilanmoqda'}\n` +
+      `• <b>Joriy versiya (default_num):</b> <code>${status.cachedDefaultNum}</code>\n` +
+      `• <b>Xotiradagi guruhlar (L1 RAM):</b> <code>${status.l1ClassesCount} ta</code>\n` +
+      `• <b>Kesh holati:</b> ${status.l1IsFallback ? '⚠️ Offline Kesh (Fallback)' : '✅ Jonli Tarmoq (Live)'}\n` +
+      (status.lastCacheTimeAgoSec !== null ? `• <b>So\'nggi yangilanish:</b> <code>${status.lastCacheTimeAgoSec}s avval</code>\n` : '') +
+      `\n<i>Sinash: /edupage_test\nJadval yuklash: /upload_timetable\nSinxronlash: /sync_timetables</i>`;
+
+    await ctx.reply(msg, { parse_mode: 'HTML' });
+  } catch (err) {
+    logger.error('cmdEduPageStatus error:', err);
+    await ctx.reply(`❌ Xatolik: ${err.message}`);
+  }
+}
+
+async function cmdEduPageTest(ctx) {
+  const statusMsg = await ctx.reply('⏳ <b>EduPage barcha ulanish kanallari (Direct, Proxy, Mirror) tekshirilmoqda...</b>', { parse_mode: 'HTML' });
+  try {
+    const results = await edupageService.testTransports();
+    let text = `🧪 <b>EduPage Tarmoq Sinovi Natijalari:</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    if (results.direct) {
+      const d = results.direct;
+      text += `• <b>Direct (To\'g\'ridan-to\'g\'ri):</b> ${d.ok ? `🟢 Muvaffaqiyatli (${d.latencyMs}ms, defNum: ${d.defaultNum})` : `🔴 Xato (${d.latencyMs}ms): <code>${d.error}</code>`}\n`;
+    }
+    if (results.proxy) {
+      const p = results.proxy;
+      text += `• <b>Proxy (Proksi orqali):</b> ${p.ok ? `🟢 Muvaffaqiyatli (${p.latencyMs}ms, defNum: ${p.defaultNum})` : `🔴 Xato (${p.latencyMs}ms): <code>${p.error}</code>`}\n`;
+    } else {
+      text += `• <b>Proxy:</b> ⚪ Sozlanmagan (EDUPAGE_PROXY_URL yo\'q)\n`;
+    }
+    if (results.mirror) {
+      const m = results.mirror;
+      text += `• <b>Mirror (Cloudflare Worker):</b> ${m.ok ? `🟢 Muvaffaqiyatli (${m.latencyMs}ms, defNum: ${m.defaultNum})` : `🔴 Xato (${m.latencyMs}ms): <code>${m.error}</code>`}\n`;
+    } else {
+      text += `• <b>Mirror:</b> ⚪ Sozlanmagan (EDUPAGE_BASE_URL yo\'q)\n`;
+    }
+
+    await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, undefined, text, { parse_mode: 'HTML' });
+  } catch (err) {
+    logger.error('cmdEduPageTest error:', err);
+    await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, undefined, `❌ Sinovda xatolik: ${err.message}`);
+  }
+}
+
+async function cmdUploadTimetable(ctx) {
+  const doc = ctx.message?.document || ctx.message?.reply_to_message?.document;
+  if (doc) {
+    return handleTimetableDocumentIngest(ctx, doc);
+  }
+
+  // Set state to await document or text
+  setState(ctx, States.ADM_WAITING_TIMETABLE_UPLOAD);
+
+  const helpText =
+    `📥 <b>Dars jadvalini to\'g\'ridan-to\'g\'ri yuklash (Favqulodda Yangilash)</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━━\n\n` +
+    `Agar universitet serveri EduPage tarmog\'ini bloklagan bo\'lsa yoki bot <i>timed out</i> berayotgan bo\'lsa:\n\n` +
+    `1. Kompyuter yoki brauzerdan olingan <code>timetable_cache.json</code> faylini ushbu chatga <b>fayl (Document)</b> sifatida yuboring.\n` +
+    `2. Yoki JSON matnini to\'g\'ridan-to\'g\'ri yuboring.\n\n` +
+    `Tizim darhol xotirani (L1 RAM) va diskni (L3) yangilaydi, Circuit Breaker holatini 🟢 CLOSED ga qaytaradi va barcha guruhlardagi o\'zgarishlarni tekshirib talabalarga xabar beradi.\n\n` +
+    `<i>Bekor qilish uchun: /cancel</i>`;
+
+  await ctx.reply(helpText, {
+    parse_mode: 'HTML',
+    ...Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'admin_cancel')]])
+  });
+}
+
+async function handleTimetableDocumentIngest(ctx, doc) {
+  const statusMsg = await ctx.reply('⏳ <b>Jadval fayli yuklab olinmoqda va bazaga kiritilmoqda...</b>', { parse_mode: 'HTML' });
+  try {
+    const fileLink = await ctx.telegram.getFileLink(doc.file_id);
+    const httpsLib = fileLink.href.startsWith('https') ? https : http;
+
+    const rawJson = await new Promise((resolve, reject) => {
+      httpsLib.get(fileLink.href, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => resolve(data));
+      }).on('error', reject);
+    });
+
+    const parsed = JSON.parse(rawJson);
+    const result = await edupageService.manuallyIngestTimetable(parsed, `telegram_admin:${ctx.from.id}`);
+
+    clearState(ctx);
+
+    // Trigger schedule watcher in background
+    const scheduleWatcher = require('../services/scheduleWatcherService');
+    scheduleWatcher.checkScheduleChanges(true).catch(e => {
+      logger.warn('Post-ingest scheduleWatcher check error:', { error: e.message });
+    });
+
+    const replyText =
+      `✅ <b>Dars jadvali muvaffaqiyatli qabul qilindi va yangilandi!</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `• <b>Guruhlar soni:</b> <code>${result.classesCount} ta</code>\n` +
+      `• <b>Darslar soni:</b> <code>${result.lessonsCount} ta</code>\n` +
+      `• <b>Versiya (default_num):</b> <code>${result.defaultNum}</code>\n` +
+      `• <b>Circuit Breaker:</b> 🟢 RESET TO CLOSED\n\n` +
+      `<i>Barcha guruhlar dars jadvali tekshirilmoqda va o\'zgarishlar fon rejimida talabalarga yuboriladi.</i>`;
+
+    await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, undefined, replyText, { parse_mode: 'HTML' });
+  } catch (err) {
+    logger.error('handleTimetableDocumentIngest error:', err);
+    await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, undefined, `❌ <b>Jadvalni yuklashda xatolik:</b>\n<code>${err.message}</code>`, { parse_mode: 'HTML' });
+  }
+}
+
+async function onTimetableUploadMessage(ctx) {
+  if (ctx.message?.text === '/cancel' || ctx.message?.text === '❌ Bekor qilish') {
+    clearState(ctx);
+    return ctx.reply('❌ <b>Jadval yuklash bekor qilindi.</b>', { parse_mode: 'HTML' });
+  }
+
+  const doc = ctx.message?.document;
+  if (doc) {
+    return handleTimetableDocumentIngest(ctx, doc);
+  }
+
+  const text = ctx.message?.text;
+  if (text && text.trim().startsWith('{') && text.trim().endsWith('}')) {
+    const statusMsg = await ctx.reply('⏳ <b>JSON matni tekshirilmoqda...</b>', { parse_mode: 'HTML' });
+    try {
+      const parsed = JSON.parse(text);
+      const result = await edupageService.manuallyIngestTimetable(parsed, `telegram_admin_text:${ctx.from.id}`);
+      clearState(ctx);
+
+      const scheduleWatcher = require('../services/scheduleWatcherService');
+      scheduleWatcher.checkScheduleChanges(true).catch(() => {});
+
+      return ctx.telegram.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        undefined,
+        `✅ <b>Jadval matndan muvaffaqiyatli yangilandi!</b>\n\n• Guruhlar: <code>${result.classesCount} ta</code>\n• Versiya: <code>${result.defaultNum}</code>\n• Circuit Breaker: 🟢 CLOSED`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (e) {
+      return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, undefined, `❌ JSON xatosi: ${e.message}`, { parse_mode: 'HTML' });
+    }
+  }
+
+  return ctx.reply('⚠️ Iltimos, <code>timetable_cache.json</code> faylini yuboring yoki /cancel bosing.', { parse_mode: 'HTML' });
+}
+
 function register(bot) {
   // Commands
   bot.command('admin', cmdAdmin);
   bot.command(['refresh_all_timetable', 'refresh_all_timetables', 'sync_timetables'], adminGuard(cmdRefreshAllTimetable));
   bot.command(['stop_refresh_timetable', 'stop_sync_timetables'], adminGuard(cmdStopRefreshTimetable));
+  bot.command(['edupage_status', 'edupage'], adminGuard(cmdEduPageStatus));
+  bot.command(['edupage_test', 'test_edupage'], adminGuard(cmdEduPageTest));
+  bot.command(['upload_timetable', 'import_timetable'], adminGuard(cmdUploadTimetable));
+  bot.action('admin_edupage_status', adminGuard(cmdEduPageStatus));
+  bot.action('admin_upload_timetable_prompt', adminGuard(cmdUploadTimetable));
 
   // Dashboard
   bot.action('admin_panel_main',        adminGuard(cbAdminPanelMain));
@@ -1957,6 +2133,10 @@ module.exports = {
   onAdmTestId,
   onAdmTextContent,
   onAdmDocxContent,
+  onTimetableUploadMessage,
+  cmdEduPageStatus,
+  cmdEduPageTest,
+  cmdUploadTimetable,
   onContactMessage,
   onAdminSearchInput,
 };

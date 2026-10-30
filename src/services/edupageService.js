@@ -58,58 +58,6 @@ const httpsAgent = new https.Agent({
   family: 4, // Strict IPv4 socket creation to bypass container IPv6 blackhole drops
 });
 
-let customProxyAgent = null;
-/**
- * Resolves active HTTPS agent (custom proxy tunnel or direct keepAlive IPv4 agent)
- */
-function getActiveEduPageAgent() {
-  const proxyUrl = process.env.EDUPAGE_PROXY_URL || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-  if (!proxyUrl) return httpsAgent;
-  if (customProxyAgent) return customProxyAgent;
-
-  try {
-    const parsedProxy = new url.URL(proxyUrl);
-    customProxyAgent = new https.Agent({
-      keepAlive: true,
-      family: 4,
-      createConnection: (options, callback) => {
-        const connectReq = http.request({
-          host: parsedProxy.hostname,
-          port: parsedProxy.port || 8080,
-          method: 'CONNECT',
-          path: `${options.hostname || 'tsue.edupage.org'}:${options.port || 443}`,
-          headers: {
-            Host: `${options.hostname || 'tsue.edupage.org'}:${options.port || 443}`,
-            ...(parsedProxy.username ? {
-              'Proxy-Authorization': `Basic ${Buffer.from(`${decodeURIComponent(parsedProxy.username)}:${decodeURIComponent(parsedProxy.password || '')}`).toString('base64')}`
-            } : {})
-          }
-        });
-        connectReq.on('connect', (res, socket) => {
-          if (res.statusCode === 200) {
-            const tlsSocket = https.connect({
-              socket,
-              servername: options.hostname || 'tsue.edupage.org',
-            }, () => callback(null, tlsSocket));
-            tlsSocket.on('error', (err) => callback(err));
-          } else {
-            callback(new Error(`Proxy CONNECT rejected with status ${res.statusCode}`));
-          }
-        });
-        connectReq.on('error', (err) => callback(err));
-        connectReq.setTimeout(15000, () => {
-          connectReq.destroy(new Error('Proxy CONNECT timed out after 15s'));
-        });
-        connectReq.end();
-      }
-    });
-    return customProxyAgent;
-  } catch (err) {
-    logger.error('Failed to configure EduPage proxy agent, falling back to direct connection', { error: err.message });
-    return httpsAgent;
-  }
-}
-
 // Auto-destroy idle sockets after 6 seconds so we never reuse a dead socket closed by Apache (EduPage keep-alive timeout is 10s)
 httpsAgent.on('free', (socket) => {
   const idleTimer = setTimeout(() => {
@@ -119,15 +67,231 @@ httpsAgent.on('free', (socket) => {
   socket.once('close', () => clearTimeout(idleTimer));
 });
 
+// --- Modern Browser Headers & Anti-Bot Fingerprint (Chrome 131+) ---
+const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const BROWSER_SEC_CH_UA = '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"';
+
 const DEFAULT_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'User-Agent': BROWSER_USER_AGENT,
   'Accept': 'application/json, text/javascript, */*; q=0.01',
   'Accept-Encoding': 'gzip, deflate',
   'Accept-Language': 'uz,ru;q=0.9,en-US;q=0.8,en;q=0.7',
   'Origin': 'https://tsue.edupage.org',
   'Referer': 'https://tsue.edupage.org/timetable/',
+  'Sec-Ch-Ua': BROWSER_SEC_CH_UA,
+  'Sec-Ch-Ua-Mobile': '?0',
+  'Sec-Ch-Ua-Platform': '"Windows"',
+  'Sec-Fetch-Dest': 'empty',
+  'Sec-Fetch-Mode': 'cors',
+  'Sec-Fetch-Site': 'same-origin',
+  'X-Requested-With': 'XMLHttpRequest',
   'Connection': 'keep-alive',
 };
+
+// --- Multi-Transport & Dynamic Proxy Management ---
+const customProxyAgents = new Map();
+let activeTransportName = 'direct'; // 'direct' | 'proxy' | 'mirror'
+
+function getConfiguredProxies() {
+  const raw = process.env.EDUPAGE_PROXIES || process.env.EDUPAGE_PROXY_URL || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || '';
+  if (!raw.trim()) return [];
+  return raw.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function resolveBaseUrl(endpointPath = '') {
+  const customBase = process.env.EDUPAGE_BASE_URL || process.env.EDUPAGE_MIRROR_URL;
+  if (customBase && customBase.trim()) {
+    const trimmed = customBase.trim().replace(/\/+$/, '');
+    return `${trimmed}${endpointPath.startsWith('/') ? endpointPath : '/' + endpointPath}`;
+  }
+  return `https://tsue.edupage.org${endpointPath.startsWith('/') ? endpointPath : '/' + endpointPath}`;
+}
+
+function createProxyAgent(proxyUrlString, targetHostname = 'tsue.edupage.org') {
+  if (customProxyAgents.has(proxyUrlString)) {
+    return customProxyAgents.get(proxyUrlString);
+  }
+  try {
+    const parsed = new url.URL(proxyUrlString);
+    const isProxyHttps = parsed.protocol === 'https:';
+    const proxyTransport = isProxyHttps ? https : http;
+    const proxyPort = parseInt(parsed.port, 10) || (isProxyHttps ? 443 : 8080);
+
+    const agent = new https.Agent({
+      keepAlive: false,
+      family: 4,
+      createConnection: (options, callback) => {
+        const connectReq = proxyTransport.request({
+          host: parsed.hostname,
+          port: proxyPort,
+          method: 'CONNECT',
+          path: `${options.hostname || targetHostname}:${options.port || 443}`,
+          headers: {
+            Host: `${options.hostname || targetHostname}:${options.port || 443}`,
+            'User-Agent': BROWSER_USER_AGENT,
+            ...(parsed.username ? {
+              'Proxy-Authorization': `Basic ${Buffer.from(`${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password || '')}`).toString('base64')}`
+            } : {})
+          }
+        });
+
+        connectReq.on('connect', (res, socket) => {
+          if (res.statusCode === 200) {
+            const tlsSocket = https.connect({
+              socket,
+              servername: options.hostname || targetHostname,
+            }, () => callback(null, tlsSocket));
+            tlsSocket.on('error', (err) => callback(err));
+          } else {
+            callback(new Error(`Proxy CONNECT to ${parsed.hostname} rejected with status ${res.statusCode}`));
+          }
+        });
+
+        connectReq.on('error', (err) => callback(err));
+        connectReq.setTimeout(10000, () => {
+          connectReq.destroy(new Error(`Proxy CONNECT to ${parsed.hostname} timed out after 10s`));
+        });
+        connectReq.end();
+      }
+    });
+
+    customProxyAgents.set(proxyUrlString, agent);
+    return agent;
+  } catch (err) {
+    logger.error('Failed to configure proxy agent', { proxy: proxyUrlString, error: err.message });
+    return null;
+  }
+}
+
+/**
+ * Resolves active HTTPS agent (custom proxy tunnel, mirror agent, or direct keepAlive IPv4 agent)
+ */
+function getActiveEduPageAgent(targetHostname = 'tsue.edupage.org', preferredTransport = null) {
+  const customBase = process.env.EDUPAGE_BASE_URL || process.env.EDUPAGE_MIRROR_URL;
+  if (customBase && !preferredTransport) {
+    activeTransportName = 'mirror';
+    return httpsAgent;
+  }
+
+  const transport = preferredTransport || activeTransportName;
+  if (transport === 'proxy') {
+    const proxies = getConfiguredProxies();
+    if (proxies.length > 0) {
+      const agent = createProxyAgent(proxies[0], targetHostname);
+      if (agent) return agent;
+    }
+  }
+
+  activeTransportName = customBase ? 'mirror' : 'direct';
+  return httpsAgent;
+}
+
+// --- EduPage Session & Cookie Manager (WAF & Anti-Scraping Protection) ---
+class EduPageSessionManager {
+  constructor() {
+    this.cookie = null;
+    this.cookieExpiresAt = 0;
+    this.refreshPromise = null;
+  }
+
+  async getSessionCookie(force = false) {
+    const now = Date.now();
+    if (!force && this.cookie && now < this.cookieExpiresAt) {
+      return this.cookie;
+    }
+    if (this.refreshPromise) return this.refreshPromise;
+
+    this.refreshPromise = this._fetchSessionCookie()
+      .catch((err) => {
+        logger.debug('Session cookie fetch deferred, using cached or empty session', { error: err.message });
+        return this.cookie || '';
+      })
+      .finally(() => {
+        this.refreshPromise = null;
+      });
+
+    return this.refreshPromise;
+  }
+
+  async _fetchSessionCookie() {
+    return new Promise((resolve) => {
+      const baseUrlStr = resolveBaseUrl('/timetable/');
+      let parsed;
+      try {
+        parsed = new url.URL(baseUrlStr);
+      } catch {
+        parsed = new url.URL('https://tsue.edupage.org/timetable/');
+      }
+      const isHttps = parsed.protocol === 'https:';
+      const transport = isHttps ? https : http;
+      const agent = getActiveEduPageAgent(parsed.hostname);
+
+      const req = transport.request({
+        protocol: parsed.protocol,
+        hostname: parsed.hostname,
+        port: parsed.port || (isHttps ? 443 : 80),
+        path: parsed.pathname + (parsed.search || ''),
+        method: 'GET',
+        agent,
+        family: 4,
+        headers: {
+          'User-Agent': BROWSER_USER_AGENT,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'uz,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Sec-Ch-Ua': BROWSER_SEC_CH_UA,
+          'Sec-Ch-Ua-Mobile': '?0',
+          'Sec-Ch-Ua-Platform': '"Windows"',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'none',
+          'Sec-Fetch-User': '?1',
+          'Upgrade-Insecure-Requests': '1',
+          'Connection': 'close',
+        },
+      }, (res) => {
+        const setCookies = res.headers['set-cookie'] || [];
+        const cookies = Array.isArray(setCookies)
+          ? setCookies.map(c => c.split(';')[0].trim()).filter(Boolean).join('; ')
+          : '';
+        res.resume();
+        if (cookies) {
+          this.cookie = cookies;
+          this.cookieExpiresAt = Date.now() + (30 * 60 * 1000); // 30 mins TTL
+          logger.debug('Acquired fresh EduPage session cookie', { length: cookies.length });
+          resolve(cookies);
+        } else {
+          resolve(this.cookie || '');
+        }
+      });
+
+      const timer = setTimeout(() => {
+        req.destroy(new Error('Session cookie GET timed out'));
+        resolve(this.cookie || '');
+      }, 5000);
+
+      req.on('error', () => {
+        clearTimeout(timer);
+        resolve(this.cookie || '');
+      });
+
+      req.end();
+    });
+  }
+
+  setCookie(cookieStr) {
+    if (typeof cookieStr === 'string' && cookieStr.trim()) {
+      this.cookie = cookieStr.trim();
+      this.cookieExpiresAt = Date.now() + (30 * 60 * 1000);
+    }
+  }
+
+  clear() {
+    this.cookie = null;
+    this.cookieExpiresAt = 0;
+  }
+}
+
+const sessionManager = new EduPageSessionManager();
 
 // Internal cache state
 let cachedDefaultNum = FALLBACK_DEFAULT_NUM;
@@ -352,103 +516,166 @@ function escapeHtml(str) {
 }
 
 /**
- * Safe HTTPS POST request with timeout and keep-alive
+ * Safe HTTPS POST request with session cookies, timeout, multi-transport failover, and keep-alive
  */
-function httpPost(path, payload, timeoutMs = 45000) {
-  return new Promise((resolve, reject) => {
-    const postData = typeof payload === 'string' ? payload : JSON.stringify(payload);
-    let isSettled = false;
+async function httpPost(path, payload, timeoutMs = 20000, options = {}) {
+  const postData = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  const cookie = await sessionManager.getSessionCookie();
 
-    const agent = getActiveEduPageAgent();
+  const targetUrlStr = resolveBaseUrl(path);
+  let parsedTarget;
+  try {
+    parsedTarget = new url.URL(targetUrlStr);
+  } catch {
+    parsedTarget = new url.URL(`https://tsue.edupage.org${path}`);
+  }
 
-    const req = https.request({
-      hostname: 'tsue.edupage.org',
-      path,
-      agent,
-      family: 4,
-      method: 'POST',
-      headers: {
-        ...DEFAULT_HEADERS,
-        'Content-Type': 'application/json; charset=UTF-8',
-        'Content-Length': Buffer.byteLength(postData),
-      },
-    }, (res) => {
-      // Guard: Non-2xx HTTP status codes (e.g. 502 Bad Gateway, 503 Maintenance, 403 Cloudflare)
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        if (!isSettled) {
+  const isHttps = parsedTarget.protocol === 'https:';
+  const transport = isHttps ? https : http;
+
+  const requestOptions = {
+    protocol: parsedTarget.protocol,
+    hostname: parsedTarget.hostname,
+    port: parsedTarget.port || (isHttps ? 443 : 80),
+    path: parsedTarget.pathname + (parsedTarget.search || ''),
+    agent: getActiveEduPageAgent(parsedTarget.hostname),
+    family: 4,
+    method: 'POST',
+    headers: {
+      ...DEFAULT_HEADERS,
+      'Host': parsedTarget.hostname,
+      'Content-Type': 'application/json; charset=UTF-8',
+      'Content-Length': Buffer.byteLength(postData),
+      ...(cookie ? { 'Cookie': cookie } : {}),
+    },
+  };
+
+  const doAttempt = (reqOpts, tMs) => {
+    return new Promise((resolve, reject) => {
+      let isSettled = false;
+
+      const req = transport.request(reqOpts, (res) => {
+        // Capture Set-Cookie if returned by EduPage
+        const setCookies = res.headers['set-cookie'];
+        if (setCookies) {
+          const cookieStr = Array.isArray(setCookies)
+            ? setCookies.map(c => c.split(';')[0].trim()).filter(Boolean).join('; ')
+            : String(setCookies).split(';')[0].trim();
+          if (cookieStr) sessionManager.setCookie(cookieStr);
+        }
+
+        // Guard: Non-2xx HTTP status codes (e.g. 502 Bad Gateway, 503 Maintenance, 403 Cloudflare)
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          if (!isSettled) {
+            isSettled = true;
+            clearTimeout(timer);
+            res.resume();
+            reject(new Error(`EduPage HTTP error ${res.statusCode}: ${res.statusMessage || 'Unknown'}`));
+          }
+          return;
+        }
+
+        const chunks = [];
+        res.on('data', chunk => { chunks.push(chunk); });
+        res.on('error', (streamErr) => {
+          if (isSettled) return;
           isSettled = true;
           clearTimeout(timer);
-          res.resume(); // Drain stream to release TCP socket back to agent pool
-          reject(new Error(`EduPage HTTP error ${res.statusCode}: ${res.statusMessage || 'Unknown'}`));
-        }
-        return;
-      }
-
-      const chunks = [];
-      res.on('data', chunk => { chunks.push(chunk); });
-      res.on('error', (streamErr) => {
-        if (isSettled) return;
-        isSettled = true;
-        clearTimeout(timer);
-        reject(streamErr);
-      });
-      res.on('end', async () => {
-        if (isSettled) return;
-        isSettled = true;
-        clearTimeout(timer);
-        try {
-          let buffer = Buffer.concat(chunks);
-          const encoding = res.headers['content-encoding'];
-          if (encoding === 'gzip') {
-            buffer = await gunzipAsync(buffer);
-          } else if (encoding === 'deflate') {
-            buffer = await inflateAsync(buffer);
-          }
-
-          // Ultra-fast zero-allocation check for regularttGetData:
-          // If uncompressed payload hash is byte-for-byte identical to the last fetch,
-          // and l1IndexedDatabase is loaded, skip JSON.parse and heap allocation entirely!
-          if (path.includes('regularttGetData')) {
-            const rawHash = crypto.createHash('md5').update(buffer).digest('hex');
-            if (lastRawTimetableHash && rawHash === lastRawTimetableHash && l1IndexedDatabase) {
-              resolve({ __isUnchanged: true, _rawHash: rawHash });
-              return;
+          reject(streamErr);
+        });
+        res.on('end', async () => {
+          if (isSettled) return;
+          isSettled = true;
+          clearTimeout(timer);
+          try {
+            let buffer = Buffer.concat(chunks);
+            const encoding = res.headers['content-encoding'];
+            if (encoding === 'gzip') {
+              buffer = await gunzipAsync(buffer);
+            } else if (encoding === 'deflate') {
+              buffer = await inflateAsync(buffer);
             }
-          }
 
-          const text = buffer.toString('utf8');
-          if (!text || text.trim().length === 0) {
-            throw new Error('Empty response body received from EduPage');
+            // Ultra-fast zero-allocation check for regularttGetData
+            if (path.includes('regularttGetData')) {
+              const rawHash = crypto.createHash('md5').update(buffer).digest('hex');
+              if (lastRawTimetableHash && rawHash === lastRawTimetableHash && l1IndexedDatabase) {
+                resolve({ __isUnchanged: true, _rawHash: rawHash });
+                return;
+              }
+            }
+
+            const text = buffer.toString('utf8');
+            if (!text || text.trim().length === 0) {
+              throw new Error('Empty response body received from EduPage');
+            }
+            const json = JSON.parse(text);
+            if (path.includes('regularttGetData') && typeof json === 'object' && json !== null) {
+              const rawHash = crypto.createHash('md5').update(buffer).digest('hex');
+              json._rawHash = rawHash;
+            }
+            resolve(json);
+          } catch (e) {
+            reject(new Error(`JSON parse failed for EduPage response: ${e.message}`));
           }
-          const json = JSON.parse(text);
-          if (path.includes('regularttGetData') && typeof json === 'object' && json !== null) {
-            const rawHash = crypto.createHash('md5').update(buffer).digest('hex');
-            json._rawHash = rawHash;
-          }
-          resolve(json);
-        } catch (e) {
-          reject(new Error(`JSON parse failed for EduPage response: ${e.message}`));
-        }
+        });
       });
+
+      const timer = setTimeout(() => {
+        if (isSettled) return;
+        isSettled = true;
+        req.destroy(new Error(`POST ${path} timed out after ${tMs}ms`));
+        reject(new Error(`POST ${path} timed out`));
+      }, tMs);
+
+      req.on('error', (err) => {
+        if (isSettled) return;
+        isSettled = true;
+        clearTimeout(timer);
+        reject(err);
+      });
+
+      req.write(postData);
+      req.end();
     });
+  };
 
-    const timer = setTimeout(() => {
-      if (isSettled) return;
-      isSettled = true;
-      req.destroy(new Error(`POST ${path} timed out after ${timeoutMs}ms`));
-      reject(new Error(`POST ${path} timed out`));
-    }, timeoutMs);
+  try {
+    return await doAttempt(requestOptions, timeoutMs);
+  } catch (primaryErr) {
+    // Multi-Transport Auto-Failover:
+    // If primary attempt failed with timeout or network error and proxy is available
+    const proxies = getConfiguredProxies();
+    if (proxies.length > 0 && activeTransportName !== 'proxy' && !options.isProbe) {
+      logger.warn(`EduPage ${activeTransportName} transport failed (${primaryErr.message}). Failing over to proxy...`);
+      try {
+        const proxyAgent = createProxyAgent(proxies[0], parsedTarget.hostname);
+        if (proxyAgent) {
+          const proxyReqOpts = { ...requestOptions, agent: proxyAgent };
+          const result = await doAttempt(proxyReqOpts, Math.max(10000, timeoutMs));
+          activeTransportName = 'proxy';
+          logger.info('✅ EduPage proxy failover succeeded! Set proxy as active transport.');
+          return result;
+        }
+      } catch (proxyErr) {
+        logger.warn(`EduPage proxy failover attempt also failed: ${proxyErr.message}`);
+      }
+    }
 
-    req.on('error', (err) => {
-      if (isSettled) return;
-      isSettled = true;
-      clearTimeout(timer);
-      reject(err);
-    });
+    // Fresh socket retry on timeout if keep-alive might have hung
+    if (primaryErr.message.includes('timed out') && !options.isRetry && !options.isProbe) {
+      logger.debug('Retrying EduPage request with fresh socket connection...');
+      try {
+        const freshAgent = new https.Agent({ keepAlive: false, family: 4 });
+        const freshOpts = { ...requestOptions, agent: freshAgent };
+        return await doAttempt(freshOpts, 15000);
+      } catch (retryErr) {
+        throw primaryErr;
+      }
+    }
 
-    req.write(postData);
-    req.end();
-  });
+    throw primaryErr;
+  }
 }
 
 /**
@@ -515,10 +742,24 @@ async function resolveDefaultNum() {
  * Returns deterministic signature string to detect if any schedule version or table was modified.
  */
 async function getMetadataSignature() {
-  // If circuit breaker is actively OPEN or HALF_OPEN, fast-fail without wasting 20s network latency
-  if (circuitBreakerState !== 'CLOSED' || isEduPageCircuitOpen()) {
-    logger.debug('EduPage Circuit Breaker is active; skipping metadata probe signature');
-    return null;
+  // If circuit breaker is actively OPEN, fast-fail unless retry time has arrived
+  if (circuitBreakerState === 'OPEN') {
+    if (Date.now() < nextCircuitRetryTime) {
+      logger.debug('EduPage Circuit Breaker is active; skipping metadata probe signature');
+      return null;
+    }
+    // Retry timer reached: allow metadata probe to test recovery
+    circuitBreakerState = 'HALF_OPEN';
+    isHalfOpenProbeInFlight = true;
+    probeInFlightStartedAt = Date.now();
+    logger.info('🔄 EduPage Circuit Breaker testing recovery via lightweight metadata probe (getTTViewerData)...');
+  } else if (circuitBreakerState === 'HALF_OPEN') {
+    const now = Date.now();
+    if (isHalfOpenProbeInFlight && (now - probeInFlightStartedAt < PROBE_TIMEOUT_MS)) {
+      return null;
+    }
+    isHalfOpenProbeInFlight = true;
+    probeInFlightStartedAt = now;
   }
 
   try {
@@ -969,8 +1210,11 @@ function recordEduPageFailure(err) {
   probeInFlightStartedAt = 0;
   if (consecutiveFailures >= FAILURE_THRESHOLD || circuitBreakerState === 'HALF_OPEN') {
     circuitBreakerState = 'OPEN';
-    nextCircuitRetryTime = Date.now() + CIRCUIT_RESET_TIMEOUT_MS;
-    logger.warn(`⚡ EduPage Circuit Breaker tripped to OPEN (${consecutiveFailures} consecutive failures, previous state: ${circuitBreakerState}). Fast-failing network calls for 45s.`, { error: err?.message });
+    const backoffMs = Math.min(300000, 30000 * Math.pow(1.5, Math.min(consecutiveFailures - 3, 5)));
+    const jitter = Math.floor(Math.random() * 3000);
+    const retryDelay = Math.max(CIRCUIT_RESET_TIMEOUT_MS, backoffMs) + jitter;
+    nextCircuitRetryTime = Date.now() + retryDelay;
+    logger.warn(`⚡ EduPage Circuit Breaker tripped to OPEN (${consecutiveFailures} consecutive failures, previous state: ${circuitBreakerState}). Fast-failing network calls for ${Math.round(retryDelay / 1000)}s.`, { error: err?.message });
   }
 }
 
@@ -1019,11 +1263,33 @@ function canAttemptEduPageNetwork() {
 }
 
 /**
- * Fetches raw timetable JSON from TsUE EduPage (single attempt, fail-fast to cache)
+ * Ultra-fast lightweight health probe (332 bytes).
+ * Used by Circuit Breaker to test recovery in <5 seconds without downloading 15MB.
+ */
+async function probeEduPageHealth(timeoutMs = 6000) {
+  try {
+    const currentYear = new Date().getFullYear();
+    const payload = { __args: [null, currentYear], __gsh: '00000000' };
+    const res = await httpPost('/timetable/server/ttviewer.js?__func=getTTViewerData', payload, timeoutMs, { isProbe: true });
+    const defaultNum = res?.r?.regular?.default_num;
+    if (defaultNum && String(defaultNum).trim()) {
+      cachedDefaultNum = String(defaultNum).trim();
+      cachedDefaultNumTime = Date.now();
+      recordEduPageSuccess();
+      return { ok: true, defaultNum: cachedDefaultNum, timetables: res?.r?.regular?.timetables || [] };
+    }
+    return { ok: false, error: 'Empty default_num in probe response' };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Fetches raw timetable JSON from TsUE EduPage (20s timeout, fail-fast to cache)
  */
 async function fetchRawTimetable(defaultNum) {
   const payload = { __args: [null, defaultNum.toString()], __gsh: '00000000' };
-  return httpPost('/timetable/server/regulartt.js?__func=regularttGetData', payload, 45000);
+  return httpPost('/timetable/server/regulartt.js?__func=regularttGetData', payload, 20000);
 }
 
 /**
@@ -1269,6 +1535,17 @@ async function getOrFetchIndexedData(forceRefresh = false) {
       const canAttemptNetwork = canAttemptEduPageNetwork();
       if (canAttemptNetwork) {
         try {
+          // If in HALF_OPEN state, verify recovery with ultra-fast 332-byte probe first!
+          // This eliminates the 45-second lockup on dead network.
+          if (circuitBreakerState === 'HALF_OPEN') {
+            logger.info('🔄 EduPage Circuit Breaker testing recovery with lightweight probe (getTTViewerData)...');
+            const probeResult = await probeEduPageHealth(6000);
+            if (!probeResult.ok) {
+              throw new Error(`Circuit breaker recovery probe failed: ${probeResult.error}`);
+            }
+            logger.info('✅ Recovery probe verified EduPage reachability. Proceeding with full timetable fetch.');
+          }
+
           raw = await fetchRawTimetable(defaultNum);
           if (raw?.__isUnchanged && l1IndexedDatabase) {
             recordEduPageSuccess();
@@ -2095,6 +2372,159 @@ function findUpcomingCourseOccurrences(fullGroupTimetable, subjectName, targetLe
   return results.slice(0, maxResults);
 }
 
+
+/**
+ * Ingests external timetable JSON directly into the system.
+ * Bypasses network fetch, validates dataset, saves atomically to L3 Disk,
+ * updates L1 RAM, saves to Redis, and resets circuit breaker.
+ */
+async function manuallyIngestTimetable(payload, source = 'admin') {
+  let raw = payload;
+  if (typeof payload === 'string') {
+    try {
+      raw = JSON.parse(payload);
+    } catch (e) {
+      throw new Error(`JSON parse error: ${e.message}`);
+    }
+  }
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('Invalid timetable payload: expected JSON object');
+  }
+
+  // Validate structure
+  if (!validateTimetablePayload(raw)) {
+    throw new Error('Timetable payload failed sanity validation (incomplete or corrupted tables)');
+  }
+
+  const defaultNum = String(raw._defaultNum || cachedDefaultNum || FALLBACK_DEFAULT_NUM).trim();
+  cachedDefaultNum = defaultNum;
+  cachedDefaultNumTime = Date.now();
+
+  // Re-index database in RAM
+  l1IndexedDatabase = buildIndexedDatabase(raw, defaultNum);
+  l1IndexedDatabase.isUnchanged = false;
+  l1IndexedDatabase.isFromCircuitBreakerFallback = false;
+  l1CacheTime = Date.now();
+
+  // Save to L3 Disk Cache
+  await saveDiskCache({ ...raw, _defaultNum: defaultNum });
+
+  // Save to L2 Redis
+  const redis = getRedisClient();
+  if (redis) {
+    redis.set('edupage:timetable:raw', JSON.stringify(raw), 'EX', REDIS_TTL_SEC).catch(() => {});
+  }
+
+  // Reset circuit breaker to healthy
+  recordEduPageSuccess();
+
+  logger.info(`✅ Timetable manually ingested via ${source}`, {
+    classesCount: l1IndexedDatabase.classesById?.size || 0,
+    lessonsCount: Object.keys(l1IndexedDatabase.lessonsById || {}).length,
+    defaultNum,
+  });
+
+  return {
+    success: true,
+    classesCount: l1IndexedDatabase.classesById?.size || 0,
+    lessonsCount: Object.keys(l1IndexedDatabase.lessonsById || {}).length,
+    defaultNum,
+    source,
+  };
+}
+
+/**
+ * Returns comprehensive diagnostic status of EduPage subsystem
+ */
+function getEduPageDiagnosticStatus() {
+  return {
+    circuitBreakerState,
+    consecutiveFailures,
+    nextCircuitRetryInSec: Math.max(0, Math.ceil((nextCircuitRetryTime - Date.now()) / 1000)),
+    activeTransport: activeTransportName,
+    proxyConfigured: getConfiguredProxies().length > 0,
+    customBaseUrlConfigured: Boolean(process.env.EDUPAGE_BASE_URL || process.env.EDUPAGE_MIRROR_URL),
+    sessionCookieActive: Boolean(sessionManager.cookie && Date.now() < sessionManager.cookieExpiresAt),
+    cachedDefaultNum,
+    hasL1Database: Boolean(l1IndexedDatabase),
+    l1ClassesCount: l1IndexedDatabase?.classesById?.size || 0,
+    l1IsFallback: Boolean(l1IndexedDatabase?.isFromCircuitBreakerFallback),
+    lastCacheTimeAgoSec: l1CacheTime ? Math.floor((Date.now() - l1CacheTime) / 1000) : null,
+  };
+}
+
+/**
+ * Live test of all configured network transports (Direct, Proxy, Mirror)
+ */
+async function testTransports() {
+  const results = {};
+
+  // 1. Direct
+  const t0 = Date.now();
+  try {
+    const payload = { __args: [null, new Date().getFullYear()], __gsh: '00000000' };
+    const res = await httpPost('/timetable/server/ttviewer.js?__func=getTTViewerData', payload, 8000, { isProbe: true });
+    results.direct = { ok: true, latencyMs: Date.now() - t0, defaultNum: res?.r?.regular?.default_num };
+  } catch (err) {
+    results.direct = { ok: false, latencyMs: Date.now() - t0, error: err.message };
+  }
+
+  // 2. Proxy (if configured)
+  const proxies = getConfiguredProxies();
+  if (proxies.length > 0) {
+    const t1 = Date.now();
+    try {
+      const proxyAgent = createProxyAgent(proxies[0]);
+      if (proxyAgent) {
+        const payload = { __args: [null, new Date().getFullYear()], __gsh: '00000000' };
+        const postData = JSON.stringify(payload);
+        const res = await new Promise((resolve, reject) => {
+          const req = https.request({
+            hostname: 'tsue.edupage.org',
+            path: '/timetable/server/ttviewer.js?__func=getTTViewerData',
+            method: 'POST',
+            agent: proxyAgent,
+            family: 4,
+            headers: {
+              ...DEFAULT_HEADERS,
+              'Content-Type': 'application/json; charset=UTF-8',
+              'Content-Length': Buffer.byteLength(postData),
+            },
+          }, (r) => {
+            let data = '';
+            r.on('data', c => data += c);
+            r.on('end', () => {
+              try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
+            });
+          });
+          const timer = setTimeout(() => { req.destroy(); reject(new Error('Proxy test timed out')); }, 8000);
+          req.on('error', (e) => { clearTimeout(timer); reject(e); });
+          req.write(postData);
+          req.end();
+        });
+        results.proxy = { ok: true, latencyMs: Date.now() - t1, defaultNum: res?.r?.regular?.default_num };
+      }
+    } catch (err) {
+      results.proxy = { ok: false, latencyMs: Date.now() - t1, error: err.message };
+    }
+  }
+
+  // 3. Mirror (if configured)
+  const mirrorUrl = process.env.EDUPAGE_BASE_URL || process.env.EDUPAGE_MIRROR_URL;
+  if (mirrorUrl) {
+    const t2 = Date.now();
+    try {
+      const payload = { __args: [null, new Date().getFullYear()], __gsh: '00000000' };
+      const res = await httpPost('/timetable/server/ttviewer.js?__func=getTTViewerData', payload, 8000, { isProbe: true });
+      results.mirror = { ok: true, latencyMs: Date.now() - t2, defaultNum: res?.r?.regular?.default_num };
+    } catch (err) {
+      results.mirror = { ok: false, latencyMs: Date.now() - t2, error: err.message };
+    }
+  }
+
+  return results;
+}
+
 module.exports = {
   getFormattedSchedule,
   getEmptyRoomsText,
@@ -2146,4 +2576,10 @@ module.exports = {
   getFirstAndLastLessonOfDay,
   detectCurrentActiveLesson,
   findUpcomingCourseOccurrences,
+  // Resilience & Diagnostic Additions:
+  probeEduPageHealth,
+  manuallyIngestTimetable,
+  getEduPageDiagnosticStatus,
+  testTransports,
+  getSessionManager: () => sessionManager,
 };

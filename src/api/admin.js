@@ -263,4 +263,53 @@ router.get('/official-tests', async (req, res) => {
   }
 });
 
+
+/**
+ * Ingest fresh timetable JSON directly via Admin API
+ */
+router.post('/timetable/upload', express.json({ limit: '30mb' }), async (req, res) => {
+  try {
+    const payload = req.body;
+    if (!payload) {
+      return res.status(400).json({ error: 'Missing timetable payload in request body' });
+    }
+    const edupageService = require('../services/edupageService');
+    const scheduleWatcher = require('../services/scheduleWatcherService');
+
+    const result = await edupageService.manuallyIngestTimetable(payload, 'admin_api');
+
+    // Trigger schedule watcher in background
+    scheduleWatcher.checkScheduleChanges(true).catch(err => {
+      logger.error('Background schedule watcher error after admin API upload:', { error: err.message });
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Timetable successfully uploaded, parsed, and indexed',
+      data: result,
+    });
+  } catch (err) {
+    logger.error('Failed to upload timetable via admin API', { error: err.message });
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+/**
+ * Diagnostic status of EduPage subsystem
+ */
+router.get('/timetable/status', (req, res) => {
+  const edupageService = require('../services/edupageService');
+  const status = edupageService.getEduPageDiagnosticStatus();
+  return res.status(200).json(status);
+});
+
+/**
+ * Live test of EduPage transports (direct, proxy, mirror)
+ */
+router.post('/timetable/test', async (req, res) => {
+  const edupageService = require('../services/edupageService');
+  const results = await edupageService.testTransports();
+  return res.status(200).json(results);
+});
+
 module.exports = router;

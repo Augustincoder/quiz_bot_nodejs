@@ -401,6 +401,7 @@ bot.on("message", async (ctx, next) => {
     // Admin test creation & management
     [States.ADM_CREATE_TEST_ID]: () => handlers.admin.onAdmTestId(ctx),
     [States.ADM_CREATE_CONTENT]: () => ctx.message.document ? handlers.admin.onAdmDocxContent(ctx) : handlers.admin.onAdmTextContent(ctx),
+    [States.ADM_WAITING_TIMETABLE_UPLOAD]: () => handlers.admin.onTimetableUploadMessage(ctx),
     [States.ADMIN_SEARCH_USER]: () => handlers.admin.onAdminSearchInput(ctx),
     [States.ADMIN_BROADCAST]: () => handlers.admin.onBroadcastMessage(ctx),
     [States.ADMIN_BROADCAST_CONFIRM]: () => handlers.admin.onBroadcastConfirmInput(ctx),
