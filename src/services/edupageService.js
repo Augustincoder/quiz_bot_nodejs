@@ -1458,6 +1458,20 @@ function revalidateInBackground() {
   if (isBackgroundRevalidating || isEduPageCircuitOpen()) return;
   isBackgroundRevalidating = true;
   getOrFetchIndexedData(true)
+    .then((db) => {
+      // Proactively trigger Schedule Watcher when background revalidation loads updated timetable
+      // This eliminates delay: students get broadcasted immediately without waiting for user query or cron!
+      if (db && !db.isUnchanged) {
+        try {
+          const scheduleWatcher = require('./scheduleWatcherService');
+          if (typeof scheduleWatcher.checkScheduleChanges === 'function') {
+            scheduleWatcher.checkScheduleChanges(true).catch(e => {
+              logger.debug('Watcher auto-check after background revalidation failed', { error: e.message });
+            });
+          }
+        } catch {}
+      }
+    })
     .catch(err => {
       logger.warn('Background schedule revalidation failed (serving existing cache)', { error: err.message });
     })

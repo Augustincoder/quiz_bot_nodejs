@@ -62,13 +62,17 @@ const PERIOD_TIMES = {
 
 const REDIS_WATCHER_KEY = 'cache:schedule:watcher:hashes';
 const REDIS_SIG_KEY = 'cache:schedule:watcher:signature';
-const DEEP_CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes periodic forced deep check
+const REDIS_EVALUATED_RAW_HASH_KEY = 'cache:schedule:watcher:last_raw_hash';
+const DEEP_CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes periodic forced deep check
+const MAX_CONSECUTIVE_TIER1_SKIPS = 2; // Force full tier-2 deep check after every 2 consecutive Tier 1 skips
 
 // Internal In-Memory Snapshots
 const groupSnapshots = new Map(); // classId -> { hash, schedule, groupName, norm }
 let lastCheckedAt = 0;
 let lastDeepCheckAt = 0;
 let lastKnownSignature = null;
+let lastEvaluatedRawHash = null;
+let consecutiveTier1Skips = 0;
 let lastCheckStatus = 'idle';
 let isChecking = false;
 let lastCheckStartedAt = 0;
@@ -646,9 +650,10 @@ async function checkScheduleChanges(forceOrOptions = false) {
     // 1. If baseline not in memory, attempt restoring from Redis
     if (!isBaselineReady && redis) {
       try {
-        const [storedHashes, storedSig] = await Promise.all([
+        const [storedHashes, storedSig, storedRawHash] = await Promise.all([
           redis.get(REDIS_WATCHER_KEY),
           redis.get(REDIS_SIG_KEY),
+          redis.get(REDIS_EVALUATED_RAW_HASH_KEY),
         ]);
         if (storedHashes) {
           const parsed = JSON.parse(storedHashes);
@@ -663,23 +668,42 @@ async function checkScheduleChanges(forceOrOptions = false) {
         if (storedSig) {
           lastKnownSignature = storedSig;
         }
+        if (storedRawHash) {
+          lastEvaluatedRawHash = storedRawHash;
+        }
       } catch (err) {
         logger.warn('Failed to read schedule baseline from Redis', { error: err.message });
       }
     }
 
     // 1.5. Tier 1 Lightweight Gatekeeper (332-byte probe)
-    // Avoids downloading and parsing 12-15 MB JSON 288 times a day if metadata signature is unchanged
-    const shouldSkipTier1 = forceDeepCheck || forceCheckAllActive || targetNorm || !isBaselineReady || (Date.now() - lastDeepCheckAt > DEEP_CHECK_INTERVAL_MS);
+    // Checks lightweight EduPage metadata signature every 5 minutes.
+    // If metadata signature is identical, increments consecutiveTier1Skips.
+    // Automatically escalates to full Tier-2 synchronization if:
+    //  - 2 consecutive Tier 1 skips have occurred (consecutiveTier1Skips >= MAX_CONSECUTIVE_TIER1_SKIPS)
+    //  - Periodic deep check interval reached (>= DEEP_CHECK_INTERVAL_MS = 10 minutes)
+    //  - Baseline not yet established, or force flags are set.
+    const isDeepIntervalReached = (Date.now() - lastDeepCheckAt >= DEEP_CHECK_INTERVAL_MS);
+    const isMaxSkipsReached = (consecutiveTier1Skips >= MAX_CONSECUTIVE_TIER1_SKIPS);
+    const shouldSkipTier1 = forceDeepCheck ||
+                            forceCheckAllActive ||
+                            targetNorm ||
+                            !isBaselineReady ||
+                            isDeepIntervalReached ||
+                            isMaxSkipsReached;
+
     if (!shouldSkipTier1) {
       try {
         const sig = await edupageService.getMetadataSignature();
         if (sig && lastKnownSignature && sig === lastKnownSignature) {
+          consecutiveTier1Skips++;
           tier1SkipsCount++;
           lastCheckedAt = Date.now();
           lastCheckStatus = 'ok_tier1_unchanged';
           logger.debug('Schedule Watcher: Tier 1 signature match (332-byte probe), live timetable unchanged', {
             sig,
+            consecutiveTier1Skips,
+            maxSkipsBeforeDeep: MAX_CONSECUTIVE_TIER1_SKIPS,
             tier1SkipsCount,
             durationMs: Date.now() - t0,
           });
@@ -697,13 +721,14 @@ async function checkScheduleChanges(forceOrOptions = false) {
           lastKnownSignature = sig;
           if (redis) redis.set(REDIS_SIG_KEY, sig, 'EX', 86400 * 7).catch(() => {});
         }
+        consecutiveTier1Skips = 0; // Signature changed -> immediately advance to Tier 2
       } catch (tier1Err) {
         logger.debug('Tier 1 signature check failed, proceeding to full check', { error: tier1Err.message });
       }
     }
 
-    // 2. Real-time Full Synchronization with EduPage (Gzip ~767KB in ~1.2s)
-    // Directly synchronizes and validates all 1,367 university groups with 100% precision.
+    // 2. Real-time Full Synchronization with EduPage (Tier 2 Deep Check)
+    consecutiveTier1Skips = 0; // Reset skip counter on full Tier-2 execution
     deepChecksCount++;
     lastDeepCheckAt = Date.now();
     const indexedDb = await edupageService.getIndexedDatabase(true);
@@ -730,12 +755,27 @@ async function checkScheduleChanges(forceOrOptions = false) {
     }
 
     // Fast-path: When live EduPage timetable byte payload is 100% unchanged,
-    // and baseline is established, and no force flag is set, skip re-evaluating 1,367 groups.
-    if (isBaselineReady && indexedDb.isUnchanged && !forceDeepCheck && !forceCheckAllActive && !targetNorm) {
+    // AND this exact raw hash has already been fully evaluated by the Watcher across all groups,
+    // and baseline is established, and no force flag is set, safely skip re-evaluating.
+    const liveRawHash = edupageService.getLastRawTimetableHash();
+    const isAlreadyEvaluated = Boolean(
+      isBaselineReady &&
+      liveRawHash &&
+      lastEvaluatedRawHash &&
+      liveRawHash === lastEvaluatedRawHash &&
+      indexedDb.isUnchanged &&
+      !forceDeepCheck &&
+      !forceCheckAllActive &&
+      !targetNorm
+    );
+
+    if (isAlreadyEvaluated) {
+      tier1SkipsCount++;
       lastCheckedAt = Date.now();
       lastCheckStatus = 'ok_unchanged';
-      logger.debug('Schedule Watcher: EduPage timetable verified unchanged (0 bytes modified)', {
+      logger.debug('Schedule Watcher: EduPage timetable verified unchanged and already evaluated', {
         durationMs: Date.now() - t0,
+        rawHash: liveRawHash,
       });
       return {
         checked: true,
@@ -743,6 +783,7 @@ async function checkScheduleChanges(forceOrOptions = false) {
         changedGroupsCount: 0,
         changedGroups: [],
         durationMs: Date.now() - t0,
+        reason: 'raw_payload_unchanged',
       };
     }
 
@@ -968,7 +1009,24 @@ async function checkScheduleChanges(forceOrOptions = false) {
       logger.debug('Schedule check completed: no changes detected', { durationMs: Date.now() - t0 });
     }
 
-    // 5. Save updated baseline hashes to Redis
+    // 5. Save updated baseline hashes to Redis and update lastEvaluatedRawHash
+    const currentLiveRawHash = edupageService.getLastRawTimetableHash();
+    if (!lastKnownSignature) {
+      try {
+        const initialSig = await edupageService.getMetadataSignature();
+        if (initialSig) {
+          lastKnownSignature = initialSig;
+          if (redis) redis.set(REDIS_SIG_KEY, initialSig, 'EX', 86400 * 7).catch(() => {});
+        }
+      } catch {}
+    }
+    if (currentLiveRawHash) {
+      lastEvaluatedRawHash = currentLiveRawHash;
+      if (redis) {
+        redis.set(REDIS_EVALUATED_RAW_HASH_KEY, currentLiveRawHash, 'EX', 86400 * 7).catch(() => {});
+      }
+    }
+
     if (redis) {
       redis.set(REDIS_WATCHER_KEY, JSON.stringify(newHashesForRedis), 'EX', 24 * 60 * 60).catch(err => {
         logger.warn('Failed to save schedule watcher hashes in Redis', { error: err.message });
@@ -1076,6 +1134,8 @@ function getWatcherStatus() {
     isChecking,
     trackedGroupsCount: groupSnapshots.size,
     lastKnownSignature,
+    lastEvaluatedRawHash,
+    consecutiveTier1Skips,
     tier1SkipsCount,
     deepChecksCount,
     lastCheckedAt: lastCheckedAt ? new Date(lastCheckedAt).toISOString() : null,
