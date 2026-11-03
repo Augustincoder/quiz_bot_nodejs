@@ -23,6 +23,7 @@ const {
   escapeHtml,
   safeAnswerCb,
   clearState,
+  naturalSortBlocks,
 } = require("../core/utils");
 
 const {
@@ -364,7 +365,7 @@ async function cbPostStart(ctx) {
 async function showUgcSubjectBlocks(ctx, creatorId, subject) {
   try {
     const tests = await dbService.getUserCreatedTests(creatorId);
-    const subjTests = tests.filter((t) => t.subject === subject);
+    const subjTests = naturalSortBlocks(tests.filter((t) => t.subject === subject));
     if (!subjTests.length)
       return ctx.reply("❌ Bu fanda bloklar topilmadi.", backToMainKb());
 

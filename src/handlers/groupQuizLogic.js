@@ -4,7 +4,7 @@ const { Markup } = require('telegraf');
 const mutex = require('../core/mutex');
 const sessionService = require('../services/sessionService');
 const dbService = require('../services/dbService');
-const { safeDelete, escapeHtml } = require('../core/utils');
+const { safeDelete, escapeHtml, naturalSortBlocks } = require('../core/utils');
 
 // Kutish zalini chizish (yaratish yoki yangilash) uchun yordamchi funksiya
 async function renderLobby(ctx, chatId, room, messageId = null) {
@@ -187,13 +187,13 @@ async function cbRoomStart(ctx) {
       } else {
         // UGC (Foydalanuvchi) testlar marafoni
         const tests = await dbService.getUserCreatedTests(room.testData.creator_id);
-        marathonBlocks = tests
+        marathonBlocks = naturalSortBlocks(tests
             .filter(t => t.subject === subjectKey)
             .map(t => ({
               ...t,
               questions: deepClone(t.questions || [])
             }))
-            .sort((a, b) => a.id - b.id);
+            );
       }
           
       if (!marathonBlocks.length) return ctx.reply("❌ Bu fanda bloklar topilmadi.");

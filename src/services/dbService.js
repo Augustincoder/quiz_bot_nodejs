@@ -517,6 +517,26 @@ async function saveUserTest(creatorId, subject, blockName, questions) {
   }
 }
 
+async function saveUserTestsBatch(creatorId, subject, blocks) {
+  try {
+    if (!Array.isArray(blocks) || blocks.length === 0) return [];
+    const now = Date.now();
+    const rows = blocks.map((b, i) => ({
+      creator_id: String(creatorId),
+      subject,
+      block_name: b.blockName,
+      questions: b.questions,
+      created_at: new Date(now + i * 1000).toISOString().slice(0, 19).replace('T', ' '),
+    }));
+    const { data, error } = await supabase.from('user_tests').insert(rows).select('id');
+    if (error) throw error;
+    return (data || []).map((r) => r.id);
+  } catch (e) {
+    logger.error('saveUserTestsBatch error:', { creatorId, error: e.message });
+    return [];
+  }
+}
+
 async function getUserTest(testId) {
   const tid = parseInt(testId, 10);
   if (isNaN(tid)) return null;
@@ -1842,6 +1862,7 @@ module.exports = {
   getAllUsers,
   getUsersByClassName,
   saveUserTest,
+  saveUserTestsBatch,
   getUserTest,
   getUserCreatedTests,
   deleteUserTest,

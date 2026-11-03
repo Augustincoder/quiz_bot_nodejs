@@ -19,6 +19,7 @@ const {
   parseDocxQuestions,
   parseTextQuestions,
   downloadFile,
+  naturalSortBlocks,
 } = require("../core/utils");
 const {
   SubjectSchema,
@@ -1468,18 +1469,30 @@ async function cbFinishCreation(ctx) {
       for (let i = 0; i < questions.length; i += CHUNK_SIZE) {
         chunks.push(questions.slice(i, i + CHUNK_SIZE));
       }
-      // Har bir qismni alohida blok qilib yozamiz
-      const promises = chunks.map((chunk, i) => {
-        const chunkName = `${baseBlockName} (${i + 1}-qism)`;
-        return dbService.saveUserTest(
-          ctx.from.id,
-          subject,
-          chunkName,
-          chunk,
-        );
-      });
-      const ids = await Promise.all(promises);
-      testIds.push(...ids);
+      // Har bir qismni tartibli ravishda saqlaymiz
+      const blocksToSave = chunks.map((chunk, i) => ({
+        blockName: `${baseBlockName} (${i + 1}-qism)`,
+        questions: chunk,
+      }));
+      const ids = await dbService.saveUserTestsBatch(
+        ctx.from.id,
+        subject,
+        blocksToSave,
+      );
+      if (ids && ids.length) {
+        testIds.push(...ids);
+      } else {
+        for (let i = 0; i < chunks.length; i++) {
+          const chunkName = `${baseBlockName} (${i + 1}-qism)`;
+          const tId = await dbService.saveUserTest(
+            ctx.from.id,
+            subject,
+            chunkName,
+            chunks[i],
+          );
+          if (tId) testIds.push(tId);
+        }
+      }
     }
   }
 
@@ -1582,7 +1595,7 @@ async function cbMyTests(ctx) {
   );
 
   const buttons = currentSubjects.map((subj) => {
-    const subjTests = subjectsMap[subj];
+    const subjTests = naturalSortBlocks(subjectsMap[subj]);
     const firstTestId = subjTests[0].id;
     return [
       Markup.button.callback(
@@ -1618,7 +1631,7 @@ async function cbManageSubj(ctx) {
   if (!testData) return;
 
   const tests = await dbService.getUserCreatedTests(ctx.from.id);
-  const subjTests = tests.filter((t) => t.subject === testData.subject);
+  const subjTests = naturalSortBlocks(tests.filter((t) => t.subject === testData.subject));
   const botInfo = await ctx.telegram.getMe();
 
   const buttons = subjTests.map((t) => [

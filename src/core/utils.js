@@ -484,6 +484,17 @@ function timeToMinutes(timeStr) {
  * Prevents Telegram API 400 Bad Request: BUTTON_DATA_INVALID.
  * Guarantees no multi-byte character boundary corruption.
  */
+function naturalSortBlocks(blocks) {
+  if (!Array.isArray(blocks)) return [];
+  return [...blocks].sort((a, b) => {
+    const nameA = String(a?.block_name || a?.name || '').trim();
+    const nameB = String(b?.block_name || b?.name || '').trim();
+    const cmp = nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+    if (cmp !== 0) return cmp;
+    return (Number(a?.id) || 0) - (Number(b?.id) || 0);
+  });
+}
+
 function safeCallbackData(data, maxBytes = 64) {
   if (data === undefined || data === null) return '';
   const str = String(data);
@@ -508,7 +519,7 @@ module.exports = {
   truncateText, splitMessage,
   downloadFile, isAdmin, adminGuard, buildUserContext,
   getTashkentDate, getTashkentDayOfWeek,
-  timeToMinutes, safeCallbackData,
+  timeToMinutes, safeCallbackData, naturalSortBlocks,
 };
 
 
