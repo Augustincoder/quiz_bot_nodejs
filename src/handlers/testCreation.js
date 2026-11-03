@@ -851,19 +851,59 @@ async function onDocxFile(ctx) {
         chunks.push(finalValidQs.slice(i, i + 25));
       }
 
+      // Mavjud fanni tekshiramiz: agar bu fanda avval bloklar bo'lsa, qism raqamini davom ettiramiz
+      let startPart = 1;
+      let existingBaseName = null;
+      if (data.subject && ctx.from?.id) {
+        try {
+          const existingTests = await dbService.getUserCreatedTests(ctx.from.id, false);
+          const subjectTests = (existingTests || []).filter((t) => t.subject === data.subject);
+          let maxPart = 0;
+          for (const t of subjectTests) {
+            const name = t.block_name || "";
+            const match = name.match(/(?:^|\D)(\d+)\s*-?\s*qism/i);
+            if (match) {
+              const num = parseInt(match[1], 10);
+              if (num > maxPart) maxPart = num;
+            }
+          }
+          if (maxPart > 0) {
+            startPart = maxPart + 1;
+          } else if (subjectTests.length > 0) {
+            startPart = subjectTests.length + 1;
+          }
+
+          if (subjectTests.length > 0) {
+            const baseMatches = subjectTests
+              .map((t) => {
+                const m = (t.block_name || "").match(/^(.*?)\s*\(\d+\s*-?\s*qism\)$/i);
+                return m ? m[1].trim() : null;
+              })
+              .filter(Boolean);
+            if (baseMatches.length > 0 && baseMatches.every((b) => b === baseMatches[0])) {
+              existingBaseName = baseMatches[0];
+            }
+          }
+        } catch (err) {
+          logger.warn("startPart hisoblashda xatolik:", { error: err.message });
+        }
+      }
+
       const autoBlockName =
         data.block_name ||
+        existingBaseName ||
         (doc.file_name ? doc.file_name.replace(/\.[^/.]+$/, "") : "Avto-test");
       await updateData(ctx, {
         chunks,
         invalidQs,
         questions: finalValidQs,
         block_name: autoBlockName,
+        start_part: startPart,
       });
       await ctx.telegram
         .deleteMessage(ctx.chat.id, statusMsg.message_id)
         .catch(() => {});
-      return showAutoDocxStatusMenu(ctx, chunks, invalidQs.length, limitMsg);
+      return showAutoDocxStatusMenu(ctx, chunks, invalidQs.length, limitMsg, startPart);
     } else {
       // ─── NORMAL DOCX REJIMI (Limit 50) ───
       let finalQs = validQs;
@@ -953,10 +993,13 @@ async function showAutoDocxStatusMenu(
   chunks,
   invalidCount,
   limitMsg = "",
+  startPartOverride,
 ) {
+  const data = await getData(ctx);
+  const startPart = startPartOverride || data.start_part || 1;
   const buttons = chunks.map((chunk, index) => [
     Markup.button.callback(
-      `📁 ${index + 1}-qism (${chunk.length} ta savol)`,
+      `📁 ${startPart + index}-qism (${chunk.length} ta savol)`,
       `preview_chunk_${index}_0`,
     ),
   ]);
@@ -1017,7 +1060,8 @@ async function cbPreviewChunk(ctx) {
   const endIdx = Math.min(startIdx + ITEMS_PER_PAGE, chunk.length);
   const currentQs = chunk.slice(startIdx, endIdx);
 
-  let text = `📁 <b>${chunkIdx + 1}-qism savollari</b> (Jami: ${chunk.length} ta)\n<i>Sahifa: ${validPage + 1} / ${totalPages}</i>\n\n`;
+  const startPart = data.start_part || 1;
+  let text = `📁 <b>${startPart + chunkIdx}-qism savollari</b> (Jami: ${chunk.length} ta)\n<i>Sahifa: ${validPage + 1} / ${totalPages}</i>\n\n`;
 
   currentQs.forEach((q, i) => {
     const actualNum = startIdx + i + 1;
@@ -1464,9 +1508,28 @@ async function cbFinishCreation(ctx) {
     );
     testIds.push(data.editing_test_id);
   } else {
+    let startPart = data.start_part || 1;
+    if (!data.start_part && subject && ctx.from?.id && !data.editing_test_id) {
+      try {
+        const existingTests = await dbService.getUserCreatedTests(ctx.from.id, false);
+        const subjectTests = (existingTests || []).filter((t) => t.subject === subject);
+        let maxPart = 0;
+        for (const t of subjectTests) {
+          const name = t.block_name || "";
+          const match = name.match(/(?:^|\D)(\d+)\s*-?\s*qism/i);
+          if (match) {
+            const num = parseInt(match[1], 10);
+            if (num > maxPart) maxPart = num;
+          }
+        }
+        if (maxPart > 0) startPart = maxPart + 1;
+        else if (subjectTests.length > 0) startPart = subjectTests.length + 1;
+      } catch {}
+    }
+
     // YANGI TEST YARATISH: Avto-bo'lish (Chunking)
-    if (questions.length <= CHUNK_SIZE) {
-      // Savollar oz bo'lsa, bitta qilib saqlaymiz
+    if (questions.length <= CHUNK_SIZE && !data.is_auto_docx) {
+      // Savollar oz bo'lsa va auto-docx bo'lmasa, bitta qilib saqlaymiz
       const tId = await dbService.saveUserTest(
         ctx.from.id,
         subject,
@@ -1482,7 +1545,7 @@ async function cbFinishCreation(ctx) {
       }
       // Har bir qismni tartibli ravishda saqlaymiz
       const blocksToSave = chunks.map((chunk, i) => ({
-        blockName: `${baseBlockName} (${i + 1}-qism)`,
+        blockName: `${baseBlockName} (${startPart + i}-qism)`,
         questions: chunk,
       }));
       const ids = await dbService.saveUserTestsBatch(
@@ -1494,7 +1557,7 @@ async function cbFinishCreation(ctx) {
         testIds.push(...ids);
       } else {
         for (let i = 0; i < chunks.length; i++) {
-          const chunkName = `${baseBlockName} (${i + 1}-qism)`;
+          const chunkName = `${baseBlockName} (${startPart + i}-qism)`;
           const tId = await dbService.saveUserTest(
             ctx.from.id,
             subject,
