@@ -873,9 +873,13 @@ async function banUser(userId) {
   const uid = String(userId);
   userBannedL1Cache.set(uid, true);
   try {
-    const { error } = await supabase.from('users').update({ is_banned: true }).eq('telegram_id', uid);
-    if (error) throw error;
-    await redis.set(`user_banned:${uid}`, '1', 'EX', 86400).catch(() => {});
+    if (supabase) {
+      const { error } = await supabase.from('users').update({ is_banned: true }).eq('telegram_id', uid);
+      if (error) throw error;
+    }
+    if (redis) {
+      await redis.set(`user_banned:${uid}`, '1', 'EX', 300).catch(() => {});
+    }
     return true;
   } catch (e) {
     logger.error('banUser xatosi:', { userId: uid, error: e.message });
@@ -886,10 +890,17 @@ async function banUser(userId) {
 async function unbanUser(userId) {
   const uid = String(userId);
   userBannedL1Cache.set(uid, false);
+  localBlockedUsers.delete(uid);
   try {
-    const { error } = await supabase.from('users').update({ is_banned: false }).eq('telegram_id', uid);
-    if (error) throw error;
-    await redis.del(`user_banned:${uid}`).catch(() => {});
+    if (supabase) {
+      const { error } = await supabase.from('users').update({ is_banned: false }).eq('telegram_id', uid);
+      if (error) throw error;
+    }
+    if (redis) {
+      await redis.del(`user_banned:${uid}`).catch(() => {});
+      await redis.del(`user_blocked:${uid}`).catch(() => {});
+    }
+    invalidateSubscribersCache();
     return true;
   } catch (e) {
     logger.error('unbanUser xatosi:', { userId: uid, error: e.message });
@@ -897,18 +908,22 @@ async function unbanUser(userId) {
   }
 }
 
-async function isUserBanned(userId) {
+async function isUserBanned(userId, forceRefresh = false) {
   const uid = String(userId);
-  if (userBannedL1Cache.has(uid)) {
+  if (!forceRefresh && userBannedL1Cache.has(uid)) {
     return userBannedL1Cache.get(uid);
   }
   try {
-    const cached = await redis.get(`user_banned:${uid}`);
-    if (cached !== null) {
-      const isBanned = cached === '1';
-      userBannedL1Cache.set(uid, isBanned);
-      return isBanned;
+    if (!forceRefresh && redis) {
+      const cached = await redis.get(`user_banned:${uid}`);
+      if (cached !== null) {
+        const isBanned = cached === '1';
+        userBannedL1Cache.set(uid, isBanned);
+        return isBanned;
+      }
     }
+
+    if (!supabase) return false;
 
     const { data, error } = await supabase
       .from('users')
@@ -919,7 +934,14 @@ async function isUserBanned(userId) {
     if (error) throw error;
     const isBanned = data?.is_banned === true;
     userBannedL1Cache.set(uid, isBanned);
-    await redis.set(`user_banned:${uid}`, isBanned ? '1' : '0', 'EX', 3600).catch(() => {});
+    if (redis) {
+      if (isBanned) {
+        await redis.set(`user_banned:${uid}`, '1', 'EX', 300).catch(() => {});
+      } else {
+        await redis.del(`user_banned:${uid}`).catch(() => {});
+        await redis.del(`user_blocked:${uid}`).catch(() => {});
+      }
+    }
     return isBanned;
   } catch {
     return false;

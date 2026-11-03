@@ -155,7 +155,9 @@ bot.use(async (ctx, next) => {
 bot.use(async (ctx, next) => {
   const userId = ctx.from?.id;
   if (userId && !isAdmin(userId)) {
-    const isBanned = await dbService.isUserBanned(userId);
+    const text = (ctx.message?.text || '').trim();
+    const isStart = text.startsWith('/start');
+    const isBanned = await dbService.isUserBanned(userId, isStart);
     if (isBanned) {
       if (ctx.callbackQuery) {
         return ctx.answerCbQuery("⛔ Siz botdan bloklangansiz!", { show_alert: true }).catch(() => {});
@@ -339,6 +341,27 @@ bot.command("prewarm_stop", async (ctx) => {
     return ctx.reply("🛑 <b>Pre-warm jarayonini to'xtatish signali yuborildi.</b>\nJoriy rasm yuklanishi bilan to'xtaydi.", { parse_mode: "HTML" });
   } else {
     return ctx.reply("ℹ️ Pre-warm jarayoni ayni paytda ishlamayapti.");
+  }
+});
+
+bot.command("unban", async (ctx) => {
+  if (!isAdmin(ctx.from?.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
+  const parts = (ctx.message?.text || '').trim().split(/\s+/);
+  const targetId = parts[1];
+  if (!targetId || !/^\d+$/.test(targetId)) {
+    return ctx.reply("❌ <b>Foydalanish:</b> <code>/unban &lt;telegram_id&gt;</code>", { parse_mode: "HTML" });
+  }
+
+  const success = await dbService.unbanUser(targetId);
+  if (success) {
+    await ctx.reply(`✅ Foydalanuvchi <code>${targetId}</code> muvaffaqiyatli bandan chiqarildi va barcha keshlar tozalandi.`, { parse_mode: "HTML" });
+    await ctx.telegram.sendMessage(
+      targetId,
+      `🎉 <b>Xushxabar!</b>\n\nSizning hisobingiz blokdan chiqarildi. Botdan foydalanish uchun /start buyrug'ini bosing.`,
+      { parse_mode: "HTML" }
+    ).catch(() => {});
+  } else {
+    await ctx.reply(`❌ <code>${targetId}</code> ni bandan chiqarishda xatolik yuz berdi.`, { parse_mode: "HTML" });
   }
 });
 
