@@ -82,6 +82,35 @@ async function runTests() {
   assert.strictEqual(sortedEdge.length, 4);
   console.log('✅ Test 4 PASSED');
 
+  // Test 5: showUgcSubjectBlocks with loadingMsgId
+  console.log('\n[Test 5] showUgcSubjectBlocks in-place message edit...');
+  const { showUgcSubjectBlocks } = require('../src/handlers/quizGame');
+  const dbService = require('../src/services/dbService');
+
+  const originalGetUserCreatedTests = dbService.getUserCreatedTests;
+  dbService.getUserCreatedTests = async () => [
+    { id: 2, subject: 'Pul va kredit', block_name: 'Pul va kredit (2-qism)', questions: [1] },
+    { id: 1, subject: 'Pul va kredit', block_name: 'Pul va kredit (1-qism)', questions: [1] },
+  ];
+
+  let edited = null;
+  const mockCtx = {
+    chat: { id: 12345 },
+    telegram: {
+      editMessageText: async (chatId, msgId, inlineId, text, opts) => {
+        edited = { chatId, msgId, text, opts };
+      }
+    }
+  };
+
+  await showUgcSubjectBlocks(mockCtx, 'creator1', 'Pul va kredit', 9999);
+  assert(edited !== null, 'Should call editMessageText when loadingMsgId provided');
+  assert.strictEqual(edited.msgId, 9999);
+  assert(edited.text.includes('Pul va kredit'));
+
+  dbService.getUserCreatedTests = originalGetUserCreatedTests;
+  console.log('✅ Test 5 PASSED');
+
   console.log('\n🎉 ALL TESTS PASSED!');
 }
 

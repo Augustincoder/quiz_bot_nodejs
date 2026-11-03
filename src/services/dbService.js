@@ -510,6 +510,7 @@ async function saveUserTest(creatorId, subject, blockName, questions) {
       created_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
     }).select('id');
     if (error) throw error;
+    await invalidateUserCreatedTestsCache(creatorId);
     return data[0].id;
   } catch (e) {
     logger.error('saveUserTest error:', { creatorId, error: e.message });
@@ -530,6 +531,7 @@ async function saveUserTestsBatch(creatorId, subject, blocks) {
     }));
     const { data, error } = await supabase.from('user_tests').insert(rows).select('id');
     if (error) throw error;
+    await invalidateUserCreatedTestsCache(creatorId);
     return (data || []).map((r) => r.id);
   } catch (e) {
     logger.error('saveUserTestsBatch error:', { creatorId, error: e.message });
@@ -563,8 +565,26 @@ async function getUserTest(testId) {
   }
 }
 
-async function getUserCreatedTests(creatorId, includeQuestions = true) {
+async function invalidateUserCreatedTestsCache(creatorId) {
+  if (!creatorId) return;
   try {
+    if (redis) {
+      await redis.del([
+        `cache:user_created_tests:${creatorId}:1`,
+        `cache:user_created_tests:${creatorId}:0`,
+      ]).catch(() => {});
+    }
+  } catch {}
+}
+
+async function getUserCreatedTests(creatorId, includeQuestions = true) {
+  const cacheKey = `cache:user_created_tests:${creatorId}:${includeQuestions ? '1' : '0'}`;
+  try {
+    if (redis) {
+      const cached = await redis.get(cacheKey).catch(() => null);
+      if (cached) return JSON.parse(cached);
+    }
+
     const selectFields = includeQuestions
       ? 'id, subject, block_name, created_at, questions'
       : 'id, subject, block_name, created_at';
@@ -574,6 +594,9 @@ async function getUserCreatedTests(creatorId, includeQuestions = true) {
       .eq('creator_id', String(creatorId))
       .order('id', { ascending: false });
     if (error) throw error;
+    if (data && redis) {
+      await redis.set(cacheKey, JSON.stringify(data), 'EX', 300).catch(() => {});
+    }
     return data || [];
   } catch (err) {
     logger.error('getUserCreatedTests error:', { creatorId, error: err.message });
@@ -591,6 +614,7 @@ async function deleteUserTest(testId, creatorId) {
       .eq('creator_id', String(creatorId));
     if (error) throw error;
     await redis.del(`cache:user_test:${tid}`).catch(() => {});
+    await invalidateUserCreatedTestsCache(creatorId);
     return true;
   } catch (err) {
     logger.error('deleteUserTest error:', { testId: tid, error: err.message });
@@ -608,6 +632,7 @@ async function updateUserTestQuestions(testId, creatorId, newQuestions) {
       .eq('creator_id', String(creatorId));
     if (error) throw error;
     await redis.del(`cache:user_test:${tid}`).catch(() => {});
+    await invalidateUserCreatedTestsCache(creatorId);
     return true;
   } catch (e) {
     logger.error('updateUserTestQuestions error:', { testId: tid, error: e.message });

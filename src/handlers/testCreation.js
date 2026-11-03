@@ -299,7 +299,10 @@ async function cbAutoDocxInit(ctx) {
 
 async function onNameInput(ctx) {
   const result = BlockNameSchema.safeParse(ctx.message.text || "");
-  if (!result.success) return ctx.reply(`❌ ${result.error.errors[0].message}`);
+  if (!result.success) {
+    const errMsg = result.error.issues?.[0]?.message || result.error.errors?.[0]?.message || result.error.message;
+    return ctx.reply(`❌ ${errMsg}`);
+  }
   if (!ctx.session || !ctx.session.data) return cbCancelCreation(ctx);
 
   const block_name = result.data;
@@ -972,16 +975,16 @@ async function showAutoDocxStatusMenu(
 
   const totalValid = chunks.reduce((a, b) => a + b.length, 0);
 
-  const text = `✅ *Fayl muvaffaqiyatli o'qildi!*\n\n📊 Jami to'g'ri savollar: *${totalValid} ta*\n⚠️ Xato formatlar: *${invalidCount} ta*${limitMsg}\n\n_Tizim savollaringizni quyidagi qismlarga ajratdi. Ichiga kirib tekshirishingiz mumkin:_`;
+  const text = `✅ <b>Fayl muvaffaqiyatli o'qildi!</b>\n\n📊 Jami to'g'ri savollar: <b>${totalValid} ta</b>\n⚠️ Xato formatlar: <b>${invalidCount} ta</b>${limitMsg}\n\n<i>Tizim savollaringizni quyidagi qismlarga ajratdi. Ichiga kirib tekshirishingiz mumkin:</i>`;
 
   if (ctx.callbackQuery) {
     await safeEdit(ctx, text, {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard(buttons),
     });
   } else {
     await ctx.reply(text, {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard(buttons),
     });
   }
@@ -1166,7 +1169,15 @@ async function onQuestionMessage(ctx) {
       invalidQs.splice(fixIdx, 1);
     }
 
-    await updateData(ctx, { questions, invalidQs });
+    if (data.is_auto_docx) {
+      const chunks = [];
+      for (let i = 0; i < questions.length; i += 25) {
+        chunks.push(questions.slice(i, i + 25));
+      }
+      await updateData(ctx, { questions, invalidQs, chunks });
+    } else {
+      await updateData(ctx, { questions, invalidQs });
+    }
 
     const msg = await ctx.reply(
       "✅ Savol muvaffaqiyatli to'g'rilandi va qabul qilindi!",
@@ -1764,29 +1775,35 @@ async function cbFixErrors(ctx, targetIdx = null) {
   const data = await getData(ctx);
   const invalidQs = data.invalidQs || [];
 
-  // Agar xatolar tugagan bo'lsa, panelga qaytamiz
+  // Agar xatolar tugagan bo'lsa, tegishli menyuga qaytamiz
   if (invalidQs.length === 0 || idx >= invalidQs.length) {
     await updateData(ctx, { fixing_error_index: undefined });
+    if (data.is_auto_docx && data.chunks) {
+      return showAutoDocxStatusMenu(ctx, data.chunks, 0);
+    }
     return showDraftDashboard(ctx);
   }
 
   const badText = invalidQs[idx];
+  setState(ctx, States.CREATE_QUESTIONS);
   await updateData(ctx, { fixing_error_index: idx });
 
   const text =
-    `⚠️ *Xato Savolni To'g'rilash* (${idx + 1} / ${invalidQs.length})\n\n` +
-    `Ushbu savol formatida xato bor (masalan, to'g'ri javob belgisi \`#\` unutilgan yoki variantlar kam).\n\n` +
-    `*Matnni nusxalang (ustiga bossangiz nusxalanadi), to'g'rilang va menga qayta yuboring:*\n\n` +
-    `\`\`\`\n${escapeMarkdown(badText)}\n\`\`\``;
+    `⚠️ <b>Xato Savolni To'g'rilash</b> (${idx + 1} / ${invalidQs.length})\n\n` +
+    `Ushbu savol formatida xato bor (masalan, to'g'ri javob belgisi <code>#</code> unutilgan yoki variantlar kam).\n\n` +
+    `<b>Matnni nusxalang (ustiga bossangiz nusxalanadi), to'g'rilang va menga qayta yuboring:</b>\n\n` +
+    `<pre><code>${escapeHtml(badText)}</code></pre>`;
+
+  const backAction = data.is_auto_docx ? "show_status_menu" : "back_to_dashboard";
 
   await safeEdit(ctx, text, {
-    parse_mode: "Markdown",
+    parse_mode: "HTML",
     ...Markup.inlineKeyboard([
       [
         Markup.button.callback("⏭ O'tkazib yuborish", `fix_errors_${idx + 1}`),
         Markup.button.callback("🗑 O'chirish", `del_err_${idx}`),
       ],
-      [Markup.button.callback("🔙 Panelga qaytish", "back_to_dashboard")],
+      [Markup.button.callback("🔙 Ortga", backAction)],
     ]),
   });
 }

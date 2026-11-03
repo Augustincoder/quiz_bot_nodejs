@@ -18,13 +18,13 @@ const BlockNameSchema = z.string()
 
 function validateSubject(name) {
   const result = SubjectSchema.safeParse(name);
-  if (!result.success) return result.error.errors[0].message;
+  if (!result.success) return result.error.issues?.[0]?.message || result.error.errors?.[0]?.message || result.error.message;
   return null;
 }
 
 function validateBlockName(name) {
   const result = BlockNameSchema.safeParse(name);
-  if (!result.success) return result.error.errors[0].message;
+  if (!result.success) return result.error.issues?.[0]?.message || result.error.errors?.[0]?.message || result.error.message;
   return null;
 }
 

@@ -278,7 +278,14 @@ const safeEdit = async (ctx, text, extra = {}) => {
       await ctx.reply(safeText, { parse_mode: 'HTML', ...extra });
       return true;
     } catch {
-      return false;
+      try {
+        const plainExtra = { ...extra };
+        delete plainExtra.parse_mode;
+        await ctx.reply(safeText, plainExtra);
+        return true;
+      } catch {
+        return false;
+      }
     }
   }
 };

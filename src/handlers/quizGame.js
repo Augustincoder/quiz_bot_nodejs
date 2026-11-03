@@ -362,12 +362,24 @@ async function cbPostStart(ctx) {
 
 // ─── UGC (USER-GENERATED TESTS) ──────────────────────────────
 
-async function showUgcSubjectBlocks(ctx, creatorId, subject) {
+async function showUgcSubjectBlocks(ctx, creatorId, subject, loadingMsgId = null) {
+  const chatId = ctx.chat?.id || ctx.from?.id;
   try {
     const tests = await dbService.getUserCreatedTests(creatorId);
     const subjTests = naturalSortBlocks(tests.filter((t) => t.subject === subject));
-    if (!subjTests.length)
-      return ctx.reply("❌ Bu fanda bloklar topilmadi.", backToMainKb());
+    if (!subjTests.length) {
+      const emptyText = "❌ Bu fanda bloklar topilmadi.";
+      if (loadingMsgId && chatId) {
+        return ctx.telegram.editMessageText(
+          chatId,
+          loadingMsgId,
+          undefined,
+          emptyText,
+          backToMainKb()
+        ).catch(() => ctx.reply(emptyText, backToMainKb()));
+      }
+      return ctx.reply(emptyText, backToMainKb());
+    }
 
     const buttons = subjTests.map((t) => [
       Markup.button.callback(
@@ -377,10 +389,25 @@ async function showUgcSubjectBlocks(ctx, creatorId, subject) {
     ]);
     buttons.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
 
-    await ctx.reply(
-      `📚 <b>${escapeHtml(subject)}</b>\n\n${subjTests.length} ta blok mavjud. Boshlash uchun blokni tanlang:`,
-      { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) },
-    );
+    const text = `📚 <b>${escapeHtml(subject)}</b>\n\n${subjTests.length} ta blok mavjud. Boshlash uchun blokni tanlang:`;
+    const opts = { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) };
+
+    if (loadingMsgId && chatId) {
+      try {
+        await ctx.telegram.editMessageText(
+          chatId,
+          loadingMsgId,
+          undefined,
+          text,
+          opts
+        );
+        return;
+      } catch (err) {
+        // Fallback agar editMessageText xatolik bersa
+      }
+    }
+
+    await ctx.reply(text, opts);
   } catch (e) {
     console.error("showUgcSubjectBlocks error:", e.message);
   }

@@ -147,7 +147,7 @@ router.post('/upload-questions', async (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({
       error: 'Validatsiya xatosi',
-      details: parsed.error.errors.map(e => `${e.path.join('.')}: ${e.message}`),
+      details: (parsed.error.issues || parsed.error.errors || []).map(e => `${e.path.join('.')}: ${e.message}`),
     });
   }
 

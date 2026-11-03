@@ -98,10 +98,28 @@ async function cmdStart(ctx) {
   if (args.length > 1) {
     const param = args[1];
     if (param.startsWith('s_')) {
+      ctx.sendChatAction('typing').catch(() => {});
+      const loadingMsg = await ctx.reply(
+        '⏳ <b>Fan bloklari yuklanmoqda...</b>\n<i>Iltimos, kuting...</i>',
+        { parse_mode: 'HTML' }
+      ).catch(() => null);
+
       const testData = await dbService.getUserTest(param.slice(2));
-      if (!testData) return ctx.reply('❌ Bu fan topilmadi yoki o\'chirilgan.', backToMainKb());
+      if (!testData) {
+        const notFoundText = '❌ Bu fan topilmadi yoki o\'chirilgan.';
+        if (loadingMsg) {
+          return ctx.telegram.editMessageText(
+            chatId,
+            loadingMsg.message_id,
+            undefined,
+            notFoundText,
+            backToMainKb()
+          ).catch(() => ctx.reply(notFoundText, backToMainKb()));
+        }
+        return ctx.reply(notFoundText, backToMainKb());
+      }
       const { showUgcSubjectBlocks } = require('./quizGame');
-      return showUgcSubjectBlocks(ctx, testData.creator_id, testData.subject);
+      return showUgcSubjectBlocks(ctx, testData.creator_id, testData.subject, loadingMsg?.message_id);
     }
     if (param.startsWith('t_')) {
       const testData = await dbService.getUserTest(param.slice(2));
