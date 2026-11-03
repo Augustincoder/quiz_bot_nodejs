@@ -5,7 +5,7 @@ process.env.BOT_TOKEN = process.env.BOT_TOKEN || '123456:TEST_TOKEN_XYZ';
 
 const assert = require('assert');
 const { BlockNameSchema, SubjectSchema, validateBlockName, validateSubject } = require('../src/validators/testValidators');
-const { escapeHtml, safeEdit } = require('../src/core/utils');
+const { escapeHtml, safeEdit, parseTextQuestions } = require('../src/core/utils');
 
 async function runTests() {
   console.log('--- TEST: DOCX FIX ERRORS & ZOD V4 COMPATIBILITY ---');
@@ -64,6 +64,39 @@ async function runTests() {
   assert.strictEqual(replyCalls.length, 2, 'Should have attempted formatted reply then unformatted reply');
   assert.strictEqual(replyCalls[1].extra.parse_mode, undefined, 'Second attempt should omit parse_mode');
   console.log('✅ Test 4 PASSED');
+
+  // Test 5: parseTextQuestions with ===== delimiter and # on 4th option
+  console.log('\n[Test 5] parseTextQuestions with ===== delimiter and # on 4th option...');
+  const hemisQuiz = `
++++++
+Savol 1 matni
+=====
+Variant 1
+=====
+Variant 2
+=====
+Variant 3
+=====
+#Variant 4 (to'g'ri)
++++++
+Savol 2 matni
+=====
+Variant 1
+=====
+#Variant 2 (to'g'ri)
+=====
+Variant 3
+=====
+Variant 4
+`;
+  const parsedHemis = parseTextQuestions(hemisQuiz, 'hash');
+  assert.strictEqual(parsedHemis.invalid.length, 0, 'No invalid questions');
+  assert.strictEqual(parsedHemis.valid.length, 2, 'Should parse 2 valid questions');
+  assert.strictEqual(parsedHemis.valid[0].options.length, 4, 'Question 1 should retain all 4 options');
+  assert.strictEqual(parsedHemis.valid[0].correct_index, 3, 'Question 1 correct option is index 3');
+  assert.strictEqual(parsedHemis.valid[1].options.length, 4, 'Question 2 should retain all 4 options');
+  assert.strictEqual(parsedHemis.valid[1].correct_index, 1, 'Question 2 correct option is index 1');
+  console.log('✅ Test 5 PASSED');
 
   console.log('\n🎉 ALL TESTS PASSED!');
 }

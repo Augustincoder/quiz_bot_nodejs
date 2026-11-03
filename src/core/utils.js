@@ -381,15 +381,16 @@ function parseTextQuestions(text, mode = 'hash') {
     if (parts.length < 2) { invalid.push(block.trim()); continue; }
 
     // Birinchi variant boshlanish indeksini aniqlash (ko'p qatorli savollarni saqlash uchun)
-    let firstOptIdx = -1;
-    for (let i = 1; i < parts.length; i++) {
-      const p = parts[i];
-      if ((mode === 'hash' && p.startsWith('#')) || /^[a-zA-Z0-9][\)\.]\s*/.test(p)) {
-        firstOptIdx = i;
-        break;
+    let firstOptIdx = 1;
+    if (!block.includes('=====')) {
+      for (let i = 1; i < parts.length; i++) {
+        const p = parts[i];
+        if (/^[#*]?\s*[a-zA-Z0-9][\)\.]\s*/.test(p)) {
+          firstOptIdx = i;
+          break;
+        }
       }
     }
-    if (firstOptIdx === -1) firstOptIdx = 1;
 
     let questionLines = parts.slice(0, firstOptIdx);
     let questionText = questionLines.join('\n').replace(/^\d+[\)\.]\s*/, '').trim();
