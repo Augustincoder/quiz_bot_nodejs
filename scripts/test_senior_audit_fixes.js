@@ -490,6 +490,21 @@ assert(groupQuizLogicCode.includes('session.questionState === "ACTIVE" || sessio
 assert(groupQuizLogicCode.includes('session.marathonBlocks?.[session.currentBlockIdx] || {}'), 'cbRoomNextBlock must safely access marathonBlocks');
 console.log('  ✅ [PASS] Deep Audit: Marathon active session preserved across blocks and double-start guarded.\n');
 
+
+// ─── TEST 26: Shelf 64-byte Safety, Folder Guards & DB Upsert Fallback ───
+console.log('26. Testing Shelf 64-byte Safety, Folder Guards & DB Upsert Fallback');
+const shelfSrc = fs.readFileSync(require.resolve('../src/handlers/shelfHandlers'), 'utf8');
+assert(shelfSrc.includes('safeCallbackData'), 'shelfHandlers must use safeCallbackData for dynamic buttons');
+assert(shelfSrc.includes('Buffer.byteLength(folderName, "utf8") > 30'), 'onNewFolderInput must guard folder byte length <= 30');
+assert(shelfSrc.includes('String(test.testName || test.name || "Test")'), 'cbOpenFolder must safely handle missing testName without throw');
+
+const dbServiceShelfSrc = fs.readFileSync(require.resolve('../src/services/dbService'), 'utf8');
+assert(dbServiceShelfSrc.includes(".update({ shelf }).eq('user_id', uid).select('user_id')"), "dbService updateUserShelf/saveTestToShelf must check update row count via select");
+
+const startHandlerShelfSrc = fs.readFileSync(require.resolve('../src/handlers/startHandler'), 'utf8');
+assert(startHandlerShelfSrc.includes('if (folderName.length > 20) folderName = folderName.slice(0, 20);'), 'startHandler must clamp shelf folderName to <= 20 chars');
+console.log('  ✅ [PASS] Shelf 64-byte safety, folder guards and DB upsert fallback verified.\n');
+
 console.log('==================================================');
 console.log('🎉 ALL SENIOR AUDIT BUG FIXES VERIFIED SUCCESSFULLY!');
 console.log('==================================================');

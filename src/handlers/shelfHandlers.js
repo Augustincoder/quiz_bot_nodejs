@@ -7,6 +7,7 @@ const {
   clearState,
   safeEdit,
   escapeHtml,
+  safeCallbackData,
 } = require("../core/utils");
 const { Markup } = require("telegraf");
 const logger = require("../core/logger");
@@ -37,10 +38,10 @@ async function cbShelfSaveInit(ctx) {
 
     const buttons = [];
     folders.forEach(f => {
-      buttons.push([Markup.button.callback(`📁 ${f} papkasiga`, `sh_save_${f}`)]);
+      buttons.push([Markup.button.callback(`📁 ${f} papkasiga`, safeCallbackData(`sh_save_${f}`, 64))]);
     });
     if (data.subject && !folders.includes(data.subject)) {
-      buttons.push([Markup.button.callback(`📁 "${data.subject}" papkasiga`, `sh_save_${data.subject}`)]);
+      buttons.push([Markup.button.callback(`📁 "${data.subject}" papkasiga`, safeCallbackData(`sh_save_${data.subject}`, 64))]);
     }
     buttons.push([Markup.button.callback("➕ Yangi papka ochish", "sh_new_folder")]);
     buttons.push([Markup.button.callback("❌ Bekor qilish", "back_to_main")]);
@@ -90,9 +91,9 @@ async function cbShelfNewFolder(ctx) {
 async function onNewFolderInput(ctx) {
   try {
     const folderName = ctx.message.text.trim();
-    if (folderName.length > 30)
+    if (folderName.length > 20 || Buffer.byteLength(folderName, "utf8") > 30)
       return ctx.reply(
-        "⚠️ Papka nomi juda uzun! Iltimos, 30 ta belgidan oshmaydigan nom kiriting.\n\n💡 Qisqa va tushunarli nom tanlang.",
+        "⚠️ Papka nomi juda uzun! Iltimos, 20 ta belgidan oshmaydigan nom kiriting.\n\n💡 Qisqa va tushunarli nom tanlang.",
       );
     if (folderName.length < 2)
       return ctx.reply("⚠️ Papka nomi juda qisqa. Kamida 2 ta belgi kiriting.\n\n💡 Masalan: \"Midterm\", \"5-Bob\"");
@@ -271,14 +272,15 @@ async function cbOpenFolder(ctx) {
 
     const buttons = [];
     folderTests.forEach((test, idx) => {
+      const tName = String(test.testName || test.name || "Test");
       const displayName =
-        test.testName.length > 25
-          ? test.testName.slice(0, 22) + "..."
-          : test.testName;
+        tName.length > 25
+          ? tName.slice(0, 22) + "..."
+          : tName;
       buttons.push([
         Markup.button.callback(
           `📝 ${displayName}`,
-          `sh_view_${folderName}_${idx}`,
+          safeCallbackData(`sh_view_${folderName}_${idx}`, 64),
         ),
       ]);
     });
@@ -286,7 +288,7 @@ async function cbOpenFolder(ctx) {
     buttons.push([
       Markup.button.callback(
         "🗑 Papkani o'chirish",
-        `sh_del_folder_${folderName}`,
+        safeCallbackData(`sh_del_folder_${folderName}`, 64),
       ),
     ]);
     buttons.push([
@@ -348,14 +350,14 @@ async function cbViewTest(ctx) {
       `💡 <b>Maslahat:</b> Testni qolgan joyidan davom ettirganingizda, oldingi natijalaringiz (to'g'ri/xatolar) saqlanib qoladi va test vaqti asabingizni buzmaydi.`;
 
     const buttons = [
-      [Markup.button.callback(resumeBtnText, `sh_run_${folderName}_${idx}`)],
+      [Markup.button.callback(resumeBtnText, safeCallbackData(`sh_run_${folderName}_${idx}`, 64))],
       [
         Markup.button.callback(
           "🗑 Javondan o'chirish",
-          `sh_del_test_${folderName}_${idx}`,
+          safeCallbackData(`sh_del_test_${folderName}_${idx}`, 64),
         ),
       ],
-      [Markup.button.callback("🔙 Papkaga qaytish", `sh_open_${folderName}`)],
+      [Markup.button.callback("🔙 Papkaga qaytish", safeCallbackData(`sh_open_${folderName}`, 64))],
     ];
 
     await safeEdit(ctx, text, {
@@ -382,6 +384,9 @@ async function cbDeleteTest(ctx) {
       await dbService.updateUserShelf(ctx.from.id, shelf);
     }
 
+    if (!shelf[folderName]) {
+      return cbMyShelf(ctx);
+    }
     ctx.callbackQuery.data = `sh_open_${folderName}`;
     await cbOpenFolder(ctx);
   } catch (e) {

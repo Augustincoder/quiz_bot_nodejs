@@ -70,7 +70,8 @@ async function cmdStart(ctx) {
     
     // Testni o'chirish o'rniga javonga saqlaymiz
     if (session.sessionQuestions && session.sessionQuestions.length > 0 && session.qIdx < session.sessionQuestions.length) {
-      const folderName = session.subjectKey || "Boshqalar";
+      let folderName = session.subjectKey || "Boshqalar";
+      if (folderName.length > 20) folderName = folderName.slice(0, 20);
       let shelfTestId = session.testId || Date.now();
       if (shelfTestId === "mock" || shelfTestId === "adaptive" || shelfTestId === "retry") {
         shelfTestId = `${shelfTestId}_${Date.now()}`;

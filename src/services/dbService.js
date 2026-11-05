@@ -1125,7 +1125,10 @@ async function getUserShelf(userId) {
 async function updateUserShelf(userId, shelf) {
   const uid = String(userId);
   try {
-    const { error } = await supabase.from('user_stats').update({ shelf }).eq('user_id', uid);
+    const { data: updateData, error } = await supabase.from('user_stats').update({ shelf }).eq('user_id', uid).select('user_id');
+    if (error || !updateData || updateData.length === 0) {
+      await supabase.from('user_stats').upsert({ user_id: uid, shelf }, { onConflict: 'user_id' });
+    }
     if (error) throw error;
     await redis.del(`cache:user_stats:${uid}`).catch(() => {});
     return true;
@@ -1184,8 +1187,8 @@ async function saveTestToShelf(userId, folderName, testInfo) {
         });
       }
 
-      const { error } = await supabase.from('user_stats').update({ shelf }).eq('user_id', uid);
-      if (error) {
+      const { data: updateData, error } = await supabase.from('user_stats').update({ shelf }).eq('user_id', uid).select('user_id');
+      if (error || !updateData || updateData.length === 0) {
         stats.shelf = shelf;
         delete stats._fetchFailed;
         const { error: upsertErr } = await supabase.from('user_stats').upsert(stats, { onConflict: 'user_id' });
