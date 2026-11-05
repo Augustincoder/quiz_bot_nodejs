@@ -143,7 +143,18 @@ bot.use(async (ctx, next) => {
       } else {
         const newSessionStr = JSON.stringify(sess);
         if (originalSessionStr !== newSessionStr) {
-          await redisConnection.set(key, newSessionStr, "EX", 86400);
+          // Concurrent updates merge check (Bug #19 fix)
+          const latestRedisStr = await redisConnection.get(key).catch(() => null);
+          if (latestRedisStr && latestRedisStr !== originalSessionStr) {
+            try {
+              const latestSess = JSON.parse(latestRedisStr);
+              sess.data = { ...(latestSess.data || {}), ...(sess.data || {}) };
+              if (sess.state === JSON.parse(originalSessionStr).state && latestSess.state) {
+                sess.state = latestSess.state;
+              }
+            } catch {}
+          }
+          await redisConnection.set(key, JSON.stringify(sess), "EX", 86400);
         }
       }
     } catch (err) {
@@ -381,11 +392,15 @@ bot.on("message", async (ctx, next) => {
 
   const text = (ctx.message?.text || '').trim();
   const isCommand = text.startsWith('/');
-  const isMainMenuButton = [
+  const mainMenuButtons = [
+    '📅 Bugungi jadval', '🖼 Haftalik jadval', '🏢 Bo\'sh xonalar', '🏢 Bo‘sh xonalar',
+    '⚙️ Guruhni sozlash', '🔙 Asosiy menyu',
     '📅 Dars jadvali', '🧪 Testlar', '🤖 AI Yordamchi', '👤 Profil', '📊 Statistika',
     '🔍 Guruh qidirish', '🏢 Bo\'sh xonalar', '📚 Rasmiy Testlar', '📝 O\'z Testlarim',
-    '🔙 Ortga', '🏠 Asosiy Menyu', '❌ Bekor qilish', '🏠 Bosh menyu'
-  ].some(btn => text.includes(btn));
+    '🔙 Ortga', '🏠 Asosiy Menyu', '❌ Bekor qilish', '🏠 Bosh menyu',
+    '📂 O\'z Testlarim',
+  ];
+  const isMainMenuButton = mainMenuButtons.includes(text);
 
   // Bug 48 fix: Stale wizard state bleed prevention
   // If user enters a command or menu button, immediately clear pending wizard state and let command/menu run

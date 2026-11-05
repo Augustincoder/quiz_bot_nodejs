@@ -130,7 +130,7 @@ async function cbHistoryPage(ctx) {
     const page = Math.max(0, parseInt(raw, 10) || 0);
 
     const stats = await dbService.getUserStats(ctx.from.id);
-    const history = (stats.history || []).slice().reverse(); // newest first
+    const history = Array.isArray(stats.history) ? stats.history : []; // newest first (unshifted)
 
     if (!history.length) {
       return safeEdit(

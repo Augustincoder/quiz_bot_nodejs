@@ -32,6 +32,8 @@ const {
   handlePollAnswer,
   questionTimeout,
   lastMistakesCache,
+  groupTestCache,
+  cancelSessionTimer,
 } = require("./coreQuiz");
 const {
   cbRoomReady,
@@ -122,6 +124,8 @@ async function initAndStartTest(
     initiatorId,
     subjectKey,
     testId,
+    subjectId: testData?.subject_id || null,
+    creatorId: testData?.creator_id || null,
     blockName: blockName,
     sessionQuestions: sessionQ,
     qIdx: 0,
@@ -362,11 +366,42 @@ async function cbPostStart(ctx) {
 
 // ─── UGC (USER-GENERATED TESTS) ──────────────────────────────
 
-async function showUgcSubjectBlocks(ctx, creatorId, subject, loadingMsgId = null) {
+async function showUgcSubjectBlocks(ctx, subjectIdOrCreator, subjectName = null, loadingMsgId = null) {
   const chatId = ctx.chat?.id || ctx.from?.id;
   try {
-    const tests = await dbService.getUserCreatedTests(creatorId);
-    const subjTests = naturalSortBlocks(tests.filter((t) => t.subject === subject));
+    let subjTests = [];
+    let titleSubject = subjectName;
+
+    const numericId = parseInt(subjectIdOrCreator, 10);
+    // Agar birinchi parametr raqam bo'lsa (subject_id yoki eski test_id)
+    if (!isNaN(numericId) && numericId > 0 && !subjectName) {
+      const subject = await dbService.getSubjectById(numericId);
+      if (subject) {
+        titleSubject = subject.name;
+        subjTests = await dbService.getSubjectBlocks(subject.id);
+      } else {
+        // Fallback agar numericId eski test_id bo'lsa
+        const testData = await dbService.getUserTest(numericId);
+        if (testData) {
+          titleSubject = testData.subject;
+          if (testData.subject_id) {
+            subjTests = await dbService.getSubjectBlocks(testData.subject_id);
+          } else {
+            const tests = await dbService.getUserCreatedTests(testData.creator_id);
+            subjTests = naturalSortBlocks((tests || []).filter((t) => t.subject === testData.subject));
+          }
+        }
+      }
+    } else if (numericId && subjectName) {
+      subjTests = await dbService.getSubjectBlocks(numericId);
+      titleSubject = subjectName;
+    } else {
+      // Legacy signature: (ctx, creatorId, subjectName, loadingMsgId)
+      const tests = await dbService.getUserCreatedTests(subjectIdOrCreator);
+      subjTests = naturalSortBlocks((tests || []).filter((t) => t.subject === subjectName));
+      titleSubject = subjectName;
+    }
+
     if (!subjTests.length) {
       const emptyText = "❌ Bu fanda bloklar topilmadi.";
       if (loadingMsgId && chatId) {
@@ -389,7 +424,7 @@ async function showUgcSubjectBlocks(ctx, creatorId, subject, loadingMsgId = null
     ]);
     buttons.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
 
-    const text = `📚 <b>${escapeHtml(subject)}</b>\n\n${subjTests.length} ta blok mavjud. Boshlash uchun blokni tanlang:`;
+    const text = `📚 <b>${escapeHtml(titleSubject || "Fan")}</b>\n\n${subjTests.length} ta blok mavjud. Boshlash uchun blokni tanlang:`;
     const opts = { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) };
 
     if (loadingMsgId && chatId) {
@@ -402,15 +437,25 @@ async function showUgcSubjectBlocks(ctx, creatorId, subject, loadingMsgId = null
           opts
         );
         return;
-      } catch (err) {
+      } catch {
         // Fallback agar editMessageText xatolik bersa
       }
+    }
+
+    if (ctx.callbackQuery) {
+      return safeEdit(ctx, text, opts);
     }
 
     await ctx.reply(text, opts);
   } catch (e) {
     console.error("showUgcSubjectBlocks error:", e.message);
   }
+}
+
+async function cbUgcSubj(ctx) {
+  await safeAnswerCb(ctx);
+  const subjectId = parseSuffix(ctx.callbackQuery.data, "ugc_subj_");
+  await showUgcSubjectBlocks(ctx, subjectId);
 }
 
 async function startUgcTest(ctx, testDb) {
@@ -659,8 +704,12 @@ async function cbPauseShelf(ctx) {
   if (!session) return safeEdit(ctx, "⚠️ Faol test topilmadi.");
 
   // Chala qolgan ma'lumotlarni yig'amiz
+  let saveTestId = session.testId;
+  if (saveTestId === "mock" || saveTestId === "adaptive" || saveTestId === "retry") {
+    saveTestId = `${saveTestId}_${Date.now()}`;
+  }
   const shelfData = {
-    testId: session.testId,
+    testId: saveTestId,
     testName: session.blockName || "Noma'lum blok",
     subject: session.subjectKey || "Noma'lum fan",
     questions: session.sessionQuestions || [],
@@ -671,13 +720,12 @@ async function cbPauseShelf(ctx) {
     },
   };
 
-  // 1. Redisga xavfsiz saqlaymiz (Oldingi qadamda qilgan himoyamiz)
-  // const redisConnection = require("../services/redisService");
+  // 1. Redisga xavfsiz saqlaymiz
   await redisConnection
     .set(`shelf_pending:${chatId}`, JSON.stringify(shelfData), "EX", 86400)
     .catch(() => { });
 
-  // 2. Faol testni tozalaymiz
+  // 2. Faol testni to'xtatamiz (deleteActiveTest esa executeSave da saqlash tasdiqlanganda o'chiriladi)
   if (session.pollId)
     await sessionService.deletePollChat(session.pollId).catch(() => { });
   try {
@@ -686,7 +734,8 @@ async function cbPauseShelf(ctx) {
   } catch {
     /* silent */
   }
-  await sessionService.deleteActiveTest(chatId).catch(() => { });
+  session.status = "paused";
+  await sessionService.setActiveTest(chatId, session).catch(() => {});
 
   await safeEdit(
     ctx,
@@ -768,9 +817,16 @@ async function cbReviewMistakes(ctx) {
 
   const metaRaw = await redisConnection.get(`mistakes_meta:${ctx.chat.id}`).catch(() => null);
   const meta = metaRaw ? JSON.parse(metaRaw) : null;
-  const backBtn = meta?.subjectKey
-    ? Markup.button.callback("🔙 Fan menyusiga qaytish", `post_subj_${meta.subjectKey}`)
-    : Markup.button.callback("🏠 Asosiy Menyu", "post_main");
+  let backBtn;
+  if (meta?.isUgc) {
+    backBtn = meta.subjectId
+      ? Markup.button.callback("🔙 Fan bloklariga qaytish", `ugc_subj_${meta.subjectId}`)
+      : Markup.button.callback("🔙 Mening testlarim", "my_tests");
+  } else if (meta?.subjectKey && meta.subjectKey !== "main") {
+    backBtn = Markup.button.callback("🔙 Fan menyusiga qaytish", `post_subj_${meta.subjectKey}`);
+  } else {
+    backBtn = Markup.button.callback("🏠 Asosiy Menyu", "post_main");
+  }
   buttons.push([backBtn]);
 
   await safeEdit(ctx, parts.join("\n\n"), {
@@ -795,6 +851,15 @@ async function cbWorkMistakesMenu(ctx) {
         .answerCbQuery("🎉 Xatolar topilmadi!", { show_alert: true })
         .catch(() => { });
 
+    const metaRaw = await redisConnection.get(`mistakes_meta:${ctx.chat.id}`).catch(() => null);
+    const meta = metaRaw ? JSON.parse(metaRaw) : null;
+    let backCallback = `post_subj_${subjectKey}`;
+    let backLabel = "🔙 Fan menyusiga";
+    if (meta?.isUgc) {
+      backCallback = meta.subjectId ? `ugc_subj_${meta.subjectId}` : "my_tests";
+      backLabel = meta.subjectId ? "🔙 Fan bloklariga" : "🔙 Mening testlarim";
+    }
+
     await safeEdit(
       ctx,
       `🔄 <b>Xatolar ustida ishlash</b>\n\nSizda jami <b>${mistakes.length} ta</b> xato bor. Qaysi usulda qayta ishlamoqchisiz?`,
@@ -815,10 +880,10 @@ async function cbWorkMistakesMenu(ctx) {
           ],
           [
             Markup.button.callback(
-              "🔙 Fan menyusiga",
-              `post_subj_${subjectKey}`,
+              backLabel,
+              backCallback,
             ),
-          ], // <-- Asosiy emas, Fanga qaytadi!
+          ],
         ]),
       },
     );
@@ -873,11 +938,16 @@ async function cbWmStartInline(ctx) {
       return ctx.answerCbQuery("⚠️ Xatoliklar topilmadi yoki vaqti tugagan!", { show_alert: true }).catch(() => { });
     }
 
+    const metaRaw = await redisConnection.get(`mistakes_meta:${chatId}`).catch(() => null);
+    const meta = metaRaw ? JSON.parse(metaRaw) : null;
+
     const stateData = {
       queue: [...mistakes],
       total: mistakes.length,
       startTime: Date.now(),
-      subjectKey: subjectKey, // <-- Fanni Interaktiv xotiraga yozib qo'yamiz!
+      subjectKey: subjectKey,
+      isUgc: Boolean(meta?.isUgc),
+      subjectId: meta?.subjectId || null,
     };
 
     const redisConnection = require("../services/redisService");
@@ -923,9 +993,13 @@ async function sendNextInlineMistake(ctx) {
     const queue = state.queue || [];
 
     // 🤖 Qaysi fanga qaytishni aniqlaymiz
-    const subjKey = state.subjectKey || "main";
-    const backAction =
-      subjKey !== "main" ? `post_subj_${subjKey}` : "back_to_main";
+    let backAction;
+    if (state.isUgc) {
+      backAction = state.subjectId ? `ugc_subj_${state.subjectId}` : "my_tests";
+    } else {
+      const subjKey = state.subjectKey || "main";
+      backAction = subjKey !== "main" ? `post_subj_${subjKey}` : "back_to_main";
+    }
 
     // 🏆 G'alaba ekrani
     if (queue.length === 0) {
@@ -951,7 +1025,11 @@ async function sendNextInlineMistake(ctx) {
     let correctIdx = q.correct_index;
 
     if (!options || options.length === 0) {
-      options = [String(q.correct_ans), String(q.wrong_ans)];
+      let wrongAns = String(q.wrong_ans || '').trim();
+      if (!wrongAns || wrongAns.includes("Vaqt tugadi")) {
+        wrongAns = "Variant B";
+      }
+      options = [String(q.correct_ans), wrongAns];
       // Aralashtirish (Shuffle)
       options.sort(() => Math.random() - 0.5);
       correctIdx = options.indexOf(String(q.correct_ans));
@@ -1007,6 +1085,7 @@ async function sendNextInlineMistake(ctx) {
     // Haqiqiy avto-taymer (20 soniya)
     const wmTimer = setTimeout(async () => {
       activeWmTimers.delete(chatId);
+      const unlock = await mutex.lock(`wm_ans:${chatId}`);
       try {
         const rawState = await redisConnection.get(`wm_state:${chatId}`);
         if (!rawState) return; // O'yin allaqachon tugagan
@@ -1031,6 +1110,8 @@ async function sendNextInlineMistake(ctx) {
         }
       } catch (err) {
         console.error("Inline Timeout Xatosi:", err.message);
+      } finally {
+        unlock();
       }
     }, 20000);
     wmTimer.unref();
@@ -1301,12 +1382,12 @@ async function cbForceFinish(ctx) {
       await sessionService.deletePollChat(session.pollId).catch(() => { });
     }
     try {
-      const { quizTimerQueue } = require("../jobs/queues");
-      quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
+      await cancelSessionTimer(session, chatId);
     } catch {
       /* silent */
     }
     await sessionService.deleteActiveTest(chatId).catch(() => { });
+    await groupTestCache.delete(chatId);
   }
 
   await safeDelete(ctx); // Bosilgan menyuni ekrandan tozalaymiz
@@ -1398,6 +1479,8 @@ module.exports = {
   cbReviewMistakes,
   cbAiExplainMistakes,
   cbAdaptiveTest,
+  showUgcSubjectBlocks,
+  cbUgcSubj,
   cbAdaptiveRun,
   showUgcSubjectBlocks,
   startUgcTest,

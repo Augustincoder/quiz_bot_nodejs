@@ -15,6 +15,7 @@ const {
   truncateText,
 } = require("../core/utils");
 const redisConnection = require("../services/redisService");
+const { buildShareLink } = require("../services/shareService");
 
 
 // ─── REDIS-BACKED ACTIVE POLLS VA GROUP CACHE ─────────────────────────────
@@ -36,6 +37,18 @@ const groupTestCache = {
   },
   delete: async (chatId) => await redisConnection.del(`group_cache:${chatId}`)
 };
+
+async function cancelSessionTimer(session, chatId) {
+  try {
+    const { quizTimerQueue } = require("../jobs/queues");
+    if (!quizTimerQueue) return;
+    const jId = session?.timerJobId || (session?.pollId ? `timeout:${chatId}:${session?.qIdx}:${session.pollId}` : `timeout:${chatId}:${session?.qIdx}`);
+    await quizTimerQueue.getJob(jId).then(j => j && j.remove()).catch(() => {});
+    if (session?.qIdx !== undefined) {
+      quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
+    }
+  } catch {}
+}
 // ─── Redis-backed Mistakes Cache ─────────────────────────────
 const lastMistakesCache = {
   set: async (chatId, mistakes) => {
@@ -61,7 +74,7 @@ function resolveTestName(tId, blockName) {
 }
 
 // ─── TUGMALARNI YASASH FUNKSIYASI (YANGILANGAN) ───
-function buildFinishButtons(tId, subjectKey, mistakesCount = 0) {
+async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = null) {
   const btns = [];
 
   // Agar xatolar bo'lsa, 2 ta tugmani ham chiqaramiz
@@ -78,13 +91,60 @@ function buildFinishButtons(tId, subjectKey, mistakesCount = 0) {
   }
 
   const sid = String(tId);
-  if (sid.startsWith("ugc_")) {
+  const isUgcSession = sid.startsWith("ugc_") || Boolean(session?.creatorId) || Boolean(session?.subjectId);
+  if (isUgcSession) {
+    const rawTestId = sid.startsWith("ugc_") ? parseInt(sid.replace("ugc_", ""), 10) : parseInt(sid, 10);
+    let nextBlock = null;
+    let subjectId = session?.subjectId;
+
+    // Agar sessionda subjectId bo'lmasa, testDb dan aniqlaymiz
+    if (!subjectId && !isNaN(rawTestId)) {
+      try {
+        const testDb = await dbService.getUserTest(rawTestId);
+        if (testDb?.subject_id) subjectId = testDb.subject_id;
+      } catch {}
+    }
+
+    if (subjectId) {
+      try {
+        const blocks = await dbService.getSubjectBlocks(subjectId);
+        const curIdx = blocks.findIndex((b) => parseInt(b.id, 10) === rawTestId);
+        if (curIdx !== -1 && curIdx + 1 < blocks.length) {
+          nextBlock = blocks[curIdx + 1];
+        }
+      } catch (err) {
+        console.error("Error finding next UGC block:", err.message);
+      }
+    }
+
+    if (nextBlock) {
+      btns.push([
+        Markup.button.callback(
+          `➡️ Keyingi (${nextBlock.block_name})`,
+          `ugc_start_${nextBlock.id}`,
+        ),
+      ]);
+    }
+
     btns.push([
       Markup.button.callback(
         "🔁 Qayta ishlash",
-        `ugc_start_${sid.replace("ugc_", "")}`,
+        `ugc_start_${rawTestId}`,
       ),
     ]);
+
+    if (subjectId) {
+      btns.push([
+        Markup.button.callback(
+          "📚 Fan bloklari",
+          `ugc_subj_${subjectId}`,
+        ),
+      ]);
+    }
+
+    btns.push([Markup.button.callback("📥 Javonga saqlash", "shelf_save_init")]);
+    btns.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
+    return btns;
   } else if (sid === "mock") {
     btns.push([
       Markup.button.callback("🎲 Yana aralash", `mock_${subjectKey}`),
@@ -93,17 +153,22 @@ function buildFinishButtons(tId, subjectKey, mistakesCount = 0) {
     btns.push([
       Markup.button.callback("🎯 Yana adaptiv", `adaptive_${subjectKey}`),
     ]);
-  } else if (sid.startsWith("retry_")) {
-    const originalId = parseInt(sid.replace("retry_", ""), 10);
-    if (!isNaN(originalId)) {
-      const memDb = require("../core/bot").memoryDb || {};
-      if ((memDb[subjectKey] || {})[originalId + 1]) {
-        btns.push([
-          Markup.button.callback(`➡️ Keyingi (${originalId + 1}-Blok)`, `post_start_${subjectKey}_${originalId + 1}`)
-        ]);
+  } else if (sid === "retry" || sid.startsWith("retry_")) {
+    btns.push([
+      Markup.button.callback("🔁 Xatolarni qayta ishlash", `wm_start_quiz_${subjectKey}`),
+    ]);
+    if (sid.startsWith("retry_")) {
+      const originalId = parseInt(sid.replace("retry_", ""), 10);
+      if (!isNaN(originalId)) {
+        const memDb = require("../core/bot").memoryDb || {};
+        if ((memDb[subjectKey] || {})[originalId + 1]) {
+          btns.push([
+            Markup.button.callback(`➡️ Keyingi (${originalId + 1}-Blok)`, `post_start_${subjectKey}_${originalId + 1}`)
+          ]);
+        }
       }
     }
-  }  else {
+  } else {
     btns.push([
       Markup.button.callback(
         "🔁 Qayta ishlash",
@@ -158,6 +223,9 @@ async function sendNextQuestion(chatId, telegram) {
     if (correctIndex < 0 || correctIndex >= options.length) {
       correctIndex = 0;
     }
+    // Bug #9 fix: Sinxronlash (Poll va savol indeksi 100% mos bo'lishi shart)
+    q.options = options;
+    q.correct_index = correctIndex;
 
     const qFull = `${progress} ${q.question || ""}`;
     const needsSplit =
@@ -223,10 +291,7 @@ async function sendNextQuestion(chatId, telegram) {
         if (session?.pollId) {
           await sessionService.deletePollChat(session.pollId).catch(() => {});
         }
-        try {
-          const { quizTimerQueue } = require("../jobs/queues");
-          await quizTimerQueue.getJob(`timeout:${chatId}:${session?.qIdx}`).then(j => j && j.remove()).catch(() => {});
-        } catch {}
+        await cancelSessionTimer(session, chatId);
         return;
       }
 
@@ -297,12 +362,16 @@ async function sendNextQuestion(chatId, telegram) {
     await sessionService.setPollChat(msg.poll.id, String(chatId));
 
     const { quizTimerQueue } = require("../jobs/queues");
+    const timerJobId = `timeout:${chatId}:${session.qIdx}:${msg.poll.id}`;
+    session.timerJobId = timerJobId;
+    await sessionService.setActiveTest(chatId, session);
+
     await quizTimerQueue.add(
       "timeout",
       { chatId, expectedIdx: session.qIdx, pollId: msg.poll.id },
       {
         delay: 31_000,
-        jobId: `timeout:${chatId}:${session.qIdx}`,
+        jobId: timerJobId,
         removeOnComplete: true,
       },
     );
@@ -327,10 +396,7 @@ async function sendNextQuestion(chatId, telegram) {
       if (session?.pollId) {
         await sessionService.deletePollChat(session.pollId).catch(() => {});
       }
-      try {
-        const { quizTimerQueue } = require("../jobs/queues");
-        await quizTimerQueue.getJob(`timeout:${chatId}:${session?.qIdx}`).then(j => j && j.remove()).catch(() => {});
-      } catch {}
+      await cancelSessionTimer(session, chatId);
       return;
     }
 
@@ -372,20 +438,15 @@ async function finishTest(chatId, telegram) {
     unlock();
   }
 
-  try {
-    const { quizTimerQueue } = require("../jobs/queues");
-    quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
-  } catch {
-    /* silent */
-  }
+  await cancelSessionTimer(session, chatId);
 
   await activePollsCache.delete(session.pollId);
   if (session.chatType !== "private") {
     const groupEntry = await groupTestCache.get(chatId);
     if (groupEntry) {
       session.groupScores = groupEntry.scores;
-      await groupTestCache.delete(chatId);
     }
+    await groupTestCache.delete(chatId);
   }
   const tId = session.testId;
   const tName = resolveTestName(tId, session.blockName);
@@ -402,13 +463,16 @@ async function finishTest(chatId, telegram) {
     if (session.chatType === "private") {
       // ─── SHAXSIY TEST YAKUNI ───
       // UX FLOW: Xatolar qaysi blokdan ekanligi va oldingi natijani xotiraga yozamiz
+      const isUgc = String(tId).startsWith('ugc_') || Boolean(session.creatorId) || Boolean(session.subjectId) || Boolean(session.isUgc);
       const redisConnection = require("../services/redisService");
       await redisConnection.set(`mistakes_meta:${chatId}`, JSON.stringify({
         subjectKey: session.subjectKey,
         testId: tId,
         blockName: tName,
         correct: session.correct,
-        wrong: session.wrong
+        wrong: session.wrong,
+        isUgc: isUgc,
+        subjectId: session.subjectId || null,
       }), "EX", 3600).catch(() => { });
 
       if (Array.isArray(session.mistakes) && session.mistakes.length > 0) {
@@ -466,8 +530,12 @@ async function finishTest(chatId, telegram) {
         `⏱ Vaqt: <b>${time}</b>` +
         funFeedback;
 
+      let saveTestId = tId;
+      if (saveTestId === "mock" || saveTestId === "adaptive" || saveTestId === "retry") {
+        saveTestId = `${saveTestId}_${Date.now()}`;
+      }
       const shelfData = {
-        testId: tId,
+        testId: saveTestId,
         testName: tName,
         subject: session.subjectKey,
         questions: session.sessionQuestions || [],
@@ -485,7 +553,7 @@ async function finishTest(chatId, telegram) {
 
       // 🔴 FIX: ReferenceError ning oldi olindi va to'g'ri hisob-kitob kiritildi
       const mistakesCount = (session.mistakes || []).length;
-      buttons = buildFinishButtons(tId, session.subjectKey, mistakesCount);
+      buttons = await buildFinishButtons(tId, session.subjectKey, mistakesCount, session);
     } else {
       const groupEntry = await groupTestCache.get(chatId);
       if (groupEntry) {
@@ -578,7 +646,25 @@ async function finishTest(chatId, telegram) {
       } else {
         // YAKUNIY REYTING (Oddiy blok yoki Marafon oxiri)
         const botInfo = await telegram.getMe();
-        const shareLink = `https://t.me/share/url?url=https://t.me/${botInfo.username}?startgroup=${session.isMarathon ? "s" : "t"}_${session.isMarathon ? session.marathonBlocks[0].test_id : tId}&text=🏆 Bizning guruh reytingimiz chiroyli chiqdi! Siz ham do'stlar bilan o'ynang.`;
+        let targetLink = '';
+        const isUgc = String(tId).startsWith('ugc_') || Boolean(session.creatorId) || Boolean(session.subjectId);
+        if (isUgc) {
+          if (session.isMarathon) {
+            const mSubjId = session.subjectId || session.marathonBlocks?.[0]?.subject_id || session.marathonBlocks?.[0]?.test_id || 1;
+            targetLink = buildShareLink(botInfo.username, 's', mSubjId, true);
+          } else {
+            const rawTestId = String(tId).startsWith('ugc_') ? parseInt(String(tId).replace('ugc_', ''), 10) : tId;
+            targetLink = buildShareLink(botInfo.username, 't', rawTestId, true);
+          }
+        } else {
+          // Rasmiy test havolasi
+          if (session.isMarathon) {
+            targetLink = `https://t.me/${botInfo.username}?startgroup=offs_${session.subjectKey}`;
+          } else {
+            targetLink = `https://t.me/${botInfo.username}?startgroup=offt_${session.subjectKey}_${tId}`;
+          }
+        }
+        const shareLink = `https://t.me/share/url?url=${encodeURIComponent(targetLink)}&text=${encodeURIComponent("🏆 Bizning guruh reytingimiz chiroyli chiqdi! Siz ham do'stlar bilan o'ynang.")}`;
 
         if (session.isMarathon) {
           const globalEntries = Object.values(
@@ -690,6 +776,36 @@ async function handlePollAnswer(pollAnswer, telegram) {
         });
       }
       await groupTestCache.set(chatId, groupEntry);
+
+      // Guruh testida barcha kutish zalida ro'yxatdan o'tganlar javob berganini tekshiramiz
+      const voterCount = typeof redisConnection.scard === 'function'
+        ? await redisConnection.scard(`poll_voters:${pollId}`).catch(() => 0)
+        : 0;
+      const session = await sessionService.getActiveTest(chatId);
+      if (
+        session &&
+        session.status !== "paused" &&
+        !session.finished &&
+        !session.isFinished &&
+        session.pollId === pollId &&
+        session.expectedParticipantsCount >= 2 &&
+        voterCount >= session.expectedParticipantsCount &&
+        session.transitionLock !== session.qIdx &&
+        session.questionState !== "TRANSITIONING"
+      ) {
+        session.transitionLock = session.qIdx;
+        session.questionState = "TRANSITIONING";
+        session.consecutiveTimeouts = 0;
+        session.qIdx++;
+        await sessionService.setActiveTest(chatId, session);
+
+        await cancelSessionTimer(session, chatId);
+        try {
+          await telegram.stopPoll(chatId, session.msgId);
+        } catch {}
+
+        setTimeout(() => sendNextQuestion(chatId, telegram), 1000);
+      }
     } finally {
       unlockGroup();
     }
@@ -734,12 +850,7 @@ async function handlePollAnswer(pollAnswer, telegram) {
     await sessionService.deletePollChat(pollId).catch(() => {});
 
     // Pending savol taymerini BullMQ navbatidan bekor qilamiz
-    try {
-      const { quizTimerQueue } = require("../jobs/queues");
-      quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
-    } catch {
-      /* silent */
-    }
+    await cancelSessionTimer(session, chatId);
 
     if (isCorrect) {
       session.correct++;
@@ -834,6 +945,27 @@ async function questionTimeout(chatId, expectedIdx, pollId, telegram) {
       }
     }
 
+    if (session.chatType !== "private") {
+      const voterCount = typeof redisConnection.scard === 'function'
+        ? await redisConnection.scard(`poll_voters:${pollId}`).catch(() => 0)
+        : 0;
+      if (voterCount === 0) {
+        session.consecutiveTimeouts = (session.consecutiveTimeouts || 0) + 1;
+      } else {
+        session.consecutiveTimeouts = 0;
+      }
+
+      if (session.consecutiveTimeouts >= 3) {
+        await telegram.sendMessage(
+          chatId,
+          `🛑 <b>Musobaqa to'xtatildi!</b>\n\nKetma-ket 3 ta savolga hech kim javob bermagani sababli test avtomatik yakunlandi.`,
+          { parse_mode: "HTML" }
+        ).catch(() => {});
+        await sessionService.setActiveTest(chatId, session);
+        return finishTest(chatId, telegram);
+      }
+    }
+
     await sessionService.setActiveTest(chatId, session);
     await sendNextQuestion(chatId, telegram);
   } finally {
@@ -851,4 +983,5 @@ module.exports = {
   groupTestCache,
   activePollsCache,
   buildFinishButtons,
+  cancelSessionTimer,
 };

@@ -3,6 +3,8 @@
 const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
+const https = require('https');
+const http  = require('http');
 const { Markup } = require('telegraf');
 
 const { ADMIN_ID, ADMIN_IDS, SUBJECTS }  = require('../config/config');
@@ -742,9 +744,16 @@ async function showUserDetails(ctx, user) {
     const history = Array.isArray(stats?.history) ? stats.history : [];
     const mistakes = history.flatMap(h => h.mistakes || []);
 
-    // Single pass for avgScore
+    // Single pass for avgScore with legacy fallback
     const avgScore = history.length
-      ? Math.round(history.reduce((s, h) => s + (h.percent || 0), 0) / history.length)
+      ? Math.round(
+          history.reduce((s, h) => {
+            if (typeof h.percent === 'number') return s + h.percent;
+            const total = (h.correct || 0) + (h.wrong || 0);
+            const pct = total > 0 ? Math.round(((h.correct || 0) / total) * 100) : 0;
+            return s + pct;
+          }, 0) / history.length
+        )
       : 0;
 
     const safeName = escapeHtml(sanitizeForTelegram(user.full_name || 'Ismsiz'));
@@ -845,11 +854,19 @@ async function cbAdminUserStats(ctx) {
       text += `<i>Foydalanuvchi hali biron marta test yakunlamagan.</i>`;
     } else {
       text += `📜 <b>So'nggi testlar:</b>\n`;
-      const recent = history.slice(-5).reverse();
+      const recent = history.slice(0, 5);
       recent.forEach((h, i) => {
-        const date = h.timestamp ? new Date(h.timestamp).toLocaleDateString('uz-UZ') : '—';
+        const date = h.timestamp ? new Date(h.timestamp).toLocaleDateString('uz-UZ') : (h.date || '—');
         const subj = escapeHtml(h.subject || h.subjectKey || 'Test');
-        const score = h.percent !== undefined ? `${h.percent}%` : `${h.score}/${h.total}`;
+        let score = '—';
+        if (h.percent !== undefined) {
+          score = `${h.percent}%`;
+        } else if (h.correct !== undefined && h.wrong !== undefined) {
+          const total = h.correct + h.wrong;
+          score = total > 0 ? `${Math.round((h.correct / total) * 100)}%` : '0%';
+        } else if (h.score !== undefined) {
+          score = `${h.score}/${h.total}`;
+        }
         text += `${i + 1}. <b>${subj}</b> — ${score} (📅 ${date})\n`;
       });
     }
@@ -1440,12 +1457,16 @@ async function onReplyMessage(ctx) {
   const sending = await ctx.reply('📤 Yuborilmoqda...');
 
   try {
-    const adminText = ctx.message?.text || '';
+    const adminText = ctx.message?.text || ctx.message?.caption || '';
     const hasMedia  = !!(
       ctx.message?.photo ||
       ctx.message?.video ||
       ctx.message?.voice ||
-      ctx.message?.document
+      ctx.message?.audio ||
+      ctx.message?.document ||
+      ctx.message?.sticker ||
+      ctx.message?.video_note ||
+      ctx.message?.animation
     );
 
     const replyCard =
@@ -1530,7 +1551,7 @@ async function adminPrompt(ctx, fmt, total, edit = false) {
       `📝 <b>Matn formatida yuboring:</b>\n\n` +
       `Savol?\n` +
       `A) variant\nB) variant\nC) variant\nD) variant\n` +
-      `# to'g'ri javob (A, B, C yoki D)`
+      `# A (yoki to'g'ri variant oldiga # qo'ying: #A) variant)`
     )
     : `📄 <b>Word (.docx) fayl yuboring</b>`;
 

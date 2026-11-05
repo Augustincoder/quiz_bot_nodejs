@@ -5,7 +5,7 @@ const scheduleService = require('../services/scheduleService');
 const edupageService = require('../services/edupageService');
 const pendingStore = require('../core/pendingStore');
 const { escapeHtml, truncateText, safeCallbackData, clearState, isAdmin } = require('../core/utils');
-const logger = require('../core/logger');
+
 
 const NOTE_STATE_TTL = 15 * 60 * 1000; // 15 daqiqa
 const activeNoteSaves = new Set(); // In-flight mutex to prevent double-tap duplicate creations
@@ -541,11 +541,14 @@ async function handleNoteWizardInput(ctx, next) {
 
   const text = (ctx.message?.text || '').trim();
   const isCommand = text.startsWith('/');
-  const isMainMenuButton = [
+  const mainMenuButtons = [
+    '📅 Bugungi jadval', '🖼 Haftalik jadval', '🏢 Bo\'sh xonalar', '🏢 Bo‘sh xonalar',
+    '⚙️ Guruhni sozlash', '🔙 Asosiy menyu',
     '📅 Dars jadvali', '🧪 Testlar', '🤖 AI Yordamchi', '👤 Profil', '📊 Statistika',
     '🔍 Guruh qidirish', '🏢 Bo\'sh xonalar', '📚 Rasmiy Testlar', '📝 O\'z Testlarim',
     '🔙 Ortga', '🏠 Asosiy Menyu', '❌ Bekor qilish', '🏠 Bosh menyu'
-  ].some(btn => text.includes(btn));
+  ];
+  const isMainMenuButton = mainMenuButtons.includes(text);
 
   // Cancel wizard if user sends another bot command or taps main menu button
   if (isCommand || isMainMenuButton) {

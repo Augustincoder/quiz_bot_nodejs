@@ -1,7 +1,7 @@
 'use strict';
 
 const { supabase } = require('../lib/supabase');
-const { TTLMap } = require('../core/utils');
+const { TTLMap, naturalSortBlocks } = require('../core/utils');
 const redis = require('./redisService');
 const logger = require('../core/logger');
 
@@ -121,6 +121,8 @@ async function updateUserStats(userId, correct, wrong, subjectKey, testId, mista
     stats.total_correct = (stats.total_correct || 0) + correct;
     stats.total_wrong = (stats.total_wrong || 0) + wrong;
 
+    const totalQ = (correct || 0) + (wrong || 0);
+    const percent = totalQ > 0 ? Math.round(((correct || 0) / totalQ) * 100) : 0;
     const entry = {
       date: new Date().toISOString().slice(0, 16).replace('T', ' '),
       timestamp: Date.now(),
@@ -128,6 +130,7 @@ async function updateUserStats(userId, correct, wrong, subjectKey, testId, mista
       test_id: testId,
       correct,
       wrong,
+      percent,
       mistakes,
     };
     if (!Array.isArray(stats.history)) stats.history = [];
@@ -484,12 +487,16 @@ async function getUsersByClassName(className) {
     while (true) {
       const { data, error } = await supabase
         .from('users')
-        .select('telegram_id, name, class_name')
+        .select('telegram_id, full_name, class_name')
         .ilike('class_name', className)
         .range(from, from + pageSize - 1);
       if (error) throw error;
       if (!data || data.length === 0) break;
-      allUsers.push(...data);
+      const mapped = data.map(u => ({
+        ...u,
+        name: u.full_name || ''
+      }));
+      allUsers.push(...mapped);
       if (data.length < pageSize) break;
       from += pageSize;
     }
@@ -500,17 +507,254 @@ async function getUsersByClassName(className) {
   }
 }
 
-async function saveUserTest(creatorId, subject, blockName, questions) {
+// ─── SUBJECTS & USER TESTS RELATIONAL MANAGEMENT ─────────────────
+
+async function getOrCreateSubject(creatorId, subjectName) {
+  const uid = String(creatorId);
+  const rawName = String(subjectName || '').trim();
+  if (!rawName) return null;
+  const normName = rawName.toLowerCase();
+  const cacheKey = `cache:subject_by_name:${uid}:${normName}`;
+
   try {
+    if (redis) {
+      const cached = await redis.get(cacheKey).catch(() => null);
+      if (cached) return JSON.parse(cached);
+    }
+
+    if (!supabase) {
+      return { id: 1, name: rawName, creator_id: uid };
+    }
+
+    // 1. Check if subject already exists for this creator
+    const { data: existing, error: findErr } = await supabase
+      .from('subjects')
+      .select('*')
+      .eq('creator_id', uid)
+      .ilike('name', rawName)
+      .limit(1)
+      .maybeSingle();
+
+    if (findErr) throw findErr;
+    if (existing) {
+      if (redis) {
+        await redis.set(cacheKey, JSON.stringify(existing), 'EX', 3600).catch(() => {});
+        await redis.set(`cache:subject:${existing.id}`, JSON.stringify(existing), 'EX', 3600).catch(() => {});
+      }
+      return existing;
+    }
+
+    // 2. Ensure creator exists in users table (prevent FK violation)
+    await supabase.from('users').upsert(
+      { telegram_id: uid, full_name: 'Foydalanuvchi' },
+      { onConflict: 'telegram_id', ignoreDuplicates: true }
+    ).catch(() => {});
+
+    // 3. Upsert subject atomically using UNIQUE (name, creator_id) constraint
+    const { data: created, error: insertErr } = await supabase
+      .from('subjects')
+      .upsert(
+        {
+          name: rawName,
+          creator_id: uid,
+          created_at: new Date().toISOString(),
+        },
+        { onConflict: 'name,creator_id' }
+      )
+      .select('*')
+      .single();
+
+    if (insertErr) throw insertErr;
+
+    if (created && redis) {
+      await redis.set(cacheKey, JSON.stringify(created), 'EX', 3600).catch(() => {});
+      await redis.set(`cache:subject:${created.id}`, JSON.stringify(created), 'EX', 3600).catch(() => {});
+      await redis.del(`cache:user_subjects:${uid}`).catch(() => {});
+    }
+
+    return created;
+  } catch (err) {
+    logger.error('getOrCreateSubject error:', { creatorId: uid, subjectName: rawName, error: err.message });
+    return { id: null, name: rawName, creator_id: uid };
+  }
+}
+
+async function getSubjectById(subjectId) {
+  const sid = parseInt(subjectId, 10);
+  if (isNaN(sid)) return null;
+
+  try {
+    const cacheKey = `cache:subject:${sid}`;
+    if (redis) {
+      const cached = await redis.get(cacheKey).catch(() => null);
+      if (cached) return JSON.parse(cached);
+    }
+
+    if (!supabase) return null;
+
+    const { data, error } = await supabase
+      .from('subjects')
+      .select('*')
+      .eq('id', sid)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (data && redis) {
+      await redis.set(cacheKey, JSON.stringify(data), 'EX', 3600).catch(() => {});
+    }
+    return data || null;
+  } catch (err) {
+    logger.error('getSubjectById error:', { subjectId: sid, error: err.message });
+    return null;
+  }
+}
+
+async function getUserSubjects(creatorId) {
+  const uid = String(creatorId);
+  const cacheKey = `cache:user_subjects:${uid}`;
+
+  try {
+    if (redis) {
+      const cached = await redis.get(cacheKey).catch(() => null);
+      if (cached) return JSON.parse(cached);
+    }
+
+    if (!supabase) return [];
+
+    const { data: subjects, error: subjErr } = await supabase
+      .from('subjects')
+      .select('*')
+      .eq('creator_id', uid)
+      .order('id', { ascending: false });
+
+    if (subjErr) throw subjErr;
+
+    const { data: tests, error: testErr } = await supabase
+      .from('user_tests')
+      .select('id, subject_id, subject, block_name')
+      .eq('creator_id', uid);
+
+    if (testErr) throw testErr;
+
+    const blockCounts = new Map();
+    const legacyMap = new Map();
+    for (const t of tests || []) {
+      if (t.subject_id) {
+        const sid = String(t.subject_id);
+        blockCounts.set(sid, (blockCounts.get(sid) || 0) + 1);
+      } else if (t.subject) {
+        const norm = t.subject.trim().toLowerCase();
+        legacyMap.set(norm, (legacyMap.get(norm) || 0) + 1);
+      }
+    }
+
+    const result = (subjects || []).map((s) => ({
+      ...s,
+      block_count: blockCounts.get(String(s.id)) || legacyMap.get(String(s.name || '').trim().toLowerCase()) || 0,
+    }));
+
+    // Self-healing: agar user_tests ichida subjects jadvaliga kirmay qolgan eski fanlar bo'lsa, ularni ham ko'rsatish
+    const existingNames = new Set((subjects || []).map(s => String(s.name || '').trim().toLowerCase()));
+    for (const t of tests || []) {
+      if (t.subject && !t.subject_id) {
+        const norm = String(t.subject).trim().toLowerCase();
+        if (!existingNames.has(norm)) {
+          existingNames.add(norm);
+          result.push({
+            id: t.id,
+            name: String(t.subject).trim(),
+            creator_id: uid,
+            block_count: legacyMap.get(norm) || 1,
+            is_legacy: true,
+          });
+        }
+      }
+    }
+
+    if (redis) {
+      await redis.set(cacheKey, JSON.stringify(result), 'EX', 300).catch(() => {});
+    }
+    return result;
+  } catch (err) {
+    logger.error('getUserSubjects error:', { creatorId: uid, error: err.message });
+    return [];
+  }
+}
+
+async function getSubjectBlocks(subjectId) {
+  const sid = parseInt(subjectId, 10);
+  if (isNaN(sid)) return [];
+
+  const cacheKey = `cache:subject_blocks:${sid}`;
+  try {
+    if (redis) {
+      const cached = await redis.get(cacheKey).catch(() => null);
+      if (cached) return JSON.parse(cached);
+    }
+
+    if (!supabase) return [];
+
+    const { data, error } = await supabase
+      .from('user_tests')
+      .select('id, creator_id, subject, subject_id, block_name, questions, created_at')
+      .eq('subject_id', sid)
+      .order('id', { ascending: true });
+
+    if (error) throw error;
+
+    const sorted = naturalSortBlocks(data || []);
+    if (redis) {
+      await redis.set(cacheKey, JSON.stringify(sorted), 'EX', 3600).catch(() => {});
+    }
+    return sorted;
+  } catch (err) {
+    logger.error('getSubjectBlocks error:', { subjectId: sid, error: err.message });
+    return [];
+  }
+}
+
+async function invalidateSubjectCache(subjectId, creatorId) {
+  try {
+    if (!redis) return;
+    const promises = [];
+    if (subjectId) {
+      promises.push(redis.del(`cache:subject:${subjectId}`).catch(() => {}));
+      promises.push(redis.del(`cache:subject_blocks:${subjectId}`).catch(() => {}));
+    }
+    if (creatorId) {
+      promises.push(redis.del(`cache:user_subjects:${creatorId}`).catch(() => {}));
+      promises.push(invalidateUserCreatedTestsCache(creatorId));
+    }
+    await Promise.all(promises);
+  } catch {}
+}
+
+async function saveUserTest(creatorId, subject, blockName, questions, subjectId = null) {
+  try {
+    let resolvedSubjectId = subjectId ? parseInt(subjectId, 10) : null;
+    let resolvedSubjectName = subject;
+
+    if (!resolvedSubjectId && subject) {
+      const subj = await getOrCreateSubject(creatorId, subject);
+      if (subj && subj.id) {
+        resolvedSubjectId = subj.id;
+        resolvedSubjectName = subj.name;
+      }
+    } else if (resolvedSubjectId && !resolvedSubjectName) {
+      const subj = await getSubjectById(resolvedSubjectId);
+      if (subj) resolvedSubjectName = subj.name;
+    }
+
     const { data, error } = await supabase.from('user_tests').insert({
       creator_id: String(creatorId),
-      subject,
+      subject: resolvedSubjectName,
+      subject_id: resolvedSubjectId,
       block_name: blockName,
       questions,
       created_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
-    }).select('id');
+    }).select('id, subject_id');
     if (error) throw error;
-    await invalidateUserCreatedTestsCache(creatorId);
+    await invalidateSubjectCache(resolvedSubjectId, creatorId);
     return data[0].id;
   } catch (e) {
     logger.error('saveUserTest error:', { creatorId, error: e.message });
@@ -518,20 +762,36 @@ async function saveUserTest(creatorId, subject, blockName, questions) {
   }
 }
 
-async function saveUserTestsBatch(creatorId, subject, blocks) {
+async function saveUserTestsBatch(creatorId, subject, blocks, subjectId = null) {
   try {
     if (!Array.isArray(blocks) || blocks.length === 0) return [];
+
+    let resolvedSubjectId = subjectId ? parseInt(subjectId, 10) : null;
+    let resolvedSubjectName = subject;
+
+    if (!resolvedSubjectId && subject) {
+      const subj = await getOrCreateSubject(creatorId, subject);
+      if (subj && subj.id) {
+        resolvedSubjectId = subj.id;
+        resolvedSubjectName = subj.name;
+      }
+    } else if (resolvedSubjectId && !resolvedSubjectName) {
+      const subj = await getSubjectById(resolvedSubjectId);
+      if (subj) resolvedSubjectName = subj.name;
+    }
+
     const now = Date.now();
     const rows = blocks.map((b, i) => ({
       creator_id: String(creatorId),
-      subject,
+      subject: resolvedSubjectName,
+      subject_id: resolvedSubjectId,
       block_name: b.blockName,
       questions: b.questions,
       created_at: new Date(now + i * 1000).toISOString().slice(0, 19).replace('T', ' '),
     }));
     const { data, error } = await supabase.from('user_tests').insert(rows).select('id');
     if (error) throw error;
-    await invalidateUserCreatedTestsCache(creatorId);
+    await invalidateSubjectCache(resolvedSubjectId, creatorId);
     return (data || []).map((r) => r.id);
   } catch (e) {
     logger.error('saveUserTestsBatch error:', { creatorId, error: e.message });
@@ -586,8 +846,8 @@ async function getUserCreatedTests(creatorId, includeQuestions = true) {
     }
 
     const selectFields = includeQuestions
-      ? 'id, subject, block_name, created_at, questions'
-      : 'id, subject, block_name, created_at';
+      ? 'id, subject, subject_id, block_name, created_at, questions'
+      : 'id, subject, subject_id, block_name, created_at';
     const { data, error } = await supabase
       .from('user_tests')
       .select(selectFields)
@@ -607,6 +867,7 @@ async function getUserCreatedTests(creatorId, includeQuestions = true) {
 async function deleteUserTest(testId, creatorId) {
   const tid = parseInt(testId, 10);
   try {
+    const existing = await getUserTest(tid);
     const { error } = await supabase
       .from('user_tests')
       .delete()
@@ -614,7 +875,11 @@ async function deleteUserTest(testId, creatorId) {
       .eq('creator_id', String(creatorId));
     if (error) throw error;
     await redis.del(`cache:user_test:${tid}`).catch(() => {});
-    await invalidateUserCreatedTestsCache(creatorId);
+    if (existing?.subject_id) {
+      await invalidateSubjectCache(existing.subject_id, creatorId);
+    } else {
+      await invalidateUserCreatedTestsCache(creatorId);
+    }
     return true;
   } catch (err) {
     logger.error('deleteUserTest error:', { testId: tid, error: err.message });
@@ -625,6 +890,7 @@ async function deleteUserTest(testId, creatorId) {
 async function updateUserTestQuestions(testId, creatorId, newQuestions) {
   const tid = parseInt(testId, 10);
   try {
+    const existing = await getUserTest(tid);
     const { error } = await supabase
       .from('user_tests')
       .update({ questions: newQuestions })
@@ -632,7 +898,11 @@ async function updateUserTestQuestions(testId, creatorId, newQuestions) {
       .eq('creator_id', String(creatorId));
     if (error) throw error;
     await redis.del(`cache:user_test:${tid}`).catch(() => {});
-    await invalidateUserCreatedTestsCache(creatorId);
+    if (existing?.subject_id) {
+      await invalidateSubjectCache(existing.subject_id, creatorId);
+    } else {
+      await invalidateUserCreatedTestsCache(creatorId);
+    }
     return true;
   } catch (e) {
     logger.error('updateUserTestQuestions error:', { testId: tid, error: e.message });
@@ -806,10 +1076,8 @@ async function saveTestToShelf(userId, folderName, testInfo) {
 
       if (!shelf[folderName]) shelf[folderName] = [];
 
-      const isExist = shelf[folderName].find(t => String(t.testId) === String(testInfo.testId));
-      if (isExist) return 'exist';
-
-      const compactQuestions = Array.isArray(testInfo.questions)
+      const existingIdx = shelf[folderName].findIndex(t => String(t.testId) === String(testInfo.testId));
+      const compactQuestions = Array.isArray(testInfo.questions) && testInfo.questions.length > 0
         ? testInfo.questions.map(q => ({
             question: q.question,
             options: q.options,
@@ -818,14 +1086,25 @@ async function saveTestToShelf(userId, folderName, testInfo) {
           }))
         : [];
 
-      shelf[folderName].push({
-        testId: testInfo.testId,
-        testName: testInfo.testName,
-        subject: testInfo.subject,
-        questions: compactQuestions,
-        saved_at: new Date().toISOString(),
-        progress: testInfo.progress || null,
-      });
+      if (existingIdx !== -1) {
+        shelf[folderName][existingIdx] = {
+          ...shelf[folderName][existingIdx],
+          testName: testInfo.testName || shelf[folderName][existingIdx].testName,
+          subject: testInfo.subject || shelf[folderName][existingIdx].subject,
+          questions: compactQuestions.length > 0 ? compactQuestions : shelf[folderName][existingIdx].questions,
+          saved_at: new Date().toISOString(),
+          progress: testInfo.progress || shelf[folderName][existingIdx].progress || null,
+        };
+      } else {
+        shelf[folderName].push({
+          testId: testInfo.testId,
+          testName: testInfo.testName,
+          subject: testInfo.subject,
+          questions: compactQuestions,
+          saved_at: new Date().toISOString(),
+          progress: testInfo.progress || null,
+        });
+      }
 
       const { error } = await supabase.from('user_stats').update({ shelf }).eq('user_id', uid);
       if (error) {
@@ -1908,6 +2187,11 @@ module.exports = {
   getAllUserNames,
   getAllUsers,
   getUsersByClassName,
+  getOrCreateSubject,
+  getSubjectById,
+  getUserSubjects,
+  getSubjectBlocks,
+  invalidateSubjectCache,
   saveUserTest,
   saveUserTestsBatch,
   getUserTest,

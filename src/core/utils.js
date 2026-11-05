@@ -137,6 +137,13 @@ const resetUserFlows = async (userId, ctx) => {
 const updateData = async (ctx, patch) => {
   if (!ctx.session) ctx.session = {};
   ctx.session.data = { ...(ctx.session.data || {}), ...patch };
+  const uid = ctx.from?.id || ctx.chat?.id;
+  if (uid) {
+    try {
+      const redisConnection = require('../services/redisService');
+      await redisConnection.set(`tg_session:${uid}`, JSON.stringify(ctx.session), "EX", 86400);
+    } catch {}
+  }
 };
 const getData = async (ctx) => (ctx.session?.data || {});
 const getState = (ctx) => (ctx.session?.state || null);
@@ -222,15 +229,35 @@ const truncateText = (text, max = 4000) => {
     sliced = sliced.slice(0, lastOpenBracket);
   }
 
-  // Automatically close unclosed HTML tags to prevent Telegram 400 Bad Request
-  const tags = ['b', 'i', 's', 'u', 'code', 'pre'];
-  for (const tag of tags) {
-    const openCount = (sliced.match(new RegExp(`<${tag}>`, 'gi')) || []).length;
-    const closeCount = (sliced.match(new RegExp(`</${tag}>`, 'gi')) || []).length;
-    const diff = openCount - closeCount;
-    for (let i = 0; i < diff; i++) {
-      sliced += `</${tag}>`;
+  // Automatically close unclosed HTML tags in LIFO order to prevent Telegram 400 Bad Request
+  const allowedTags = new Set([
+    'b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del',
+    'code', 'pre', 'a', 'blockquote', 'tg-spoiler', 'tg-emoji'
+  ]);
+  const tagRegex = /<\/?([a-zA-Z0-9_-]+)(?:\s+[^>]*)?>/g;
+  const stack = [];
+  let match;
+  while ((match = tagRegex.exec(sliced)) !== null) {
+    const fullTag = match[0];
+    const tagName = match[1].toLowerCase();
+    if (!allowedTags.has(tagName)) continue;
+
+    if (fullTag.startsWith('</')) {
+      // Closing tag: pop matching tag from stack
+      const lastIdx = stack.lastIndexOf(tagName);
+      if (lastIdx !== -1) {
+        stack.splice(lastIdx);
+      }
+    } else if (!fullTag.endsWith('/>')) {
+      // Opening tag
+      stack.push(tagName);
     }
+  }
+
+  // Close unclosed tags in LIFO order
+  while (stack.length > 0) {
+    const tag = stack.pop();
+    sliced += `</${tag}>`;
   }
 
   return sliced + '\n\n<i>...(matn qisqartirildi)</i>';
@@ -385,7 +412,7 @@ function parseTextQuestions(text, mode = 'hash') {
     if (!block.includes('=====')) {
       for (let i = 1; i < parts.length; i++) {
         const p = parts[i];
-        if (/^[#*]?\s*[a-zA-Z0-9][\)\.]\s*/.test(p)) {
+        if (/^[#*]?\s*(?:[a-zA-Z][\)\.]|\d+\))\s+/.test(p)) {
           firstOptIdx = i;
           break;
         }
@@ -395,17 +422,61 @@ function parseTextQuestions(text, mode = 'hash') {
     let questionLines = parts.slice(0, firstOptIdx);
     let questionText = questionLines.join('\n').replace(/^\d+[\)\.]\s*/, '').trim();
 
+    // Savol matni bo'sh bo'lsa, yaroqsiz deb belgilaymiz
+    if (!questionText) {
+      invalid.push(block.trim());
+      continue;
+    }
+
+    // Tekshiramiz: agar eng oxirgi qator javob kaliti bo'lsa (masalan: "# A", "#B", "# 2", "Javob: B", "To'g'ri javob: C")
+    let explicitCorrectIdx = -1;
+    if (parts.length - 1 > firstOptIdx) {
+      const lastLine = parts[parts.length - 1].trim();
+      const trailingAnswerMatch = lastLine.match(/^[#*]\s*([a-jA-J1-9])$/i) ||
+        lastLine.match(/^[#*]?\s*(?:to'?g'?ri\s+javob|javob)\s*[:=-]?\s*([a-jA-J1-9])$/i);
+      if (trailingAnswerMatch) {
+        const keyChar = trailingAnswerMatch[1].toUpperCase();
+        if (/^[1-9]$/.test(keyChar)) {
+          explicitCorrectIdx = parseInt(keyChar, 10) - 1;
+        } else {
+          explicitCorrectIdx = keyChar.charCodeAt(0) - 65; // A->0, B->1, C->2, ...
+        }
+        parts.pop(); // Oxirgi javob kaliti qatorini variantlar orasidan olib tashlaymiz
+      }
+    }
+
     const opts = [];
     let correctIdx = -1;
 
     for (let i = firstOptIdx; i < parts.length; i++) {
-      let optText = parts[i];
-      let isCorrect = (mode === 'hash' && optText.startsWith('#')) || (mode === 'first' && i === firstOptIdx);
-      if (mode === 'hash' && isCorrect) optText = optText.substring(1).trim();
-      optText = optText.replace(/^[a-zA-Z0-9][\)\.]\s*/, '').trim();
+      let optText = parts[i].trim();
+      let isCorrect = false;
+
+      // Agar oldinda # yoki * bo'lsa (masalan: #A) Javob yoki #Javob)
+      if (mode === 'hash' && (optText.startsWith('#') || optText.startsWith('*'))) {
+        isCorrect = true;
+        optText = optText.substring(1).trim();
+      }
+
+      // Faqat aniq variant prefikslarini tozalaymiz (A), B., a), 1) va hokazo; 1.5 kabi kasrlarga tegmaymiz
+      optText = optText.replace(/^(?:[a-zA-Z][\)\.]|\d+\))\s+/, '').trim();
+
+      // Agar prefiksdan keyin # qo'yilgan bo'lsa (masalan: A) #Javob yoki 1) #Javob)
+      if (mode === 'hash' && !isCorrect && (optText.startsWith('#') || optText.startsWith('*'))) {
+        isCorrect = true;
+        optText = optText.substring(1).trim();
+      }
+
+      if (mode === 'first' && i === firstOptIdx) isCorrect = true;
+
       if (!optText) continue;
       opts.push(optText);
       if (isCorrect) correctIdx = opts.length - 1;
+    }
+
+    // Agar alohida javob kaliti ko'rsatilgan bo'lsa va u variantlar chegarasida bo'lsa
+    if (explicitCorrectIdx >= 0 && explicitCorrectIdx < opts.length) {
+      correctIdx = explicitCorrectIdx;
     }
 
     // Telegram poll chegarasi: maksimal 10 ta variant

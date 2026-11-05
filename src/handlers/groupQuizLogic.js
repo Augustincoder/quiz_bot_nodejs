@@ -4,6 +4,7 @@ const { Markup } = require('telegraf');
 const mutex = require('../core/mutex');
 const sessionService = require('../services/sessionService');
 const dbService = require('../services/dbService');
+const { resolveShareParam } = require('../services/shareService');
 const { safeDelete, escapeHtml, naturalSortBlocks } = require('../core/utils');
 
 // Kutish zalini chizish (yaratish yoki yangilash) uchun yordamchi funksiya
@@ -58,21 +59,43 @@ async function renderLobby(ctx, chatId, room, messageId = null) {
 // 1. Kutish zalini yaratish (startgroup dan kelganda)
 async function createLobby(ctx, param) {
   const chatId = ctx.chat.id;
+  const activeSession = await sessionService.getActiveTest(chatId);
+  if (activeSession && activeSession.status === 'running') {
+    return ctx.reply("⚠️ Ushbu guruhda allaqachon faol test ketmoqda!\n\nYangi test boshlash uchun avval joriy testni yakunlang yoki /stop buyrug'ini yuboring.");
+  }
   const messageThreadId = ctx.message?.message_thread_id || ctx.callbackQuery?.message?.message_thread_id || null;
   let testData = null;
   let mode = '';
   let isOfficial = false;
   const memDb = require('../core/bot').memoryDb || {};
 
-  if (param.startsWith('t_')) {
-    const id = param.split('_')[1];
-    testData = await dbService.getUserTest(id);
+  const resolved = resolveShareParam(param);
+
+  if (resolved.type === 't') {
+    if (resolved.isInvalid || !resolved.id) return ctx.reply("❌ Test topilmadi yoki havola yaroqsiz.");
+    testData = await dbService.getUserTest(resolved.id);
     if (!testData) return ctx.reply("❌ Test topilmadi yoki o'chirilgan.");
     mode = 'block';
-  } else if (param.startsWith('s_')) {
-    const id = param.split('_')[1];
-    testData = await dbService.getUserTest(id); 
-    if (!testData) return ctx.reply("❌ Fan topilmadi.");
+  } else if (resolved.type === 's') {
+    if (resolved.isInvalid || !resolved.id) return ctx.reply("❌ Fan topilmadi yoki havola yaroqsiz.");
+    const rawId = resolved.id;
+    let subject = await dbService.getSubjectById(rawId);
+    if (subject) {
+      const blocks = await dbService.getSubjectBlocks(subject.id);
+      if (!blocks.length) return ctx.reply("❌ Bu fanda bloklar topilmadi.");
+      testData = {
+        ...blocks[0],
+        subject: subject.name,
+        subject_id: subject.id,
+      };
+    } else {
+      testData = await dbService.getUserTest(rawId);
+      if (!testData) return ctx.reply("❌ Fan topilmadi.");
+      if (testData.subject_id) {
+        const s = await dbService.getSubjectById(testData.subject_id);
+        if (s) testData.subject = s.name;
+      }
+    }
     mode = 'marathon';
   } else if (param.startsWith('offt_')) { 
     // Rasmiy test (Blok)
@@ -186,24 +209,32 @@ async function cbRoomStart(ctx) {
         })).sort((a, b) => parseInt(a.test_id) - parseInt(b.test_id));
       } else {
         // UGC (Foydalanuvchi) testlar marafoni
-        const tests = await dbService.getUserCreatedTests(room.testData.creator_id);
-        marathonBlocks = naturalSortBlocks(tests
-            .filter(t => t.subject === subjectKey)
-            .map(t => ({
-              ...t,
-              questions: deepClone(t.questions || [])
-            }))
-            );
+        if (room.testData.subject_id) {
+          const blocks = await dbService.getSubjectBlocks(room.testData.subject_id);
+          marathonBlocks = blocks.map(t => ({
+            ...t,
+            questions: deepClone(t.questions || [])
+          }));
+        } else {
+          const tests = await dbService.getUserCreatedTests(room.testData.creator_id);
+          marathonBlocks = naturalSortBlocks(tests
+              .filter(t => t.subject === subjectKey)
+              .map(t => ({
+                ...t,
+                questions: deepClone(t.questions || [])
+              }))
+          );
+        }
       }
           
       if (!marathonBlocks.length) return ctx.reply("❌ Bu fanda bloklar topilmadi.");
 
       sessionQ = prepareShuffledQuestions(marathonBlocks[0].questions);
-      testId = marathonBlocks[0].test_id || marathonBlocks[0].id; // Rasmiy va UGC IDlari
+      testId = marathonBlocks[0].test_id || (marathonBlocks[0].id ? `ugc_${marathonBlocks[0].id}` : marathonBlocks[0].id); // Rasmiy va UGC IDlari
       blockName = marathonBlocks[0].block_name;
     } else {
       sessionQ = prepareShuffledQuestions(deepClone(room.testData.questions || []));
-      testId = room.param.split('_').pop(); 
+      testId = room.isOfficial ? room.param.split('_').pop() : (room.testData?.id ? `ugc_${room.testData.id}` : room.testId || room.param); 
       blockName = room.testData.block_name;
     }
 
@@ -211,7 +242,9 @@ async function cbRoomStart(ctx) {
     await sessionService.setActiveTest(chatId, {
       chatType: 'group',
       initiatorId: room.initiatorId,
+      creatorId: room.testData?.creator_id || null,
       subjectKey: room.testData.subject,
+      subjectId: room.testData.subject_id || null,
       testId: testId,
       blockName: blockName,
       messageThreadId: messageThreadId,
@@ -225,6 +258,7 @@ async function cbRoomStart(ctx) {
       mistakes: [],
       consecutiveTimeouts: 0,
       groupScores: {},
+      expectedParticipantsCount: Object.keys(room.readyUsers || {}).length,
       finished: false,
       status: 'running',
       transitionLock: null,

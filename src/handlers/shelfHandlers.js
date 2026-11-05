@@ -163,6 +163,8 @@ async function executeSave(ctx, folderName, msgId) {
         .catch(() => {});
     } else if (result === "saved") {
       await redisConnection.del(`shelf_pending:${chatId}`).catch(() => {});
+      const sessionService = require("../services/sessionService");
+      await sessionService.deleteActiveTest(chatId).catch(() => {});
       logger.info('shelf:save', { userId: ctx.from.id, folder: folderName });
       await ctx.telegram
         .editMessageText(
@@ -326,8 +328,13 @@ async function cbViewTest(ctx) {
 
     if (test.progress && test.progress.current_index > 0) {
       const mCount = test.progress.mistakes ? test.progress.mistakes.length : 0;
-      progressText = `⏳ ${test.progress.current_index}-savolga kelgan.\n(✅ ${test.progress.correct} to'g'ri | ❌ ${mCount} xato)`;
-      resumeBtnText = "▶️ Qolgan joyidan davom etish";
+      if (qCount > 0 && test.progress.current_index >= qCount) {
+        progressText = `✅ Test to'liq yakunlangan!\n(✅ ${test.progress.correct || 0} to'g'ri | ❌ ${mCount} xato)`;
+        resumeBtnText = "🔁 Qaytadan boshlash";
+      } else {
+        progressText = `⏳ ${test.progress.current_index}-savolga kelgan.\n(✅ ${test.progress.correct} to'g'ri | ❌ ${mCount} xato)`;
+        resumeBtnText = "▶️ Qolgan joyidan davom etish";
+      }
     }
 
     const text = `📝 <b>Test Tafsilotlari</b>\n\n` +

@@ -1433,7 +1433,7 @@ async function generateScheduleImage(className, schedule, themeName = 'dark', op
       if (span === 1) {
         while (pNum + span <= maxPeriod) {
           const nxt = schedule[dayIdx][pNum + span];
-          if (nxt && nxt.length > 0 && nxt[0].subject === lesson.subject && nxt[0].teacher === lesson.teacher) {
+          if (nxt && nxt.length > 0 && nxt[0].subject === lesson.subject && nxt[0].teacher === lesson.teacher && nxt[0].room === lesson.room) {
             span++;
           } else break;
         }
@@ -1445,14 +1445,16 @@ async function generateScheduleImage(className, schedule, themeName = 'dark', op
 
       let combinedLesson = lesson;
       if (lessons.length > 1) {
-        const { rooms, teachers } = lessons.reduce((acc, l) => {
+        const { subjects, rooms, teachers } = lessons.reduce((acc, l) => {
+          if (l.subject && !acc.subjects.includes(l.subject)) acc.subjects.push(l.subject);
           if (l.room && !acc.rooms.includes(l.room)) acc.rooms.push(l.room);
           if (l.teacher && !acc.teachers.includes(l.teacher)) acc.teachers.push(l.teacher);
           return acc;
-        }, { rooms: [], teachers: [] });
+        }, { subjects: [], rooms: [], teachers: [] });
 
         combinedLesson = {
           ...lesson,
+          subject: subjects.length > 0 ? subjects.join(' / ') : lesson.subject,
           room: rooms.length > 0 ? rooms.join(', ') : lesson.room,
           teacher: teachers.length > 0 ? teachers.join(', ') : lesson.teacher,
         };

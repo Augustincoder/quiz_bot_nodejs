@@ -5,6 +5,8 @@ const path = require("path");
 const { Markup } = require("telegraf");
 const os = require("os");
 const dbService = require("../services/dbService");
+const logger = require("../core/logger");
+const { buildShareLink } = require("../services/shareService");
 const {
   States,
   setState,
@@ -38,6 +40,10 @@ const AI_WARNING_TEXT = `\n\n⚠️ *Eslatma:* _Bu javoblar tezkor AI modellarid
 
 // ─── TAHRIRLASH DASHBOARD ────────────────────────────────────
 async function showEditDashboard(ctx) {
+  await updateData(ctx, {
+    editing_question_index: undefined,
+    fixing_error_index: undefined,
+  });
   const data = await getData(ctx);
   const questions = data.questions || [];
   const bar = progressBar(Math.min(questions.length, 50), 50);
@@ -66,8 +72,8 @@ async function showEditDashboard(ctx) {
 
   await safeEdit(
     ctx,
-    `✏️ *Testni Tahrirlash*\n\n📚 Fan: ${data.subject}\n📝 Blok: ${data.block_name}\n📊 Jami savollar: *${questions.length} ta*\n${bar}\n\nQuyidagi menyudan kerakli amalni tanlang:`,
-    { parse_mode: "Markdown", ...kb },
+    `✏️ <b>Testni Tahrirlash</b>\n\n📚 Fan: <b>${escapeHtml(data.subject || '')}</b>\n📝 Blok: <b>${escapeHtml(data.block_name || '')}</b>\n📊 Jami savollar: <b>${questions.length} ta</b>\n${bar}\n\nQuyidagi menyudan kerakli amalni tanlang:`,
+    { parse_mode: "HTML", ...kb },
   );
 }
 
@@ -126,35 +132,27 @@ async function cbCreateTest(ctx) {
     page = parseInt(ctx.callbackQuery.data.replace("create_test_", ""), 10) || 0;
   }
 
-  const tests = await dbService.getUserCreatedTests(ctx.from.id, false);
-  const subjects = {};
-  for (const t of tests) {
-    if (!subjects[t.subject]) subjects[t.subject] = [];
-    subjects[t.subject].push(t);
-  }
-
-  const uniqueSubjects = Object.keys(subjects);
+  const userSubjects = await dbService.getUserSubjects(ctx.from.id);
   const buttons = [];
 
-  if (uniqueSubjects.length > 0) {
+  if (userSubjects.length > 0) {
     buttons.push([Markup.button.callback("── Mavjud fanlar (Tezkor tanlash) ──", "ignore")]);
 
     // Paginatsiya sozlamalari
     const ITEMS_PER_PAGE = 5;
-    const totalPages = Math.ceil(uniqueSubjects.length / ITEMS_PER_PAGE);
+    const totalPages = Math.ceil(userSubjects.length / ITEMS_PER_PAGE);
     const validPage = Math.max(0, Math.min(page, totalPages - 1));
 
     // Joriy sahifadagi fanlarni qirqib olish
-    const currentSubjects = uniqueSubjects.slice(
+    const currentSubjects = userSubjects.slice(
       validPage * ITEMS_PER_PAGE,
       (validPage + 1) * ITEMS_PER_PAGE
     );
 
     // Fanlar ro'yxatini tugmaga aylantirish
     for (const subj of currentSubjects) {
-      const subTests = subjects[subj];
       buttons.push([
-        Markup.button.callback(`📁 ${subj}  •  ${subTests.length} ta blok`, `ct_exist_${subTests[0].id}`)
+        Markup.button.callback(`📁 ${subj.name}  •  ${subj.block_count || 0} ta blok`, `ct_exist_${subj.id}`)
       ]);
     }
 
@@ -174,8 +172,8 @@ async function cbCreateTest(ctx) {
 
   // Ekran matniga sahifa raqamini qo'shish
   let pageInfo = "";
-  if (uniqueSubjects.length > 5) {
-    const totalPages = Math.ceil(uniqueSubjects.length / 5);
+  if (userSubjects.length > 5) {
+    const totalPages = Math.ceil(userSubjects.length / 5);
     const validPage = Math.max(0, Math.min(page, totalPages - 1));
     pageInfo = `\n\n_Sahifa: ${validPage + 1} / ${totalPages}_`;
   }
@@ -239,29 +237,50 @@ async function onSubjectInput(ctx) {
   }
   if (!ctx.session || !ctx.session.data) return cbCancelCreation(ctx);
 
-  const subject = result.data;
-  await updateData(ctx, { subject });
+  const subjectName = result.data;
+  const subjectRecord = await dbService.getOrCreateSubject(ctx.from.id, subjectName);
+  const resolvedName = subjectRecord ? subjectRecord.name : subjectName;
+  const resolvedId = subjectRecord ? subjectRecord.id : null;
 
-  // Eski kod o'rniga yangi gibrid oynani chaqiramiz
+  await updateData(ctx, { subject: resolvedName, subject_id: resolvedId });
+
   await ctx
     .reply("⏳ Qabul qilindi...", { reply_markup: { remove_keyboard: true } })
     .then((m) =>
       ctx.telegram.deleteMessage(ctx.chat.id, m.message_id).catch(() => {}),
     );
-  await promptBlockNameOrAutoDocx(ctx, subject);
+  await promptBlockNameOrAutoDocx(ctx, resolvedName);
 }
 
 async function cbCtExist(ctx) {
   const refId = parseSuffix(ctx.callbackQuery.data, "ct_exist_");
-  const testData = await dbService.getUserTest(refId);
-  if (!testData)
+  let subject = await dbService.getSubjectById(refId);
+  let subjectName = subject?.name;
+  let subjectId = subject?.id;
+
+  // Backward compatibility: agar refId eski test ID bo'lsa
+  if (!subject) {
+    const testData = await dbService.getUserTest(refId);
+    if (testData) {
+      if (testData.subject_id) {
+        subject = await dbService.getSubjectById(testData.subject_id);
+        subjectId = subject ? subject.id : testData.subject_id;
+        subjectName = subject ? subject.name : testData.subject;
+      } else {
+        subjectName = testData.subject;
+        const s = await dbService.getOrCreateSubject(ctx.from.id, subjectName);
+        subjectId = s?.id || null;
+      }
+    }
+  }
+
+  if (!subjectName)
     return ctx.answerCbQuery("❌ Fan topilmadi", { show_alert: true });
 
-  await ctx.answerCbQuery(`✅ ${testData.subject} tanlandi`).catch(() => {});
-  await updateData(ctx, { subject: testData.subject });
+  await ctx.answerCbQuery(`✅ ${subjectName} tanlandi`).catch(() => {});
+  await updateData(ctx, { subject: subjectName, subject_id: subjectId });
 
-  // Eski kod o'rniga yangi gibrid oynani chaqiramiz
-  await promptBlockNameOrAutoDocx(ctx, testData.subject);
+  await promptBlockNameOrAutoDocx(ctx, subjectName);
 }
 
 async function cbAutoDocxInit(ctx) {
@@ -316,18 +335,27 @@ async function onNameInput(ctx) {
 // ─── DRAFT DASHBOARD (BOSHQARUV PANELI) ──────────────────────
 
 async function showDraftDashboard(ctx) {
+  await updateData(ctx, {
+    editing_question_index: undefined,
+    fixing_error_index: undefined,
+  });
   const data = await getData(ctx);
   const qCount = (data.questions || []).length;
+  const invalidCount = (data.invalidQs || []).length;
   const subject = data.subject || "🤖 AI Smart Quiz";
   const blockName = data.block_name || "1-Blok";
 
   let text = `📚 *Fan:* ${escapeMarkdown(subject)}\n`;
   text += `📝 *Blok:* ${escapeMarkdown(blockName)}\n`;
-  text += `🛒 *Savatdagi savollar:* ${qCount} ta\n\n`;
+  text += `🛒 *Savatdagi savollar:* ${qCount} ta\n`;
+  if (invalidCount > 0) {
+    text += `⚠️ *Xato formatdagi savollar:* ${invalidCount} ta\n`;
+  }
+  text += `\n`;
 
   const buttons = [];
 
-  if (qCount === 0) {
+  if (qCount === 0 && invalidCount === 0) {
     text += `_Savat bo'sh. Qaysi usulda savol qo'shmoqchisiz? O'zingizga qulayini tanlang:_`;
   } else {
     text += `_Yana savol qo'shishingiz mumkin. Yoki jarayonni yakunlang:_`;
@@ -342,6 +370,15 @@ async function showDraftDashboard(ctx) {
     Markup.button.callback("📄 Word fayl", "fmt_docx"),
     Markup.button.callback("🤖 AI Smart Quiz", "fmt_ai"),
   ]);
+
+  if (invalidCount > 0) {
+    buttons.push([
+      Markup.button.callback(
+        `⚠️ Xatolarni to'g'rilash (${invalidCount} ta)`,
+        "fix_errors_0",
+      ),
+    ]);
+  }
 
   // Agar savol bo'lsa, Global Preview va Saqlash chiqadi
   if (qCount > 0) {
@@ -380,7 +417,12 @@ async function cbFmt(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const fmt = parseSuffix(ctx.callbackQuery.data, "fmt_");
   const data = await getData(ctx);
-  await updateData(ctx, { format: fmt, format_added: 0 });
+  await updateData(ctx, {
+    format: fmt,
+    format_added: 0,
+    editing_question_index: undefined,
+    fixing_error_index: undefined,
+  });
 
   // 🤖 AQLLI MARSHRUT: Tahrirlash rejimidami yoki Yangi yaratishdami?
   const backAction = data.is_editing ? "edit_add_q" : "back_to_dashboard";
@@ -995,6 +1037,10 @@ async function showAutoDocxStatusMenu(
   limitMsg = "",
   startPartOverride,
 ) {
+  await updateData(ctx, {
+    editing_question_index: undefined,
+    fixing_error_index: undefined,
+  });
   const data = await getData(ctx);
   const startPart = startPartOverride || data.start_part || 1;
   const buttons = chunks.map((chunk, index) => [
@@ -1110,29 +1156,80 @@ async function processBatchedTextQuestions(ctx, fullText) {
     data.parse_mode || "hash",
   );
   const newQs = parsed.valid || [];
+  const newInvalids = parsed.invalid || [];
+  let currentInvalids = data.invalidQs || [];
+
+  if (newInvalids.length > 0) {
+    currentInvalids = [...currentInvalids, ...newInvalids];
+    await updateData(ctx, { invalidQs: currentInvalids });
+  }
+
+  // 🤖 AQLLI MARSHRUT
+  const finishAction = data.is_editing
+    ? "back_to_edit_dash"
+    : "back_to_dashboard";
+  const finishText = data.is_editing
+    ? "🔙 Tahrirlash paneliga (Yakunlash)"
+    : "🔙 Panelga qaytish (Yakunlash)";
 
   if (newQs.length > 0) {
     questions = [...questions, ...newQs];
     const format_added = (data.format_added || 0) + newQs.length;
     await updateData(ctx, { questions, format_added });
 
-    // 🤖 AQLLI MARSHRUT
-    const finishAction = data.is_editing
-      ? "back_to_edit_dash"
-      : "back_to_dashboard";
-    const finishText = data.is_editing
-      ? "🔙 Tahrirlash paneliga (Yakunlash)"
-      : "🔙 Panelga qaytish (Yakunlash)";
+    // Explicitly persist session to Redis after 400ms debounce (Bug 1 fix)
+    const redisConnection = require("../services/redisService");
+    const uid = ctx.from?.id || ctx.chat?.id;
+    if (uid && ctx.session) {
+      await redisConnection.set(`tg_session:${uid}`, JSON.stringify(ctx.session), "EX", 86400).catch(() => {});
+    }
+
+    const buttons = [
+      [
+        Markup.button.callback(
+          `👁 Shu ${format_added} tasini ko'rib chiqish`,
+          "preview_local_0",
+        ),
+      ],
+    ];
+    if (currentInvalids.length > 0) {
+      buttons.push([
+        Markup.button.callback(
+          `⚠️ Xatolarni to'g'rilash (${currentInvalids.length} ta)`,
+          "fix_errors_0",
+        ),
+      ]);
+    }
+    buttons.push([Markup.button.callback(finishText, finishAction)]);
+
+    let statusMsg = `✅ *${newQs.length} ta savol qo'shildi!*\n\nYana savol yuborishingiz mumkin.\n_Joriy formatda yig'ilganlar: ${format_added} ta_`;
+    if (newInvalids.length > 0) {
+      statusMsg += `\n⚠️ *Xato formatdagi savollar:* ${newInvalids.length} ta`;
+    }
 
     await ctx.reply(
-      `✅ *${newQs.length} ta savol qo'shildi!*\n\nYana savol yuborishingiz mumkin.\n_Joriy formatda yig'ilganlar: ${format_added} ta_`,
+      statusMsg,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard(buttons),
+      },
+    );
+  } else if (newInvalids.length > 0) {
+    const redisConnection = require("../services/redisService");
+    const uid = ctx.from?.id || ctx.chat?.id;
+    if (uid && ctx.session) {
+      await redisConnection.set(`tg_session:${uid}`, JSON.stringify(ctx.session), "EX", 86400).catch(() => {});
+    }
+
+    await ctx.reply(
+      `⚠️ *${newInvalids.length} ta savolda format xatosi aniqlandi!*\nSavollar saqlanmadi (masalan, to'g'ri javob oldida # belgisi yo'q yoki variantlar yetarli emas).`,
       {
         parse_mode: "Markdown",
         ...Markup.inlineKeyboard([
           [
             Markup.button.callback(
-              `👁 Shu ${format_added} tasini ko'rib chiqish`,
-              "preview_local_0",
+              `⚠️ Xatolarni to'g'rilash (${currentInvalids.length} ta)`,
+              "fix_errors_0",
             ),
           ],
           [Markup.button.callback(finishText, finishAction)],
@@ -1309,6 +1406,10 @@ async function cbPreviewGrid(ctx, targetPage = null) {
   if (ctx.callbackQuery) {
     await ctx.answerCbQuery().catch(() => {});
   }
+  await updateData(ctx, {
+    editing_question_index: undefined,
+    fixing_error_index: undefined,
+  });
   const page = targetPage !== null
     ? targetPage
     : (parseInt(parseSuffix(ctx.callbackQuery?.data, "preview_grid_"), 10) || 0);
@@ -1380,10 +1481,16 @@ async function cbPreviewGrid(ctx, targetPage = null) {
     );
   if (navRow.length > 0) buttons.push(navRow);
 
+  await updateData(ctx, {
+    editing_question_index: undefined,
+    fixing_error_index: undefined,
+  });
+  const backAction = data.is_editing ? "back_to_edit_dash" : "back_to_dashboard";
+  const backText = data.is_editing ? "🔙 Tahrirlash paneliga qaytish" : "🔙 Boshqaruv Paneliga qaytish";
   buttons.push([
     Markup.button.callback(
-      "🔙 Boshqaruv Paneliga qaytish",
-      "back_to_dashboard",
+      backText,
+      backAction,
     ),
   ]);
 
@@ -1397,6 +1504,10 @@ async function cbPreviewGrid(ctx, targetPage = null) {
 async function cbPreviewQuestion(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const idx = parseInt(parseSuffix(ctx.callbackQuery.data, "preview_q_"), 10);
+  await updateData(ctx, {
+    editing_question_index: undefined,
+    fixing_error_index: undefined,
+  });
   const data = await getData(ctx);
   const questions = data.questions || [];
 
@@ -1471,14 +1582,13 @@ async function cbEditQuestionStart(ctx) {
 
   await safeEdit(
     ctx,
-    `✏️ *Savolni Tahrirlash* (${idx + 1}-savol)\n\nQuyidagi matnni nusxalang (ustiga bossangiz nusxalanadi), xatoni to'g'rilab, botga qayta yuboring:\n\n\`\`\`\n${textFormat}\`\`\`\n\n💡 _To'g'ri javob oldida # bo'lishi shart._`,
+    `✏️ <b>Savolni Tahrirlash</b> (${idx + 1}-savol)\n\nQuyidagi matnni nusxalang (ustiga bossangiz nusxalanadi), xatoni to'g'rilab, botga qayta yuboring:\n\n<pre><code>${escapeHtml(textFormat)}</code></pre>\n\n💡 <i>To'g'ri javob oldida # bo'lishi shart.</i>`,
     {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard([
         [Markup.button.callback("❌ Bekor qilish", `preview_q_${idx}`)],
       ]),
-    },
-  );
+    });
 }
 // ─── 4. YAKUNLASH VA MENYULAR ────────────────────────────────
 async function cbFinishCreation(ctx) {
@@ -1527,16 +1637,30 @@ async function cbFinishCreation(ctx) {
       } catch {}
     }
 
+    // Aniq subject_id ni olish yoki yaratish
+    let resolvedSubjectId = data.subject_id;
+    if (!resolvedSubjectId && subject) {
+      try {
+        const s = await dbService.getOrCreateSubject(ctx.from.id, subject);
+        if (s?.id) {
+          resolvedSubjectId = s.id;
+          data.subject_id = resolvedSubjectId;
+        }
+      } catch {}
+    }
+
     // YANGI TEST YARATISH: Avto-bo'lish (Chunking)
-    if (questions.length <= CHUNK_SIZE && !data.is_auto_docx) {
+    const SINGLE_BLOCK_MAX = data.is_auto_docx ? 25 : 50;
+    if (questions.length <= SINGLE_BLOCK_MAX && !data.is_auto_docx) {
       // Savollar oz bo'lsa va auto-docx bo'lmasa, bitta qilib saqlaymiz
       const tId = await dbService.saveUserTest(
         ctx.from.id,
         subject,
         baseBlockName,
         questions,
+        resolvedSubjectId,
       );
-      testIds.push(tId);
+      if (tId) testIds.push(tId);
     } else {
       // 25 tadan bo'lib chiqamiz
       const chunks = [];
@@ -1552,9 +1676,10 @@ async function cbFinishCreation(ctx) {
         ctx.from.id,
         subject,
         blocksToSave,
+        resolvedSubjectId,
       );
       if (ids && ids.length) {
-        testIds.push(...ids);
+        testIds.push(...ids.filter(Boolean));
       } else {
         for (let i = 0; i < chunks.length; i++) {
           const chunkName = `${baseBlockName} (${startPart + i}-qism)`;
@@ -1563,6 +1688,7 @@ async function cbFinishCreation(ctx) {
             subject,
             chunkName,
             chunks[i],
+            resolvedSubjectId,
           );
           if (tId) testIds.push(tId);
         }
@@ -1570,28 +1696,44 @@ async function cbFinishCreation(ctx) {
     }
   }
 
+  testIds = testIds.filter(Boolean);
+  if (!testIds.length) {
+    logger.error("cbFinishCreation: failed to save test to DB", { userId: ctx.from.id, subject });
+    return ctx.reply("❌ Testni saqlashda xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.", {
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("🔄 Qaytadan saqlash", "finish_test_creation")],
+        [Markup.button.callback("🔙 Savatga qaytish", "back_to_dashboard")],
+      ]),
+    });
+  }
+
   const botInfo = await ctx.telegram.getMe();
   const firstTestId = testIds[0];
+  const shareSubjectId = data.subject_id || firstTestId;
+
+  const testShareUrl = buildShareLink(botInfo.username, 't', firstTestId);
+  const subjShareUrl = buildShareLink(botInfo.username, 's', shareSubjectId);
+  const groupSubjShareUrl = buildShareLink(botInfo.username, 's', shareSubjectId, true);
 
   const chunkMsg =
     testIds.length > 1
       ? `\n\n⚠️ <b>Avto-bo'lish:</b> Savollar ko'pligi uchun tizim ularni avtomatik <b>${testIds.length} ta blokga</b> ajratdi va fanga joyladi.`
-      : `\n\n🔗 <b>Faqat shu blok:</b>\n<code>https://t.me/${botInfo.username}?start=t_${firstTestId}</code>`;
+      : `\n\n🔗 <b>Faqat shu blok:</b>\n<code>${testShareUrl}</code>`;
 
   await safeEdit(
     ctx,
-    `🎉 <b>Muvaffaqiyatli saqlandi!</b>\n\n📚 Fan: <b>${escapeHtml(subject)}</b>\n📝 Asosiy Blok: <b>${escapeHtml(baseBlockName)}</b>\n🔢 Jami Savollar: <b>${questions.length} ta</b>${chunkMsg}\n\n🔗 <b>Butun fanni o'ynash (Marafon):</b>\n<code>https://t.me/${botInfo.username}?start=s_${firstTestId}</code>`,
+    `🎉 <b>Muvaffaqiyatli saqlandi!</b>\n\n📚 Fan: <b>${escapeHtml(subject)}</b>\n📝 Asosiy Blok: <b>${escapeHtml(baseBlockName)}</b>\n🔢 Jami Savollar: <b>${questions.length} ta</b>${chunkMsg}\n\n🔗 <b>Butun fanni o'ynash (Marafon):</b>\n<code>${subjShareUrl}</code>`,
     Markup.inlineKeyboard([
       [
         Markup.button.callback(
           "➕ Shu fanga yana blok qo'shish",
-          `ct_exist_${firstTestId}`,
+          `ct_exist_${shareSubjectId}`,
         ),
       ],
       [
         Markup.button.url(
           "↗️ Guruhda o'ynash",
-          `https://t.me/${botInfo.username}?startgroup=s_${firstTestId}`,
+          groupSubjShareUrl,
         ),
       ],
       [Markup.button.callback("📂 Mening Testlarim", "my_tests")],
@@ -1631,16 +1773,16 @@ async function cbCancelCreation(ctx) {
 }
 
 async function cbMyTests(ctx) {
+  await ctx.answerCbQuery().catch(() => {});
   clearState(ctx);
-  await ctx.answerCbQuery("📂 Testlaringiz yuklanmoqda...").catch(() => {});
 
   let page = 0;
-  if (ctx.callbackQuery.data.startsWith("my_tests_")) {
+  if (ctx.callbackQuery && ctx.callbackQuery.data && ctx.callbackQuery.data.startsWith("my_tests_")) {
     page = parseInt(ctx.callbackQuery.data.replace("my_tests_", ""), 10);
   }
 
-  const tests = await dbService.getUserCreatedTests(ctx.from.id, false);
-  if (!tests || tests.length === 0) {
+  const userSubjects = await dbService.getUserSubjects(ctx.from.id);
+  if (!userSubjects || userSubjects.length === 0) {
     return safeEdit(
       ctx,
       "📭 <b>Siz hali hech qanday test yaratmagansiz.</b>\n\nBu bo'limda siz AI yordamida yoki o'zingiz qo'lda yaratgan shaxsiy testlaringiz saqlanadi.",
@@ -1653,28 +1795,18 @@ async function cbMyTests(ctx) {
     );
   }
 
-  // Fanlar bo'yicha guruhlaymiz
-  const subjectsMap = {};
-  for (const t of tests) {
-    if (!subjectsMap[t.subject]) subjectsMap[t.subject] = [];
-    subjectsMap[t.subject].push(t);
-  }
-
-  const uniqueSubjects = Object.keys(subjectsMap);
   const itemsPerPage = 5;
-  const totalPages = Math.ceil(uniqueSubjects.length / itemsPerPage);
-  const currentSubjects = uniqueSubjects.slice(
+  const totalPages = Math.ceil(userSubjects.length / itemsPerPage);
+  const currentSubjects = userSubjects.slice(
     page * itemsPerPage,
     (page + 1) * itemsPerPage,
   );
 
   const buttons = currentSubjects.map((subj) => {
-    const subjTests = naturalSortBlocks(subjectsMap[subj]);
-    const firstTestId = subjTests[0].id;
     return [
       Markup.button.callback(
-        `📁 ${subj}  •  ${subjTests.length} ta blok`,
-        `manage_subj_${firstTestId}`,
+        `📁 ${subj.name}  •  ${subj.block_count || 0} ta blok`,
+        `manage_subj_${subj.id}`,
       ),
     ];
   });
@@ -1692,42 +1824,65 @@ async function cbMyTests(ctx) {
   if (navButtons.length > 0) buttons.push(navButtons);
   buttons.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
 
+  const totalBlocks = userSubjects.reduce((acc, s) => acc + (s.block_count || 0), 0);
+
   await safeEdit(
     ctx,
-    `📂 <b>Mening Testlarim</b> (Sahifa ${page + 1}/${totalPages}):\n\nQaysi fan bo'yicha testlarni ko'rmoqchisiz?\n\n📊 Jami: ${uniqueSubjects.length} ta fan, ${tests.length} ta test`,
+    `📂 <b>Mening Testlarim</b> (Sahifa ${page + 1}/${totalPages}):\n\nQaysi fan bo'yicha testlarni ko'rmoqchisiz?\n\n📊 Jami: ${userSubjects.length} ta fan, ${totalBlocks} ta test`,
     { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) },
   );
 }
+
 async function cbManageSubj(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const refId = parseSuffix(ctx.callbackQuery.data, "manage_subj_");
-  const testData = await dbService.getUserTest(refId);
-  if (!testData) return;
+  let subject = await dbService.getSubjectById(refId);
+  let subjTests = [];
 
-  const tests = await dbService.getUserCreatedTests(ctx.from.id);
-  const subjTests = naturalSortBlocks(tests.filter((t) => t.subject === testData.subject));
+  if (subject) {
+    subjTests = await dbService.getSubjectBlocks(subject.id);
+  } else {
+    // Backward compatibility for legacy test IDs
+    const testData = await dbService.getUserTest(refId);
+    if (!testData) return;
+    if (testData.subject_id) {
+      subject = await dbService.getSubjectById(testData.subject_id);
+      subjTests = await dbService.getSubjectBlocks(testData.subject_id);
+    } else {
+      const tests = await dbService.getUserCreatedTests(ctx.from.id);
+      subjTests = naturalSortBlocks((tests || []).filter((t) => t.subject === testData.subject));
+      subject = { id: refId, name: testData.subject };
+    }
+  }
+
+  const subjectId = subject?.id || refId;
+  const subjectName = subject?.name || 'Fan';
   const botInfo = await ctx.telegram.getMe();
 
-  const buttons = subjTests.map((t) => [
+  const buttons = (subjTests || []).map((t) => [
     Markup.button.callback(
       `📝 ${t.block_name}  •  ${(t.questions || []).length} savol`,
       `manage_test_${t.id}`,
     ),
   ]);
-  // cbManageSubj oxiridagi tugmalar:
+
+  const subjShareUrl = buildShareLink(botInfo.username, 's', subjectId);
+  const groupSubjShareUrl = buildShareLink(botInfo.username, 's', subjectId, true);
+
   buttons.push([
     Markup.button.url(
       "🏃 Bu fanni guruhda Marafon qilish",
-      `https://t.me/${botInfo.username}?startgroup=s_${refId}`,
+      groupSubjShareUrl,
     ),
   ]);
   buttons.push([
-    Markup.button.callback("➕ Bu fanga blok qo'shish", `ct_exist_${refId}`),
+    Markup.button.callback("➕ Bu fanga blok qo'shish", `ct_exist_${subjectId}`),
   ]);
   buttons.push([Markup.button.callback("🔙 Mening Testlarimga", "my_tests")]);
+
   await safeEdit(
     ctx,
-    `📚 <b>Fan:</b> ${escapeHtml(testData.subject)}\n🔗 <b>Fan havolasi:</b>\n<code>https://t.me/${botInfo.username}?start=s_${refId}</code>\n\n📋 Bloklar:`,
+    `📚 <b>Fan:</b> ${escapeHtml(subjectName)}\n🔗 <b>Fan havolasi:</b>\n<code>${subjShareUrl}</code>\n\n📋 Bloklar:`,
     Markup.inlineKeyboard(buttons),
   );
 }
@@ -1739,15 +1894,17 @@ async function cbManageTest(ctx) {
   if (!testData) return;
   const botInfo = await ctx.telegram.getMe();
 
+  const testShareUrl = buildShareLink(botInfo.username, 't', testId);
+  const groupTestShareUrl = buildShareLink(botInfo.username, 't', testId, true);
+
   await safeEdit(
     ctx,
-    `📝 <b>Blok Ma'lumotlari</b>\n📚 Fan: <b>${escapeHtml(testData.subject)}</b>\n🔖 Blok: <b>${escapeHtml(testData.block_name)}</b>\n🔢 Savollar: <b>${(testData.questions || []).length} ta</b>\n\n🔗 <b>Havola:</b>\n<code>https://t.me/${botInfo.username}?start=t_${testId}</code>`,
-
+    `📝 <b>Blok Ma'lumotlari</b>\n📚 Fan: <b>${escapeHtml(testData.subject)}</b>\n🔖 Blok: <b>${escapeHtml(testData.block_name)}</b>\n🔢 Savollar: <b>${(testData.questions || []).length} ta</b>\n\n🔗 <b>Havola:</b>\n<code>${testShareUrl}</code>`,
     Markup.inlineKeyboard([
       [
         Markup.button.url(
           "↗️ Guruhda o'ynash",
-          `https://t.me/${botInfo.username}?startgroup=t_${testId}`,
+          groupTestShareUrl,
         ),
       ],
       [
@@ -1758,7 +1915,7 @@ async function cbManageTest(ctx) {
       ],
       [Markup.button.callback("✏️ Tahrirlash", `edit_test_${testId}`)],
       [Markup.button.callback("🗑 Blokni o'chirish", `delete_test_${testId}`)],
-      [Markup.button.callback("🔙 Fanga qaytish", `manage_subj_${testId}`)],
+      [Markup.button.callback("🔙 Fanga qaytish", `manage_subj_${testData.subject_id || testId}`)],
       [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
     ]),
   );

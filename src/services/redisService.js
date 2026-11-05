@@ -90,6 +90,10 @@ if (!process.env.REDIS_URL) {
     }
     return removed;
   };
+  dummy.scard = async (k) => {
+    const set = inMemoryStore.get(k);
+    return set instanceof Set ? set.size : 0;
+  };
   dummy.smembers = async (k) => {
     const set = inMemoryStore.get(k);
     return set instanceof Set ? Array.from(set) : [];

@@ -1,10 +1,11 @@
 'use strict';
 
 const dbService = require('../services/dbService');
+const { resolveShareParam } = require('../services/shareService');
 const { getMainKeyboard } = require('../keyboards/keyboards');
 const sessionService = require('../services/sessionService');
 const {
-  userNameCache, clearState, resetUserFlows, safeEdit, safeAnswerCb, backToMainKb, escapeHtml,
+  userNameCache, resetUserFlows, safeEdit, safeAnswerCb, backToMainKb, escapeHtml,
 } = require('../core/utils');
 
 async function cmdStart(ctx) {
@@ -14,10 +15,9 @@ async function cmdStart(ctx) {
   // ─── GURUHLAR UCHUN TOZA INTERFEYS VA KUTISH ZALI ────────────
   if (ctx.chat.type !== 'private') {
     const botInfo = await ctx.telegram.getMe();
-    const args = (ctx.message.text || '').split(' ');
+    const args = (ctx.message.text || '').trim().split(/\s+/);
 
-    // Agar deeplink orqali guruhga qo'shilsa (startgroup=t_123)
-    // Agar deeplink orqali guruhga qo'shilsa (startgroup=t_123)
+    // Agar deeplink orqali guruhga qo'shilsa (startgroup=t_...)
     if (args.length > 1) {
       // Ba'zan argument t_123@bot_nomi bo'lib kelishi mumkin, tozalab olamiz:
       const param = args[1].split('@')[0];
@@ -94,35 +94,58 @@ async function cmdStart(ctx) {
   }
 
   // LINK ORQALI KIRGANDA (Deep Linking - Shaxsiy chat uchun)
-  const args = (ctx.message.text || '').split(' ');
+  const args = (ctx.message.text || '').trim().split(/\s+/);
   if (args.length > 1) {
     const param = args[1];
-    if (param.startsWith('s_')) {
+    const resolved = resolveShareParam(param);
+
+    if (resolved.type === 's') {
+      if (resolved.isInvalid || !resolved.id) {
+        return ctx.reply("❌ Fan topilmadi yoki havola yaroqsiz.", backToMainKb());
+      }
+
       ctx.sendChatAction('typing').catch(() => {});
       const loadingMsg = await ctx.reply(
         '⏳ <b>Fan bloklari yuklanmoqda...</b>\n<i>Iltimos, kuting...</i>',
         { parse_mode: 'HTML' }
       ).catch(() => null);
 
-      const testData = await dbService.getUserTest(param.slice(2));
-      if (!testData) {
-        const notFoundText = '❌ Bu fan topilmadi yoki o\'chirilgan.';
-        if (loadingMsg) {
-          return ctx.telegram.editMessageText(
-            chatId,
-            loadingMsg.message_id,
-            undefined,
-            notFoundText,
-            backToMainKb()
-          ).catch(() => ctx.reply(notFoundText, backToMainKb()));
-        }
-        return ctx.reply(notFoundText, backToMainKb());
-      }
+      const rawId = resolved.id;
       const { showUgcSubjectBlocks } = require('./quizGame');
-      return showUgcSubjectBlocks(ctx, testData.creator_id, testData.subject, loadingMsg?.message_id);
+
+      // 1. Avval rawId ni subject_id deb tekshiramiz
+      const subject = await dbService.getSubjectById(rawId);
+      if (subject) {
+        return showUgcSubjectBlocks(ctx, subject.id, subject.name, loadingMsg?.message_id);
+      }
+
+      // 2. Agar subject topilmasa, eski havola bo'lishi mumkin (rawId = test_id)
+      const testData = await dbService.getUserTest(rawId);
+      if (testData) {
+        if (testData.subject_id) {
+          const s = await dbService.getSubjectById(testData.subject_id);
+          return showUgcSubjectBlocks(ctx, testData.subject_id, s?.name || testData.subject, loadingMsg?.message_id);
+        }
+        return showUgcSubjectBlocks(ctx, testData.creator_id, testData.subject, loadingMsg?.message_id);
+      }
+
+      const notFoundText = '❌ Bu fan topilmadi yoki o\'chirilgan.';
+      if (loadingMsg) {
+        return ctx.telegram.editMessageText(
+          chatId,
+          loadingMsg.message_id,
+          undefined,
+          notFoundText,
+          backToMainKb()
+        ).catch(() => ctx.reply(notFoundText, backToMainKb()));
+      }
+      return ctx.reply(notFoundText, backToMainKb());
     }
-    if (param.startsWith('t_')) {
-      const testData = await dbService.getUserTest(param.slice(2));
+    if (resolved.type === 't') {
+      if (resolved.isInvalid || !resolved.id) {
+        return ctx.reply("❌ Bu blok topilmadi yoki havola yaroqsiz.", backToMainKb());
+      }
+      const testData = await dbService.getUserTest(resolved.id);
       if (testData) {
         const { startUgcTest } = require('./quizGame');
         return startUgcTest(ctx, testData);
@@ -209,21 +232,22 @@ async function cmdStop(ctx) {
   const session = await sessionServiceLocal.getActiveTest(chatId);
 
   if (session) {
-    if (isGroup && userId !== session.initiatorId) {
-      return ctx.reply('⚠️ Faqat testni boshlagan foydalanuvchi to\'xtata oladi.');
-    }
+    if (isGroup) {
+      if (userId !== session.initiatorId) {
+        return ctx.reply('⚠️ Faqat testni boshlagan foydalanuvchi to\'xtata oladi.');
+      }
 
-    const { cbStopTest, finishTest } = require('./quizGame');
-    if (cbStopTest) {
-      return cbStopTest(ctx);
-    } else {
       // 🛑 UX Flow: Marafonni majburiy to'xtatish bayrog'ini yoqamiz
       session.forceStopped = true;
       await sessionServiceLocal.setActiveTest(chatId, session);
 
       await ctx.reply('🛑 <b>Test majburiy to\'xtatildi!</b> Yakuniy reyting hisoblanmoqda...', { parse_mode: 'HTML' });
+      const { finishTest } = require('./quizGame');
       return finishTest(chatId, ctx.telegram);
     }
+
+    const { cbStopTest } = require('./quizGame');
+    return cbStopTest(ctx);
   }
 
   await ctx.reply('ℹ️ Hozirda faol test mavjud emas.', isGroup ? undefined : backToMainKb());

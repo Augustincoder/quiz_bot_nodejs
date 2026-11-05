@@ -1,9 +1,9 @@
 'use strict';
 
 function deepClone(obj) {
-  if (typeof structuredClone === 'function') {
+  if (typeof globalThis.structuredClone === 'function') {
     try {
-      return structuredClone(obj);
+      return globalThis.structuredClone(obj);
     } catch {
       // Fallback if object has non-cloneable properties
     }
@@ -30,10 +30,16 @@ function prepareShuffledQuestions(rawQuestions) {
   const shuffledQ = shuffleArray(cloned);
   return shuffledQ.map((q) => {
     const rawOptions = Array.isArray(q.options) ? q.options : [];
-    const correctText = rawOptions[q.correct_index];
-    const sanitizedOptions = rawOptions.map((opt) => String(opt ?? '').trim() || 'Variant');
-    const options = shuffleArray(sanitizedOptions);
-    const newCorrectIdx = options.indexOf(String(correctText ?? '').trim() || 'Variant');
+    const correctIdx = typeof q.correct_index === 'number' ? q.correct_index : 0;
+    const correctText = rawOptions[correctIdx];
+
+    const taggedOptions = rawOptions.map((opt, idx) => ({
+      text: String(opt ?? '').trim() || 'Variant',
+      isCorrect: idx === correctIdx,
+    }));
+    const shuffledTagged = shuffleArray(taggedOptions);
+    const options = shuffledTagged.map((t) => t.text);
+    const newCorrectIdx = shuffledTagged.findIndex((t) => t.isCorrect);
 
     return {
       ...q,

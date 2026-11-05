@@ -174,7 +174,7 @@ async function cbAiTestsType(ctx) {
   if (type === 'text') {
     setState(ctx, States.ADMIN_AI_TESTS_TEXT);
     await safeEdit(ctx,
-      `📝 <b>Matn asosida AI test</b>\n\nTest yaratish uchun matnni yuboring:\n\n<i>Yoki "auto" deb yozing, AI o'zi miqdorni belgilasin</i>`,
+      `📝 <b>Matn asosida AI test</b>\n\nTest yaratish uchun o'quv matnini yuboring.\n\n💡 <i>Ixtiyoriy: Birinchi qatorga savollar sonini yozishingiz mumkin (masalan, <code>10</code>). Standart holatda miqdor avtomatik (auto) belgilanadi.</i>`,
       { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'admin_cancel')]]) },
     );
   } else if (type === 'image') {
@@ -197,8 +197,8 @@ async function cbAiTestsType(ctx) {
 // ============================================
 
 async function onAiTestsText(ctx) {
-  const text = ctx.message.text;
-  if (!text) return;
+  const rawInput = ctx.message.text ? ctx.message.text.trim() : '';
+  if (!rawInput) return;
   const adminId = ctx.from?.id;
   
   // 🔒 Rate limit tekshiruvi
@@ -206,21 +206,31 @@ async function onAiTestsText(ctx) {
   if (!limitCheck.allowed) {
     return ctx.reply(limitCheck.message, { parse_mode: 'HTML' });
   }
+
+  // Matn va sonni ajratib olish:
+  let count = 'auto';
+  let studyText = rawInput;
+
+  // Agar 1-qator faqat raqam bo'lsa (masalan: "10\nMatn...")
+  const lines = rawInput.split('\n');
+  if (lines.length > 1 && /^\d+$/.test(lines[0].trim())) {
+    const parsedCount = parseInt(lines[0].trim(), 10);
+    if (parsedCount >= 1 && parsedCount <= 50) {
+      count = parsedCount;
+      studyText = lines.slice(1).join('\n').trim();
+    }
+  }
+
+  if (studyText.length < 10 || studyText.toLowerCase() === 'auto') {
+    return ctx.reply("⚠️ Matn juda qisqa. Iltimos, test tuzish uchun yetarli o'quv matnini (kamida 10 ta belgi) yuboring.");
+  }
   
   if (activeAdminAiUsers.has(adminId)) {
     return ctx.reply("⏳ Sizning AI test generatsiyangiz allaqachon bajarilmoqda, iltimos biroz kuting...");
   }
   activeAdminAiUsers.add(adminId);
-
-  let count = 'auto';
-  if (text.toLowerCase() === 'auto') {
-    // AI o'zi belgilaydi
-  } else {
-    // Foydalanuvchi kiritgan miqdor
-    count = text.trim();
-  }
   
-  await updateData(ctx, { ai_test_text: text, ai_test_count: count });
+  await updateData(ctx, { ai_test_text: studyText, ai_test_count: count });
   setState(ctx, States.ADMIN_AI_TESTS_GENERATE);
   
   const status = await ctx.reply(
@@ -229,7 +239,7 @@ async function onAiTestsText(ctx) {
   );
   
   try {
-    const questions = await aiService.generateQuizFromText(text, count);
+    const questions = await aiService.generateQuizFromText(studyText, count);
     if (!questions || !questions.length) {
       await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, undefined, "❌ AI test yaratishda xatolik yuz berdi.");
       clearState(ctx);
