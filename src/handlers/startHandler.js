@@ -1,6 +1,7 @@
 'use strict';
 
 const dbService = require('../services/dbService');
+const { resolveShareParam } = require('../services/shareService');
 const { getMainKeyboard } = require('../keyboards/keyboards');
 const sessionService = require('../services/sessionService');
 const {
@@ -97,14 +98,20 @@ async function cmdStart(ctx) {
   const args = (ctx.message.text || '').split(' ');
   if (args.length > 1) {
     const param = args[1];
-    if (param.startsWith('s_')) {
+    const resolved = resolveShareParam(param);
+
+    if (resolved.type === 's') {
+      if (resolved.isInvalid || !resolved.id) {
+        return ctx.reply("❌ Fan topilmadi yoki havola yaroqsiz.", backToMainKb());
+      }
+
       ctx.sendChatAction('typing').catch(() => {});
       const loadingMsg = await ctx.reply(
         '⏳ <b>Fan bloklari yuklanmoqda...</b>\n<i>Iltimos, kuting...</i>',
         { parse_mode: 'HTML' }
       ).catch(() => null);
 
-      const rawId = param.slice(2);
+      const rawId = resolved.id;
       const { showUgcSubjectBlocks } = require('./quizGame');
 
       // 1. Avval rawId ni subject_id deb tekshiramiz
@@ -135,8 +142,11 @@ async function cmdStart(ctx) {
       }
       return ctx.reply(notFoundText, backToMainKb());
     }
-    if (param.startsWith('t_')) {
-      const testData = await dbService.getUserTest(param.slice(2));
+    if (resolved.type === 't') {
+      if (resolved.isInvalid || !resolved.id) {
+        return ctx.reply("❌ Bu blok topilmadi yoki havola yaroqsiz.", backToMainKb());
+      }
+      const testData = await dbService.getUserTest(resolved.id);
       if (testData) {
         const { startUgcTest } = require('./quizGame');
         return startUgcTest(ctx, testData);

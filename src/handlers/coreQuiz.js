@@ -15,6 +15,7 @@ const {
   truncateText,
 } = require("../core/utils");
 const redisConnection = require("../services/redisService");
+const { buildShareLink } = require("../services/shareService");
 
 
 // ─── REDIS-BACKED ACTIVE POLLS VA GROUP CACHE ─────────────────────────────
@@ -624,7 +625,15 @@ async function finishTest(chatId, telegram) {
       } else {
         // YAKUNIY REYTING (Oddiy blok yoki Marafon oxiri)
         const botInfo = await telegram.getMe();
-        const shareLink = `https://t.me/share/url?url=https://t.me/${botInfo.username}?startgroup=${session.isMarathon ? "s" : "t"}_${session.isMarathon ? session.marathonBlocks[0].test_id : tId}&text=🏆 Bizning guruh reytingimiz chiroyli chiqdi! Siz ham do'stlar bilan o'ynang.`;
+        let targetLink = '';
+        if (session.isMarathon) {
+          const mSubjId = session.subjectId || session.marathonBlocks?.[0]?.subject_id || session.marathonBlocks?.[0]?.test_id || 1;
+          targetLink = buildShareLink(botInfo.username, 's', mSubjId, true);
+        } else {
+          const rawTestId = String(tId).startsWith('ugc_') ? parseInt(String(tId).replace('ugc_', ''), 10) : tId;
+          targetLink = buildShareLink(botInfo.username, 't', rawTestId, true);
+        }
+        const shareLink = `https://t.me/share/url?url=${encodeURIComponent(targetLink)}&text=${encodeURIComponent("🏆 Bizning guruh reytingimiz chiroyli chiqdi! Siz ham do'stlar bilan o'ynang.")}`;
 
         if (session.isMarathon) {
           const globalEntries = Object.values(

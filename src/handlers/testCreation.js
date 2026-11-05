@@ -6,6 +6,7 @@ const { Markup } = require("telegraf");
 const os = require("os");
 const dbService = require("../services/dbService");
 const logger = require("../core/logger");
+const { buildShareLink } = require("../services/shareService");
 const {
   States,
   setState,
@@ -1603,14 +1604,18 @@ async function cbFinishCreation(ctx) {
   const firstTestId = testIds[0];
   const shareSubjectId = data.subject_id || firstTestId;
 
+  const testShareUrl = buildShareLink(botInfo.username, 't', firstTestId);
+  const subjShareUrl = buildShareLink(botInfo.username, 's', shareSubjectId);
+  const groupSubjShareUrl = buildShareLink(botInfo.username, 's', shareSubjectId, true);
+
   const chunkMsg =
     testIds.length > 1
       ? `\n\n⚠️ <b>Avto-bo'lish:</b> Savollar ko'pligi uchun tizim ularni avtomatik <b>${testIds.length} ta blokga</b> ajratdi va fanga joyladi.`
-      : `\n\n🔗 <b>Faqat shu blok:</b>\n<code>https://t.me/${botInfo.username}?start=t_${firstTestId}</code>`;
+      : `\n\n🔗 <b>Faqat shu blok:</b>\n<code>${testShareUrl}</code>`;
 
   await safeEdit(
     ctx,
-    `🎉 <b>Muvaffaqiyatli saqlandi!</b>\n\n📚 Fan: <b>${escapeHtml(subject)}</b>\n📝 Asosiy Blok: <b>${escapeHtml(baseBlockName)}</b>\n🔢 Jami Savollar: <b>${questions.length} ta</b>${chunkMsg}\n\n🔗 <b>Butun fanni o'ynash (Marafon):</b>\n<code>https://t.me/${botInfo.username}?start=s_${shareSubjectId}</code>`,
+    `🎉 <b>Muvaffaqiyatli saqlandi!</b>\n\n📚 Fan: <b>${escapeHtml(subject)}</b>\n📝 Asosiy Blok: <b>${escapeHtml(baseBlockName)}</b>\n🔢 Jami Savollar: <b>${questions.length} ta</b>${chunkMsg}\n\n🔗 <b>Butun fanni o'ynash (Marafon):</b>\n<code>${subjShareUrl}</code>`,
     Markup.inlineKeyboard([
       [
         Markup.button.callback(
@@ -1621,7 +1626,7 @@ async function cbFinishCreation(ctx) {
       [
         Markup.button.url(
           "↗️ Guruhda o'ynash",
-          `https://t.me/${botInfo.username}?startgroup=s_${shareSubjectId}`,
+          groupSubjShareUrl,
         ),
       ],
       [Markup.button.callback("📂 Mening Testlarim", "my_tests")],
@@ -1754,10 +1759,13 @@ async function cbManageSubj(ctx) {
     ),
   ]);
 
+  const subjShareUrl = buildShareLink(botInfo.username, 's', subjectId);
+  const groupSubjShareUrl = buildShareLink(botInfo.username, 's', subjectId, true);
+
   buttons.push([
     Markup.button.url(
       "🏃 Bu fanni guruhda Marafon qilish",
-      `https://t.me/${botInfo.username}?startgroup=s_${subjectId}`,
+      groupSubjShareUrl,
     ),
   ]);
   buttons.push([
@@ -1767,7 +1775,7 @@ async function cbManageSubj(ctx) {
 
   await safeEdit(
     ctx,
-    `📚 <b>Fan:</b> ${escapeHtml(subjectName)}\n🔗 <b>Fan havolasi:</b>\n<code>https://t.me/${botInfo.username}?start=s_${subjectId}</code>\n\n📋 Bloklar:`,
+    `📚 <b>Fan:</b> ${escapeHtml(subjectName)}\n🔗 <b>Fan havolasi:</b>\n<code>${subjShareUrl}</code>\n\n📋 Bloklar:`,
     Markup.inlineKeyboard(buttons),
   );
 }
@@ -1779,14 +1787,17 @@ async function cbManageTest(ctx) {
   if (!testData) return;
   const botInfo = await ctx.telegram.getMe();
 
+  const testShareUrl = buildShareLink(botInfo.username, 't', testId);
+  const groupTestShareUrl = buildShareLink(botInfo.username, 't', testId, true);
+
   await safeEdit(
     ctx,
-    `📝 <b>Blok Ma'lumotlari</b>\n📚 Fan: <b>${escapeHtml(testData.subject)}</b>\n🔖 Blok: <b>${escapeHtml(testData.block_name)}</b>\n🔢 Savollar: <b>${(testData.questions || []).length} ta</b>\n\n🔗 <b>Havola:</b>\n<code>https://t.me/${botInfo.username}?start=t_${testId}</code>`,
+    `📝 <b>Blok Ma'lumotlari</b>\n📚 Fan: <b>${escapeHtml(testData.subject)}</b>\n🔖 Blok: <b>${escapeHtml(testData.block_name)}</b>\n🔢 Savollar: <b>${(testData.questions || []).length} ta</b>\n\n🔗 <b>Havola:</b>\n<code>${testShareUrl}</code>`,
     Markup.inlineKeyboard([
       [
         Markup.button.url(
           "↗️ Guruhda o'ynash",
-          `https://t.me/${botInfo.username}?startgroup=t_${testId}`,
+          groupTestShareUrl,
         ),
       ],
       [

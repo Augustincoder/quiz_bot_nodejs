@@ -4,6 +4,7 @@ const { Markup } = require('telegraf');
 const mutex = require('../core/mutex');
 const sessionService = require('../services/sessionService');
 const dbService = require('../services/dbService');
+const { resolveShareParam } = require('../services/shareService');
 const { safeDelete, escapeHtml, naturalSortBlocks } = require('../core/utils');
 
 // Kutish zalini chizish (yaratish yoki yangilash) uchun yordamchi funksiya
@@ -64,13 +65,16 @@ async function createLobby(ctx, param) {
   let isOfficial = false;
   const memDb = require('../core/bot').memoryDb || {};
 
-  if (param.startsWith('t_')) {
-    const id = param.split('_')[1];
-    testData = await dbService.getUserTest(id);
+  const resolved = resolveShareParam(param);
+
+  if (resolved.type === 't') {
+    if (resolved.isInvalid || !resolved.id) return ctx.reply("❌ Test topilmadi yoki havola yaroqsiz.");
+    testData = await dbService.getUserTest(resolved.id);
     if (!testData) return ctx.reply("❌ Test topilmadi yoki o'chirilgan.");
     mode = 'block';
-  } else if (param.startsWith('s_')) {
-    const rawId = param.split('_')[1];
+  } else if (resolved.type === 's') {
+    if (resolved.isInvalid || !resolved.id) return ctx.reply("❌ Fan topilmadi yoki havola yaroqsiz.");
+    const rawId = resolved.id;
     let subject = await dbService.getSubjectById(rawId);
     if (subject) {
       const blocks = await dbService.getSubjectBlocks(subject.id);
@@ -226,7 +230,7 @@ async function cbRoomStart(ctx) {
       blockName = marathonBlocks[0].block_name;
     } else {
       sessionQ = prepareShuffledQuestions(deepClone(room.testData.questions || []));
-      testId = room.param.split('_').pop(); 
+      testId = room.testData?.id || (room.isOfficial ? room.param.split('_').pop() : room.testId || room.param); 
       blockName = room.testData.block_name;
     }
 
