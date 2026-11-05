@@ -543,14 +543,17 @@ async function getOrCreateSubject(creatorId, subjectName) {
       { onConflict: 'telegram_id', ignoreDuplicates: true }
     ).catch(() => {});
 
-    // 3. Insert new subject
+    // 3. Upsert subject atomically using UNIQUE (name, creator_id) constraint
     const { data: created, error: insertErr } = await supabase
       .from('subjects')
-      .insert({
-        name: rawName,
-        creator_id: uid,
-        created_at: new Date().toISOString(),
-      })
+      .upsert(
+        {
+          name: rawName,
+          creator_id: uid,
+          created_at: new Date().toISOString(),
+        },
+        { onConflict: 'name,creator_id' }
+      )
       .select('*')
       .single();
 
