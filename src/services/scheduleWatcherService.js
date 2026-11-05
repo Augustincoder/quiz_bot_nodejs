@@ -1539,7 +1539,7 @@ async function runSmartScheduleIntervalTick(bot) {
     }
 
     // 2. Evening before (20:30)
-    if (currentHHMM === '20:30') {
+    if (isTimeInWindow('20:30')) {
       const tomorrowNotes = await db.getDueNotesForLesson(null, null, tomorrowIso);
       for (const note of tomorrowNotes) {
         if (note.status === 'completed' || note.status === 'cancelled') continue;

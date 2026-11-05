@@ -181,6 +181,8 @@ async function cbRoomStart(ctx) {
     }
 
     await sessionService.deleteWaitingRoom(chatId);
+    const { groupTestCache } = require('./coreQuiz');
+    await groupTestCache.delete(chatId);
     const { safeDelete } = require('../core/utils');
     await safeDelete(ctx); // Kutish zali xabarini o'chiramiz
 

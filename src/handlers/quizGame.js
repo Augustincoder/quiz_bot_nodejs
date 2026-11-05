@@ -113,6 +113,10 @@ async function initAndStartTest(
   initiatorId,
   chatType,
 ) {
+  if (chatType !== 'private') {
+    const { groupTestCache } = require('./coreQuiz');
+    await groupTestCache.delete(chatId);
+  }
   const sessionQ = prepareShuffledQuestions(testData.questions || []);
   const subjName = SUBJECTS[subjectKey] || subjectKey;
   const blockName =
@@ -612,6 +616,8 @@ async function cbStopTest(ctx) {
     await ctx.telegram.stopPoll(chatId, session.msgId).catch(() => { });
   }
   try {
+    const { cancelSessionTimer } = require("./coreQuiz");
+    await cancelSessionTimer(session, chatId);
     const { quizTimerQueue } = require("../jobs/queues");
     quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then((j) => j && j.remove()).catch(() => {});
   } catch {
@@ -729,6 +735,8 @@ async function cbPauseShelf(ctx) {
   if (session.pollId)
     await sessionService.deletePollChat(session.pollId).catch(() => { });
   try {
+    const { cancelSessionTimer } = require("./coreQuiz");
+    await cancelSessionTimer(session, chatId);
     const { quizTimerQueue } = require("../jobs/queues");
     quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
   } catch {
@@ -842,8 +850,9 @@ async function cbWorkMistakesMenu(ctx) {
   try {
     await ctx.answerCbQuery().catch(() => { });
 
-    // 🤖 Fanni ajratib olamiz
-    const subjectKey = ctx.callbackQuery.data.replace("wm_menu_", "");
+    const metaRaw = await redisConnection.get(`mistakes_meta:${ctx.chat.id}`).catch(() => null);
+    const meta = metaRaw ? JSON.parse(metaRaw) : null;
+    const subjectKey = meta?.subjectKey || ctx.callbackQuery.data.replace("wm_menu_", "") || "general";
 
     const mistakes = (await lastMistakesCache.get(ctx.chat.id)) || [];
     if (!mistakes || mistakes.length === 0)
@@ -851,14 +860,14 @@ async function cbWorkMistakesMenu(ctx) {
         .answerCbQuery("🎉 Xatolar topilmadi!", { show_alert: true })
         .catch(() => { });
 
-    const metaRaw = await redisConnection.get(`mistakes_meta:${ctx.chat.id}`).catch(() => null);
-    const meta = metaRaw ? JSON.parse(metaRaw) : null;
     let backCallback = `post_subj_${subjectKey}`;
     let backLabel = "🔙 Fan menyusiga";
     if (meta?.isUgc) {
       backCallback = meta.subjectId ? `ugc_subj_${meta.subjectId}` : "my_tests";
       backLabel = meta.subjectId ? "🔙 Fan bloklariga" : "🔙 Mening testlarim";
     }
+
+    const { safeCallbackData } = require("../core/utils");
 
     await safeEdit(
       ctx,
@@ -869,19 +878,19 @@ async function cbWorkMistakesMenu(ctx) {
           [
             Markup.button.callback(
               "🕹 Interaktiv Rejim",
-              `wm_start_inline_${subjectKey}`,
+              safeCallbackData(`wm_start_inline_${subjectKey}`, 64),
             ),
           ],
           [
             Markup.button.callback(
               "📊 Klassik Quiz",
-              `wm_start_quiz_${subjectKey}`,
+              safeCallbackData(`wm_start_quiz_${subjectKey}`, 64),
             ),
           ],
           [
             Markup.button.callback(
               backLabel,
-              backCallback,
+              safeCallbackData(backCallback, 64),
             ),
           ],
         ]),
@@ -895,7 +904,10 @@ async function cbWorkMistakesMenu(ctx) {
 async function cbWmStartQuiz(ctx) {
   await ctx.answerCbQuery().catch(() => { });
   const chatId = ctx.chat.id;
-  const subjectKey = ctx.callbackQuery.data.replace("wm_start_quiz_", "");
+
+  const metaRaw = await redisConnection.get(`mistakes_meta:${chatId}`).catch(() => null);
+  const meta = metaRaw ? JSON.parse(metaRaw) : null;
+  const subjectKey = meta?.subjectKey || ctx.callbackQuery.data.replace("wm_start_quiz_", "") || "general";
 
   const mistakes = (await lastMistakesCache.get(chatId)) || [];
 
@@ -908,9 +920,11 @@ async function cbWmStartQuiz(ctx) {
   const testData = {
     block_name: "Xatolar ustida ishlash",
     questions: mistakes,
+    subject_id: meta?.subjectId || null,
+    is_ugc: Boolean(meta?.isUgc),
+    creator_id: meta?.isUgc ? ctx.from.id : null,
   };
 
-  // require() olib tashlandi, chunki funksiya shu faylning o'zida joylashgan
   await initAndStartTest(
     chatId,
     ctx.telegram,
@@ -930,16 +944,14 @@ async function cbWmStartInline(ctx) {
       .catch(() => { });
     const chatId = ctx.chat.id;
 
-    // 🤖 Fanni ajratamiz
-    const subjectKey = ctx.callbackQuery.data.replace("wm_start_inline_", "");
+    const metaRaw = await redisConnection.get(`mistakes_meta:${chatId}`).catch(() => null);
+    const meta = metaRaw ? JSON.parse(metaRaw) : null;
+    const subjectKey = meta?.subjectKey || ctx.callbackQuery.data.replace("wm_start_inline_", "") || "general";
 
     const mistakes = (await lastMistakesCache.get(chatId)) || [];
     if (!mistakes || mistakes.length === 0) {
       return ctx.answerCbQuery("⚠️ Xatoliklar topilmadi yoki vaqti tugagan!", { show_alert: true }).catch(() => { });
     }
-
-    const metaRaw = await redisConnection.get(`mistakes_meta:${chatId}`).catch(() => null);
-    const meta = metaRaw ? JSON.parse(metaRaw) : null;
 
     const stateData = {
       queue: [...mistakes],

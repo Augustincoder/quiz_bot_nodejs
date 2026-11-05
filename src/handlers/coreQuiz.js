@@ -13,6 +13,7 @@ const {
   progressBar,
   escapeHtml,
   truncateText,
+  safeCallbackData,
 } = require("../core/utils");
 const redisConnection = require("../services/redisService");
 const { buildShareLink } = require("../services/shareService");
@@ -42,9 +43,10 @@ async function cancelSessionTimer(session, chatId) {
   try {
     const { quizTimerQueue } = require("../jobs/queues");
     if (!quizTimerQueue) return;
-    const jId = session?.timerJobId || (session?.pollId ? `timeout:${chatId}:${session?.qIdx}:${session.pollId}` : `timeout:${chatId}:${session?.qIdx}`);
+    const jId = session?.timerJobId || (session?.pollId ? `timeout_${chatId}_${session?.qIdx}_${session.pollId}` : `timeout_${chatId}_${session?.qIdx}`);
     await quizTimerQueue.getJob(jId).then(j => j && j.remove()).catch(() => {});
     if (session?.qIdx !== undefined) {
+      quizTimerQueue.getJob(`timeout_${chatId}_${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
       quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
     }
   } catch {}
@@ -67,9 +69,11 @@ const lastMistakesCache = {
 };
 
 function resolveTestName(tId, blockName) {
-  if (String(tId) === "mock") return "🎲 Aralash Test";
-  if (String(tId) === "adaptive") return "🎯 AI Adaptiv Test";
-  if (String(tId).startsWith("ugc_")) return `📝 ${blockName || "Maxsus Test"}`;
+  const sid = String(tId);
+  if (sid === "mock" || sid.startsWith("mock_")) return "🎲 Aralash Test";
+  if (sid === "adaptive" || sid.startsWith("adaptive_")) return "🎯 AI Adaptiv Test";
+  if (sid === "retry" || sid.startsWith("retry_")) return "🔄 Xatolar ustida ishlash";
+  if (sid.startsWith("ugc_")) return `📝 ${blockName || "Maxsus Test"}`;
   return `${tId}-Blok`;
 }
 
@@ -85,7 +89,7 @@ async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = 
     btns.push([
       Markup.button.callback(
         `🔄 Xatolar ustida ishlash (${mistakesCount} ta)`,
-        `wm_menu_${subjectKey}`,
+        safeCallbackData(`wm_menu_${subjectKey}`, 64),
       ),
     ]);
   }
@@ -145,13 +149,13 @@ async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = 
     btns.push([Markup.button.callback("📥 Javonga saqlash", "shelf_save_init")]);
     btns.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
     return btns;
-  } else if (sid === "mock") {
+  } else if (sid === "mock" || sid.startsWith("mock_")) {
     btns.push([
-      Markup.button.callback("🎲 Yana aralash", `mock_${subjectKey}`),
+      Markup.button.callback("🎲 Yana aralash", safeCallbackData(`mock_${subjectKey}`, 64)),
     ]);
-  } else if (sid === "adaptive") {
+  } else if (sid === "adaptive" || sid.startsWith("adaptive_")) {
     btns.push([
-      Markup.button.callback("🎯 Yana adaptiv", `adaptive_${subjectKey}`),
+      Markup.button.callback("🎯 Yana adaptiv", safeCallbackData(`adaptive_${subjectKey}`, 64)),
     ]);
   } else if (sid === "retry" || sid.startsWith("retry_")) {
     btns.push([
@@ -362,19 +366,23 @@ async function sendNextQuestion(chatId, telegram) {
     await sessionService.setPollChat(msg.poll.id, String(chatId));
 
     const { quizTimerQueue } = require("../jobs/queues");
-    const timerJobId = `timeout:${chatId}:${session.qIdx}:${msg.poll.id}`;
+    const timerJobId = `timeout_${chatId}_${session.qIdx}_${msg.poll.id}`;
     session.timerJobId = timerJobId;
     await sessionService.setActiveTest(chatId, session);
 
-    await quizTimerQueue.add(
-      "timeout",
-      { chatId, expectedIdx: session.qIdx, pollId: msg.poll.id },
-      {
-        delay: 31_000,
-        jobId: timerJobId,
-        removeOnComplete: true,
-      },
-    );
+    try {
+      await quizTimerQueue.add(
+        "timeout",
+        { chatId, expectedIdx: session.qIdx, pollId: msg.poll.id },
+        {
+          delay: 31_000,
+          jobId: timerJobId,
+          removeOnComplete: true,
+        },
+      );
+    } catch (timerErr) {
+      console.warn(`[coreQuiz] Failed to schedule timer job for chatId ${chatId}:`, timerErr?.message);
+    }
   } catch (e) {
     console.error(`sendNextQuestion fatal [${chatId}]:`, e.message);
     const errMsg = String(e?.message || '');
@@ -728,7 +736,7 @@ async function handlePollAnswer(pollAnswer, telegram) {
   if (cachedPoll) {
     const { chatId, correct_index, qData } = cachedPoll;
     
-    const unlockGroup = await mutex.lock(`group_poll:${chatId}`);
+    const unlockGroup = await mutex.lock(`poll:${chatId}`);
     try {
       const voter = pollAnswer.user || pollAnswer.voter_chat;
       if (!voter) return;
@@ -800,6 +808,8 @@ async function handlePollAnswer(pollAnswer, telegram) {
         await sessionService.setActiveTest(chatId, session);
 
         await cancelSessionTimer(session, chatId);
+        await activePollsCache.delete(pollId);
+        await sessionService.deletePollChat(pollId).catch(() => {});
         try {
           await telegram.stopPoll(chatId, session.msgId);
         } catch {}

@@ -31,7 +31,7 @@ function validateBlockName(name) {
 // Markdown belgilarini xavfsiz holatga keltirish uchun
 function escapeMarkdown(text) {
   if (!text) return '';
-  return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+  return text.replace(/[_*`\[\\]/g, (m) => '\\' + m);
 }
 
 /**
@@ -71,7 +71,9 @@ function sanitizeQuizQuestions(rawQuestions) {
     } else if (targetIdx < 0 || targetIdx >= rawOptions.length) {
       targetIdx = 0;
     }
-    const targetCorrectText = String(rawOptions[targetIdx] ?? '').trim().toLowerCase();
+    let targetOpt = String(rawOptions[targetIdx] ?? '').trim();
+    if (targetOpt.length > 100) targetOpt = targetOpt.slice(0, 97) + '...';
+    const targetCorrectText = targetOpt.toLowerCase();
 
     for (let idx = 0; idx < rawOptions.length; idx++) {
       let opt = String(rawOptions[idx] || '').trim();

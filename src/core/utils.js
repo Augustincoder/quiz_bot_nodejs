@@ -428,12 +428,19 @@ function parseTextQuestions(text, mode = 'hash') {
       continue;
     }
 
-    // Tekshiramiz: agar eng oxirgi qator javob kaliti bo'lsa (masalan: "# A", "#B", "# 2", "Javob: B", "To'g'ri javob: C")
+    // Tekshiramiz: agar eng oxirgi qator javob kaliti bo'lsa (masalan: "# A", "Javob: B", "To'g'ri javob: C")
     let explicitCorrectIdx = -1;
     if (parts.length - 1 > firstOptIdx) {
       const lastLine = parts[parts.length - 1].trim();
-      const trailingAnswerMatch = lastLine.match(/^[#*]\s*([a-jA-J1-9])$/i) ||
-        lastLine.match(/^[#*]?\s*(?:to'?g'?ri\s+javob|javob)\s*[:=-]?\s*([a-jA-J1-9])$/i);
+      const optionsBefore = parts.slice(firstOptIdx, parts.length - 1);
+      const optionsHavePrefixes = optionsBefore.length >= 2 &&
+        optionsBefore.every(line => /^(?:[a-zA-Z][\)\.]|\d+[\)\.])\s*/.test(line.trim()) && !/^[#*]/.test(line.trim()));
+
+      const trailingWordMatch = lastLine.match(/^[#*]?\s*(?:to'?g'?ri\s+javob|javob)\s*[:=-]?\s*([a-jA-J1-9])$/i);
+      const trailingHashMatch = (optionsHavePrefixes && lastLine.match(/^[#*]\s*([a-jA-J1-9])$/i)) ||
+        lastLine.match(/^[#*]\s+([a-jA-J1-9])$/i);
+
+      const trailingAnswerMatch = trailingWordMatch || trailingHashMatch;
       if (trailingAnswerMatch) {
         const keyChar = trailingAnswerMatch[1].toUpperCase();
         if (/^[1-9]$/.test(keyChar)) {

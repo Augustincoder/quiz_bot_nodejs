@@ -278,6 +278,127 @@ assert(!dbCode.includes(".select('telegram_id, name, class_name')"), 'dbService 
 assert(dbCode.includes(".select('telegram_id, full_name, class_name')"), 'dbService must select "full_name"');
 console.log('  ✅ [PASS] Bug #15: getUsersByClassName verified to query full_name column.\n');
 
+// ─── TEST 11: BullMQ Custom Job ID Validation (Bug #10 regression) ───
+console.log('11. Testing BullMQ Custom Job ID Validation (Bug #10 regression)');
+const { Job } = require('bullmq');
+const mockQueue = {
+  toKey: (k) => 'bull:testQueue:' + k,
+  opts: { prefix: 'bull', settings: {} },
+  keys: { wait: 'w', active: 'a', prioritized: 'pr', events: 'e', stalled: 's', limiter: 'l', delayed: 'd', paused: 'p', meta: 'm' }
+};
+
+const testChatId = 5624964756;
+const testQIdx = 2;
+const testPollId = '5234567890123456789';
+const timerJobId = `timeout_${testChatId}_${testQIdx}_${testPollId}`;
+
+// 1. Must not contain colons
+assert(!timerJobId.includes(':'), 'timerJobId must not contain colons');
+
+// 2. BullMQ validateOptions must not throw
+const testJob = new Job(mockQueue, 'timeout', { chatId: testChatId }, { jobId: timerJobId });
+assert.doesNotThrow(() => {
+  testJob.validateOptions(testJob.asJSON());
+}, 'BullMQ validateOptions must accept timerJobId without throwing "Custom Id cannot contain :"');
+
+// 3. cancelSessionTimer must handle timerJobId
+const { cancelSessionTimer } = require('../src/handlers/coreQuiz');
+assert(typeof cancelSessionTimer === 'function', 'cancelSessionTimer must be a function');
+console.log('  ✅ [PASS] BullMQ Job ID validation passed with zero colons and valid options.\n');
+
+// ─── TEST 12: New Bug #1: parseTextQuestions single-char options #4 and #A ───
+console.log('12. Testing New Bug #1: parseTextQuestions #4 and #A preservation');
+const sampleNum = '2 + 2 nechaga teng?\n1\n2\n3\n#4';
+const pNum = parseTextQuestions(sampleNum, 'hash');
+assert.strictEqual(pNum.valid.length, 1);
+assert.strictEqual(pNum.valid[0].options.length, 4);
+assert.strictEqual(pNum.valid[0].options[3], '4');
+assert.strictEqual(pNum.valid[0].correct_index, 3);
+
+const sampleAlpha = 'Qaysi vitamin yetishmasligi shabko\'rlikka olib keladi?\nC\nD\nE\n#A';
+const pAlpha = parseTextQuestions(sampleAlpha, 'hash');
+assert.strictEqual(pAlpha.valid.length, 1);
+assert.strictEqual(pAlpha.valid[0].options.length, 4);
+assert.strictEqual(pAlpha.valid[0].options[3], 'A');
+assert.strictEqual(pAlpha.valid[0].correct_index, 3);
+console.log('  ✅ [PASS] New Bug #1: #4 and #A options preserved without false trailing answer key pop.\n');
+
+// ─── TEST 13: New Bug #2: wm_menu callback_data length limit <= 64 bytes ───
+console.log('13. Testing New Bug #2: wm_menu callback_data length safety');
+const { buildFinishButtons } = require('../src/handlers/coreQuiz');
+(async () => {
+  const longCyrillicSubj = 'Бухгалтерия ҳисоби ва иқтисодий таҳлил асослари';
+  const btns = await buildFinishButtons('1', longCyrillicSubj, 3, null);
+  const wmBtn = btns.flat().find(b => b.callback_data && b.callback_data.startsWith('wm_menu_'));
+  assert(wmBtn, 'Must generate wm_menu button');
+  const byteLen = Buffer.byteLength(wmBtn.callback_data, 'utf8');
+  assert(byteLen <= 64, 'Callback data must not exceed 64 bytes');
+  console.log('  ✅ [PASS] New Bug #2: wm_menu callback_data is clamped within 64 bytes.\n');
+})();
+
+// ─── TEST 14: New Bug #3: Group Quiz Mutex key consistency ───
+console.log('14. Testing New Bug #3: Mutex key consistency in coreQuiz.js');
+const coreQuizCode = fs.readFileSync(require.resolve('../src/handlers/coreQuiz'), 'utf8');
+assert(!coreQuizCode.includes('mutex.lock(' + String.fromCharCode(96) + 'group_poll:' + String.fromCharCode(36) + '{chatId}' + String.fromCharCode(96) + ')'), 'handlePollAnswer must not use mismatched group_poll mutex');
+assert(coreQuizCode.includes('mutex.lock(' + String.fromCharCode(96) + 'poll:' + String.fromCharCode(36) + '{chatId}' + String.fromCharCode(96) + ')'), 'handlePollAnswer must use unified poll mutex');
+console.log('  ✅ [PASS] New Bug #3: Mutex keys unified to poll:chatId.\n');
+
+// ─── TEST 15: New Bug #4: Shelf resumed mock_... and adaptive_... finish buttons ───
+console.log('15. Testing New Bug #4: Shelf resumed mock_ and adaptive_ test finish buttons');
+const { resolveTestName } = require('../src/handlers/coreQuiz');
+assert.strictEqual(resolveTestName('mock_1762351234567'), '🎲 Aralash Test');
+assert.strictEqual(resolveTestName('adaptive_1762351234567'), '🎯 AI Adaptiv Test');
+
+(async () => {
+  const mockBtns = await buildFinishButtons('mock_1762351234567', 'matematika', 0, null);
+  const restartBtn = mockBtns.flat().find(b => b.callback_data && b.callback_data.startsWith('mock_'));
+  assert(restartBtn, 'Resumed mock test must show mock_ button, not post_start_');
+
+  const adaptBtns = await buildFinishButtons('adaptive_1762351234567', 'matematika', 0, null);
+  const adaptBtn = adaptBtns.flat().find(b => b.callback_data && b.callback_data.startsWith('adaptive_'));
+  assert(adaptBtn, 'Resumed adaptive test must show adaptive_ button, not post_start_');
+  console.log('  ✅ [PASS] New Bug #4: Resumed mock and adaptive tests generate correct buttons.\n');
+})();
+
+// ─── TEST 16: New Bug #5: sanitizeQuizQuestions >100 char correct option preservation ───
+console.log('16. Testing New Bug #5: sanitizeQuizQuestions long option correct_index tracking');
+const longText = 'A'.repeat(120);
+const rawLongQs = [
+  {
+    question: 'Ushbu uzun matnli javob to\'g\'rimi?',
+    options: ['Qisqa 1', 'Qisqa 2', longText, 'Qisqa 3'],
+    correct_index: 2
+  }
+];
+const cleanLong = sanitizeQuizQuestions(rawLongQs);
+assert.strictEqual(cleanLong.length, 1);
+assert.strictEqual(cleanLong[0].correct_index, 2, 'Correct index must point to truncated option (index 2), not fall back to 0');
+console.log('  ✅ [PASS] New Bug #5: Long option correct_index accurately tracked after truncation.\n');
+
+// ─── TEST 17: New Bug #6: escapeMarkdown legacy Markdown character safety ───
+console.log('17. Testing New Bug #6: escapeMarkdown character set');
+const { escapeMarkdown } = require('../src/validators/testValidators');
+const rawTitle = 'Tarix (1-qism). 2-mavzu!';
+const escapedTitle = escapeMarkdown(rawTitle);
+assert(!escapedTitle.includes('\\-'), 'Legacy Markdown must not escape hyphens');
+assert(!escapedTitle.includes('\\('), 'Legacy Markdown must not escape parentheses');
+assert(!escapedTitle.includes('\\.'), 'Legacy Markdown must not escape periods');
+assert(!escapedTitle.includes('\\!'), 'Legacy Markdown must not escape exclamation marks');
+assert(escapedTitle.includes('Tarix (1-qism). 2-mavzu!'), 'Normal characters remain unescaped');
+const starTitle = escapeMarkdown('Tarix *Muhim* va _Qiziqarli_ `kod` [havola]');
+assert.strictEqual(starTitle, 'Tarix \\*Muhim\\* va \\_Qiziqarli\\_ \\`kod\\` \\[havola]');
+console.log('  ✅ [PASS] New Bug #6: Legacy Markdown characters cleanly escaped without backslash spam.\n');
+
+// ─── TEST 18: New Bug #7: contactAdmin reply fallback & scheduleWatcher 20:30 window ───
+console.log('18. Testing New Bug #7: contactAdmin fallback and scheduleWatcher 20:30 window');
+const contactAdminCode = fs.readFileSync(require.resolve('../src/handlers/contactAdmin'), 'utf8');
+assert(contactAdminCode.includes('ctx.session?.replyTargetUserId || ctx.session?.data?.target_id'), 'contactAdmin must check target_id fallback');
+
+const watcherCode = fs.readFileSync(require.resolve('../src/services/scheduleWatcherService'), 'utf8');
+assert(!watcherCode.includes("currentHHMM === '20:30'"), 'scheduleWatcher must not use strict equality for 20:30');
+assert(watcherCode.includes("isTimeInWindow('20:30')"), 'scheduleWatcher must use isTimeInWindow for 20:30');
+console.log('  ✅ [PASS] New Bug #7: contactAdmin target_id fallback and 20:30 time window verified.\n');
+
 console.log('==================================================');
 console.log('🎉 ALL SENIOR AUDIT BUG FIXES VERIFIED SUCCESSFULLY!');
 console.log('==================================================');

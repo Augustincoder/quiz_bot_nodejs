@@ -415,7 +415,7 @@ async function cbAdminCancelReply(ctx) {
  * Barcha media turlarini qo'llab-quvvatlaydi
  */
 async function handleAdminReplyState(ctx) {
-  const targetUserId = ctx.session?.replyTargetUserId;
+  const targetUserId = ctx.session?.replyTargetUserId || ctx.session?.data?.target_id;
 
   if (!targetUserId) {
     clearState(ctx);

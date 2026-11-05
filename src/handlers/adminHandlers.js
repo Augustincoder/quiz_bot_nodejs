@@ -1420,6 +1420,7 @@ async function cbReplyStart(ctx) {
   }
 
   await updateData(ctx, { target_id: targetId, target_msg_id: msgId });
+  if (ctx.session) ctx.session.replyTargetUserId = targetId;
   setState(ctx, States.ADMIN_REPLY);
 
   await ctx.reply(

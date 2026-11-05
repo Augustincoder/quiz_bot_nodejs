@@ -1764,6 +1764,12 @@ async function cbCancelCreation(ctx) {
   }
 
   // 2. Agar savat bo'sh bo'lsa Yoki foydalanuvchi "Ha, o'chirish" tugmasini bosgan bo'lsa
+  const cancelUserId = ctx.from?.id;
+  if (cancelUserId && userTextChunks.has(cancelUserId)) {
+    const chunkState = userTextChunks.get(cancelUserId);
+    if (chunkState?.timer) clearTimeout(chunkState.timer);
+    userTextChunks.delete(cancelUserId);
+  }
   clearState(ctx);
   await ctx.answerCbQuery("❌ Barchasi bekor qilindi va tozalandi.").catch(() => {});
   
