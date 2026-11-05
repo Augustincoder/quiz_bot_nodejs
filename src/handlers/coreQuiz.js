@@ -79,8 +79,9 @@ async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = 
   }
 
   const sid = String(tId);
-  if (sid.startsWith("ugc_")) {
-    const rawTestId = parseInt(sid.replace("ugc_", ""), 10);
+  const isUgcSession = sid.startsWith("ugc_") || Boolean(session?.creatorId) || Boolean(session?.subjectId);
+  if (isUgcSession) {
+    const rawTestId = sid.startsWith("ugc_") ? parseInt(sid.replace("ugc_", ""), 10) : parseInt(sid, 10);
     let nextBlock = null;
     let subjectId = session?.subjectId;
 
@@ -626,12 +627,22 @@ async function finishTest(chatId, telegram) {
         // YAKUNIY REYTING (Oddiy blok yoki Marafon oxiri)
         const botInfo = await telegram.getMe();
         let targetLink = '';
-        if (session.isMarathon) {
-          const mSubjId = session.subjectId || session.marathonBlocks?.[0]?.subject_id || session.marathonBlocks?.[0]?.test_id || 1;
-          targetLink = buildShareLink(botInfo.username, 's', mSubjId, true);
+        const isUgc = String(tId).startsWith('ugc_') || Boolean(session.creatorId) || Boolean(session.subjectId);
+        if (isUgc) {
+          if (session.isMarathon) {
+            const mSubjId = session.subjectId || session.marathonBlocks?.[0]?.subject_id || session.marathonBlocks?.[0]?.test_id || 1;
+            targetLink = buildShareLink(botInfo.username, 's', mSubjId, true);
+          } else {
+            const rawTestId = String(tId).startsWith('ugc_') ? parseInt(String(tId).replace('ugc_', ''), 10) : tId;
+            targetLink = buildShareLink(botInfo.username, 't', rawTestId, true);
+          }
         } else {
-          const rawTestId = String(tId).startsWith('ugc_') ? parseInt(String(tId).replace('ugc_', ''), 10) : tId;
-          targetLink = buildShareLink(botInfo.username, 't', rawTestId, true);
+          // Rasmiy test havolasi
+          if (session.isMarathon) {
+            targetLink = `https://t.me/${botInfo.username}?startgroup=offs_${session.subjectKey}`;
+          } else {
+            targetLink = `https://t.me/${botInfo.username}?startgroup=offt_${session.subjectKey}_${tId}`;
+          }
         }
         const shareLink = `https://t.me/share/url?url=${encodeURIComponent(targetLink)}&text=${encodeURIComponent("🏆 Bizning guruh reytingimiz chiroyli chiqdi! Siz ham do'stlar bilan o'ynang.")}`;
 

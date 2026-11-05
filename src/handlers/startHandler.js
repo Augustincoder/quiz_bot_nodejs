@@ -15,10 +15,9 @@ async function cmdStart(ctx) {
   // ─── GURUHLAR UCHUN TOZA INTERFEYS VA KUTISH ZALI ────────────
   if (ctx.chat.type !== 'private') {
     const botInfo = await ctx.telegram.getMe();
-    const args = (ctx.message.text || '').split(' ');
+    const args = (ctx.message.text || '').trim().split(/\s+/);
 
-    // Agar deeplink orqali guruhga qo'shilsa (startgroup=t_123)
-    // Agar deeplink orqali guruhga qo'shilsa (startgroup=t_123)
+    // Agar deeplink orqali guruhga qo'shilsa (startgroup=t_...)
     if (args.length > 1) {
       // Ba'zan argument t_123@bot_nomi bo'lib kelishi mumkin, tozalab olamiz:
       const param = args[1].split('@')[0];
@@ -95,7 +94,7 @@ async function cmdStart(ctx) {
   }
 
   // LINK ORQALI KIRGANDA (Deep Linking - Shaxsiy chat uchun)
-  const args = (ctx.message.text || '').split(' ');
+  const args = (ctx.message.text || '').trim().split(/\s+/);
   if (args.length > 1) {
     const param = args[1];
     const resolved = resolveShareParam(param);

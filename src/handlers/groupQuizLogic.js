@@ -226,11 +226,11 @@ async function cbRoomStart(ctx) {
       if (!marathonBlocks.length) return ctx.reply("❌ Bu fanda bloklar topilmadi.");
 
       sessionQ = prepareShuffledQuestions(marathonBlocks[0].questions);
-      testId = marathonBlocks[0].test_id || marathonBlocks[0].id; // Rasmiy va UGC IDlari
+      testId = marathonBlocks[0].test_id || (marathonBlocks[0].id ? `ugc_${marathonBlocks[0].id}` : marathonBlocks[0].id); // Rasmiy va UGC IDlari
       blockName = marathonBlocks[0].block_name;
     } else {
       sessionQ = prepareShuffledQuestions(deepClone(room.testData.questions || []));
-      testId = room.testData?.id || (room.isOfficial ? room.param.split('_').pop() : room.testId || room.param); 
+      testId = room.isOfficial ? room.param.split('_').pop() : (room.testData?.id ? `ugc_${room.testData.id}` : room.testId || room.param); 
       blockName = room.testData.block_name;
     }
 
@@ -238,6 +238,7 @@ async function cbRoomStart(ctx) {
     await sessionService.setActiveTest(chatId, {
       chatType: 'group',
       initiatorId: room.initiatorId,
+      creatorId: room.testData?.creator_id || null,
       subjectKey: room.testData.subject,
       subjectId: room.testData.subject_id || null,
       testId: testId,
