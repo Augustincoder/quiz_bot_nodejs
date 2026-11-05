@@ -122,6 +122,8 @@ async function initAndStartTest(
     initiatorId,
     subjectKey,
     testId,
+    subjectId: testData?.subject_id || null,
+    creatorId: testData?.creator_id || null,
     blockName: blockName,
     sessionQuestions: sessionQ,
     qIdx: 0,
@@ -362,11 +364,42 @@ async function cbPostStart(ctx) {
 
 // ─── UGC (USER-GENERATED TESTS) ──────────────────────────────
 
-async function showUgcSubjectBlocks(ctx, creatorId, subject, loadingMsgId = null) {
+async function showUgcSubjectBlocks(ctx, subjectIdOrCreator, subjectName = null, loadingMsgId = null) {
   const chatId = ctx.chat?.id || ctx.from?.id;
   try {
-    const tests = await dbService.getUserCreatedTests(creatorId);
-    const subjTests = naturalSortBlocks(tests.filter((t) => t.subject === subject));
+    let subjTests = [];
+    let titleSubject = subjectName;
+
+    const numericId = parseInt(subjectIdOrCreator, 10);
+    // Agar birinchi parametr raqam bo'lsa (subject_id yoki eski test_id)
+    if (!isNaN(numericId) && numericId > 0 && !subjectName) {
+      const subject = await dbService.getSubjectById(numericId);
+      if (subject) {
+        titleSubject = subject.name;
+        subjTests = await dbService.getSubjectBlocks(subject.id);
+      } else {
+        // Fallback agar numericId eski test_id bo'lsa
+        const testData = await dbService.getUserTest(numericId);
+        if (testData) {
+          titleSubject = testData.subject;
+          if (testData.subject_id) {
+            subjTests = await dbService.getSubjectBlocks(testData.subject_id);
+          } else {
+            const tests = await dbService.getUserCreatedTests(testData.creator_id);
+            subjTests = naturalSortBlocks((tests || []).filter((t) => t.subject === testData.subject));
+          }
+        }
+      }
+    } else if (numericId && subjectName) {
+      subjTests = await dbService.getSubjectBlocks(numericId);
+      titleSubject = subjectName;
+    } else {
+      // Legacy signature: (ctx, creatorId, subjectName, loadingMsgId)
+      const tests = await dbService.getUserCreatedTests(subjectIdOrCreator);
+      subjTests = naturalSortBlocks((tests || []).filter((t) => t.subject === subjectName));
+      titleSubject = subjectName;
+    }
+
     if (!subjTests.length) {
       const emptyText = "❌ Bu fanda bloklar topilmadi.";
       if (loadingMsgId && chatId) {
@@ -389,7 +422,7 @@ async function showUgcSubjectBlocks(ctx, creatorId, subject, loadingMsgId = null
     ]);
     buttons.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
 
-    const text = `📚 <b>${escapeHtml(subject)}</b>\n\n${subjTests.length} ta blok mavjud. Boshlash uchun blokni tanlang:`;
+    const text = `📚 <b>${escapeHtml(titleSubject || "Fan")}</b>\n\n${subjTests.length} ta blok mavjud. Boshlash uchun blokni tanlang:`;
     const opts = { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) };
 
     if (loadingMsgId && chatId) {
@@ -411,6 +444,12 @@ async function showUgcSubjectBlocks(ctx, creatorId, subject, loadingMsgId = null
   } catch (e) {
     console.error("showUgcSubjectBlocks error:", e.message);
   }
+}
+
+async function cbUgcSubj(ctx) {
+  await safeAnswerCb(ctx);
+  const subjectId = parseSuffix(ctx.callbackQuery.data, "ugc_subj_");
+  await showUgcSubjectBlocks(ctx, subjectId);
 }
 
 async function startUgcTest(ctx, testDb) {
@@ -1398,6 +1437,8 @@ module.exports = {
   cbReviewMistakes,
   cbAiExplainMistakes,
   cbAdaptiveTest,
+  showUgcSubjectBlocks,
+  cbUgcSubj,
   cbAdaptiveRun,
   showUgcSubjectBlocks,
   startUgcTest,

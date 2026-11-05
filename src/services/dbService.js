@@ -1,7 +1,7 @@
 'use strict';
 
 const { supabase } = require('../lib/supabase');
-const { TTLMap } = require('../core/utils');
+const { TTLMap, naturalSortBlocks } = require('../core/utils');
 const redis = require('./redisService');
 const logger = require('../core/logger');
 
@@ -500,17 +500,232 @@ async function getUsersByClassName(className) {
   }
 }
 
-async function saveUserTest(creatorId, subject, blockName, questions) {
+// ─── SUBJECTS & USER TESTS RELATIONAL MANAGEMENT ─────────────────
+
+async function getOrCreateSubject(creatorId, subjectName) {
+  const uid = String(creatorId);
+  const rawName = String(subjectName || '').trim();
+  if (!rawName) return null;
+  const normName = rawName.toLowerCase();
+  const cacheKey = `cache:subject_by_name:${uid}:${normName}`;
+
   try {
+    if (redis) {
+      const cached = await redis.get(cacheKey).catch(() => null);
+      if (cached) return JSON.parse(cached);
+    }
+
+    if (!supabase) {
+      return { id: 1, name: rawName, creator_id: uid };
+    }
+
+    // 1. Check if subject already exists for this creator
+    const { data: existing, error: findErr } = await supabase
+      .from('subjects')
+      .select('*')
+      .eq('creator_id', uid)
+      .ilike('name', rawName)
+      .limit(1)
+      .maybeSingle();
+
+    if (findErr) throw findErr;
+    if (existing) {
+      if (redis) {
+        await redis.set(cacheKey, JSON.stringify(existing), 'EX', 3600).catch(() => {});
+        await redis.set(`cache:subject:${existing.id}`, JSON.stringify(existing), 'EX', 3600).catch(() => {});
+      }
+      return existing;
+    }
+
+    // 2. Ensure creator exists in users table (prevent FK violation)
+    await supabase.from('users').upsert(
+      { telegram_id: uid, full_name: 'Foydalanuvchi' },
+      { onConflict: 'telegram_id', ignoreDuplicates: true }
+    ).catch(() => {});
+
+    // 3. Insert new subject
+    const { data: created, error: insertErr } = await supabase
+      .from('subjects')
+      .insert({
+        name: rawName,
+        creator_id: uid,
+        created_at: new Date().toISOString(),
+      })
+      .select('*')
+      .single();
+
+    if (insertErr) throw insertErr;
+
+    if (created && redis) {
+      await redis.set(cacheKey, JSON.stringify(created), 'EX', 3600).catch(() => {});
+      await redis.set(`cache:subject:${created.id}`, JSON.stringify(created), 'EX', 3600).catch(() => {});
+      await redis.del(`cache:user_subjects:${uid}`).catch(() => {});
+    }
+
+    return created;
+  } catch (err) {
+    logger.error('getOrCreateSubject error:', { creatorId: uid, subjectName: rawName, error: err.message });
+    return { id: null, name: rawName, creator_id: uid };
+  }
+}
+
+async function getSubjectById(subjectId) {
+  const sid = parseInt(subjectId, 10);
+  if (isNaN(sid)) return null;
+
+  try {
+    const cacheKey = `cache:subject:${sid}`;
+    if (redis) {
+      const cached = await redis.get(cacheKey).catch(() => null);
+      if (cached) return JSON.parse(cached);
+    }
+
+    if (!supabase) return null;
+
+    const { data, error } = await supabase
+      .from('subjects')
+      .select('*')
+      .eq('id', sid)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (data && redis) {
+      await redis.set(cacheKey, JSON.stringify(data), 'EX', 3600).catch(() => {});
+    }
+    return data || null;
+  } catch (err) {
+    logger.error('getSubjectById error:', { subjectId: sid, error: err.message });
+    return null;
+  }
+}
+
+async function getUserSubjects(creatorId) {
+  const uid = String(creatorId);
+  const cacheKey = `cache:user_subjects:${uid}`;
+
+  try {
+    if (redis) {
+      const cached = await redis.get(cacheKey).catch(() => null);
+      if (cached) return JSON.parse(cached);
+    }
+
+    if (!supabase) return [];
+
+    const { data: subjects, error: subjErr } = await supabase
+      .from('subjects')
+      .select('*')
+      .eq('creator_id', uid)
+      .order('id', { ascending: false });
+
+    if (subjErr) throw subjErr;
+
+    const { data: tests, error: testErr } = await supabase
+      .from('user_tests')
+      .select('id, subject_id, subject, block_name')
+      .eq('creator_id', uid);
+
+    if (testErr) throw testErr;
+
+    const blockCounts = new Map();
+    const legacyMap = new Map();
+    for (const t of tests || []) {
+      if (t.subject_id) {
+        blockCounts.set(t.subject_id, (blockCounts.get(t.subject_id) || 0) + 1);
+      } else if (t.subject) {
+        const norm = t.subject.trim().toLowerCase();
+        legacyMap.set(norm, (legacyMap.get(norm) || 0) + 1);
+      }
+    }
+
+    const result = (subjects || []).map((s) => ({
+      ...s,
+      block_count: blockCounts.get(s.id) || legacyMap.get(String(s.name || '').trim().toLowerCase()) || 0,
+    }));
+
+    if (redis) {
+      await redis.set(cacheKey, JSON.stringify(result), 'EX', 300).catch(() => {});
+    }
+    return result;
+  } catch (err) {
+    logger.error('getUserSubjects error:', { creatorId: uid, error: err.message });
+    return [];
+  }
+}
+
+async function getSubjectBlocks(subjectId) {
+  const sid = parseInt(subjectId, 10);
+  if (isNaN(sid)) return [];
+
+  const cacheKey = `cache:subject_blocks:${sid}`;
+  try {
+    if (redis) {
+      const cached = await redis.get(cacheKey).catch(() => null);
+      if (cached) return JSON.parse(cached);
+    }
+
+    if (!supabase) return [];
+
+    const { data, error } = await supabase
+      .from('user_tests')
+      .select('id, creator_id, subject, subject_id, block_name, questions, created_at')
+      .eq('subject_id', sid)
+      .order('id', { ascending: true });
+
+    if (error) throw error;
+
+    const sorted = naturalSortBlocks(data || []);
+    if (redis) {
+      await redis.set(cacheKey, JSON.stringify(sorted), 'EX', 3600).catch(() => {});
+    }
+    return sorted;
+  } catch (err) {
+    logger.error('getSubjectBlocks error:', { subjectId: sid, error: err.message });
+    return [];
+  }
+}
+
+async function invalidateSubjectCache(subjectId, creatorId) {
+  try {
+    if (!redis) return;
+    const promises = [];
+    if (subjectId) {
+      promises.push(redis.del(`cache:subject:${subjectId}`).catch(() => {}));
+      promises.push(redis.del(`cache:subject_blocks:${subjectId}`).catch(() => {}));
+    }
+    if (creatorId) {
+      promises.push(redis.del(`cache:user_subjects:${creatorId}`).catch(() => {}));
+      promises.push(invalidateUserCreatedTestsCache(creatorId));
+    }
+    await Promise.all(promises);
+  } catch {}
+}
+
+async function saveUserTest(creatorId, subject, blockName, questions, subjectId = null) {
+  try {
+    let resolvedSubjectId = subjectId ? parseInt(subjectId, 10) : null;
+    let resolvedSubjectName = subject;
+
+    if (!resolvedSubjectId && subject) {
+      const subj = await getOrCreateSubject(creatorId, subject);
+      if (subj && subj.id) {
+        resolvedSubjectId = subj.id;
+        resolvedSubjectName = subj.name;
+      }
+    } else if (resolvedSubjectId && !resolvedSubjectName) {
+      const subj = await getSubjectById(resolvedSubjectId);
+      if (subj) resolvedSubjectName = subj.name;
+    }
+
     const { data, error } = await supabase.from('user_tests').insert({
       creator_id: String(creatorId),
-      subject,
+      subject: resolvedSubjectName,
+      subject_id: resolvedSubjectId,
       block_name: blockName,
       questions,
       created_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
-    }).select('id');
+    }).select('id, subject_id');
     if (error) throw error;
-    await invalidateUserCreatedTestsCache(creatorId);
+    await invalidateSubjectCache(resolvedSubjectId, creatorId);
     return data[0].id;
   } catch (e) {
     logger.error('saveUserTest error:', { creatorId, error: e.message });
@@ -518,20 +733,36 @@ async function saveUserTest(creatorId, subject, blockName, questions) {
   }
 }
 
-async function saveUserTestsBatch(creatorId, subject, blocks) {
+async function saveUserTestsBatch(creatorId, subject, blocks, subjectId = null) {
   try {
     if (!Array.isArray(blocks) || blocks.length === 0) return [];
+
+    let resolvedSubjectId = subjectId ? parseInt(subjectId, 10) : null;
+    let resolvedSubjectName = subject;
+
+    if (!resolvedSubjectId && subject) {
+      const subj = await getOrCreateSubject(creatorId, subject);
+      if (subj && subj.id) {
+        resolvedSubjectId = subj.id;
+        resolvedSubjectName = subj.name;
+      }
+    } else if (resolvedSubjectId && !resolvedSubjectName) {
+      const subj = await getSubjectById(resolvedSubjectId);
+      if (subj) resolvedSubjectName = subj.name;
+    }
+
     const now = Date.now();
     const rows = blocks.map((b, i) => ({
       creator_id: String(creatorId),
-      subject,
+      subject: resolvedSubjectName,
+      subject_id: resolvedSubjectId,
       block_name: b.blockName,
       questions: b.questions,
       created_at: new Date(now + i * 1000).toISOString().slice(0, 19).replace('T', ' '),
     }));
     const { data, error } = await supabase.from('user_tests').insert(rows).select('id');
     if (error) throw error;
-    await invalidateUserCreatedTestsCache(creatorId);
+    await invalidateSubjectCache(resolvedSubjectId, creatorId);
     return (data || []).map((r) => r.id);
   } catch (e) {
     logger.error('saveUserTestsBatch error:', { creatorId, error: e.message });
@@ -586,8 +817,8 @@ async function getUserCreatedTests(creatorId, includeQuestions = true) {
     }
 
     const selectFields = includeQuestions
-      ? 'id, subject, block_name, created_at, questions'
-      : 'id, subject, block_name, created_at';
+      ? 'id, subject, subject_id, block_name, created_at, questions'
+      : 'id, subject, subject_id, block_name, created_at';
     const { data, error } = await supabase
       .from('user_tests')
       .select(selectFields)
@@ -607,6 +838,7 @@ async function getUserCreatedTests(creatorId, includeQuestions = true) {
 async function deleteUserTest(testId, creatorId) {
   const tid = parseInt(testId, 10);
   try {
+    const existing = await getUserTest(tid);
     const { error } = await supabase
       .from('user_tests')
       .delete()
@@ -614,7 +846,11 @@ async function deleteUserTest(testId, creatorId) {
       .eq('creator_id', String(creatorId));
     if (error) throw error;
     await redis.del(`cache:user_test:${tid}`).catch(() => {});
-    await invalidateUserCreatedTestsCache(creatorId);
+    if (existing?.subject_id) {
+      await invalidateSubjectCache(existing.subject_id, creatorId);
+    } else {
+      await invalidateUserCreatedTestsCache(creatorId);
+    }
     return true;
   } catch (err) {
     logger.error('deleteUserTest error:', { testId: tid, error: err.message });
@@ -625,6 +861,7 @@ async function deleteUserTest(testId, creatorId) {
 async function updateUserTestQuestions(testId, creatorId, newQuestions) {
   const tid = parseInt(testId, 10);
   try {
+    const existing = await getUserTest(tid);
     const { error } = await supabase
       .from('user_tests')
       .update({ questions: newQuestions })
@@ -632,7 +869,11 @@ async function updateUserTestQuestions(testId, creatorId, newQuestions) {
       .eq('creator_id', String(creatorId));
     if (error) throw error;
     await redis.del(`cache:user_test:${tid}`).catch(() => {});
-    await invalidateUserCreatedTestsCache(creatorId);
+    if (existing?.subject_id) {
+      await invalidateSubjectCache(existing.subject_id, creatorId);
+    } else {
+      await invalidateUserCreatedTestsCache(creatorId);
+    }
     return true;
   } catch (e) {
     logger.error('updateUserTestQuestions error:', { testId: tid, error: e.message });
@@ -1908,6 +2149,11 @@ module.exports = {
   getAllUserNames,
   getAllUsers,
   getUsersByClassName,
+  getOrCreateSubject,
+  getSubjectById,
+  getUserSubjects,
+  getSubjectBlocks,
+  invalidateSubjectCache,
   saveUserTest,
   saveUserTestsBatch,
   getUserTest,

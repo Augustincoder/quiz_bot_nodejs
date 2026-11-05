@@ -104,22 +104,36 @@ async function cmdStart(ctx) {
         { parse_mode: 'HTML' }
       ).catch(() => null);
 
-      const testData = await dbService.getUserTest(param.slice(2));
-      if (!testData) {
-        const notFoundText = '❌ Bu fan topilmadi yoki o\'chirilgan.';
-        if (loadingMsg) {
-          return ctx.telegram.editMessageText(
-            chatId,
-            loadingMsg.message_id,
-            undefined,
-            notFoundText,
-            backToMainKb()
-          ).catch(() => ctx.reply(notFoundText, backToMainKb()));
-        }
-        return ctx.reply(notFoundText, backToMainKb());
-      }
+      const rawId = param.slice(2);
       const { showUgcSubjectBlocks } = require('./quizGame');
-      return showUgcSubjectBlocks(ctx, testData.creator_id, testData.subject, loadingMsg?.message_id);
+
+      // 1. Avval rawId ni subject_id deb tekshiramiz
+      const subject = await dbService.getSubjectById(rawId);
+      if (subject) {
+        return showUgcSubjectBlocks(ctx, subject.id, subject.name, loadingMsg?.message_id);
+      }
+
+      // 2. Agar subject topilmasa, eski havola bo'lishi mumkin (rawId = test_id)
+      const testData = await dbService.getUserTest(rawId);
+      if (testData) {
+        if (testData.subject_id) {
+          const s = await dbService.getSubjectById(testData.subject_id);
+          return showUgcSubjectBlocks(ctx, testData.subject_id, s?.name || testData.subject, loadingMsg?.message_id);
+        }
+        return showUgcSubjectBlocks(ctx, testData.creator_id, testData.subject, loadingMsg?.message_id);
+      }
+
+      const notFoundText = '❌ Bu fan topilmadi yoki o\'chirilgan.';
+      if (loadingMsg) {
+        return ctx.telegram.editMessageText(
+          chatId,
+          loadingMsg.message_id,
+          undefined,
+          notFoundText,
+          backToMainKb()
+        ).catch(() => ctx.reply(notFoundText, backToMainKb()));
+      }
+      return ctx.reply(notFoundText, backToMainKb());
     }
     if (param.startsWith('t_')) {
       const testData = await dbService.getUserTest(param.slice(2));

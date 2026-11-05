@@ -61,7 +61,7 @@ function resolveTestName(tId, blockName) {
 }
 
 // ─── TUGMALARNI YASASH FUNKSIYASI (YANGILANGAN) ───
-function buildFinishButtons(tId, subjectKey, mistakesCount = 0) {
+async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = null) {
   const btns = [];
 
   // Agar xatolar bo'lsa, 2 ta tugmani ham chiqaramiz
@@ -79,12 +79,58 @@ function buildFinishButtons(tId, subjectKey, mistakesCount = 0) {
 
   const sid = String(tId);
   if (sid.startsWith("ugc_")) {
+    const rawTestId = parseInt(sid.replace("ugc_", ""), 10);
+    let nextBlock = null;
+    let subjectId = session?.subjectId;
+
+    // Agar sessionda subjectId bo'lmasa, testDb dan aniqlaymiz
+    if (!subjectId && !isNaN(rawTestId)) {
+      try {
+        const testDb = await dbService.getUserTest(rawTestId);
+        if (testDb?.subject_id) subjectId = testDb.subject_id;
+      } catch {}
+    }
+
+    if (subjectId) {
+      try {
+        const blocks = await dbService.getSubjectBlocks(subjectId);
+        const curIdx = blocks.findIndex((b) => parseInt(b.id, 10) === rawTestId);
+        if (curIdx !== -1 && curIdx + 1 < blocks.length) {
+          nextBlock = blocks[curIdx + 1];
+        }
+      } catch (err) {
+        console.error("Error finding next UGC block:", err.message);
+      }
+    }
+
+    if (nextBlock) {
+      btns.push([
+        Markup.button.callback(
+          `➡️ Keyingi (${nextBlock.block_name})`,
+          `ugc_start_${nextBlock.id}`,
+        ),
+      ]);
+    }
+
     btns.push([
       Markup.button.callback(
         "🔁 Qayta ishlash",
-        `ugc_start_${sid.replace("ugc_", "")}`,
+        `ugc_start_${rawTestId}`,
       ),
     ]);
+
+    if (subjectId) {
+      btns.push([
+        Markup.button.callback(
+          "📚 Fan bloklari",
+          `ugc_subj_${subjectId}`,
+        ),
+      ]);
+    }
+
+    btns.push([Markup.button.callback("📥 Javonga saqlash", "shelf_save_init")]);
+    btns.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
+    return btns;
   } else if (sid === "mock") {
     btns.push([
       Markup.button.callback("🎲 Yana aralash", `mock_${subjectKey}`),
@@ -103,7 +149,7 @@ function buildFinishButtons(tId, subjectKey, mistakesCount = 0) {
         ]);
       }
     }
-  }  else {
+  } else {
     btns.push([
       Markup.button.callback(
         "🔁 Qayta ishlash",
@@ -485,7 +531,7 @@ async function finishTest(chatId, telegram) {
 
       // 🔴 FIX: ReferenceError ning oldi olindi va to'g'ri hisob-kitob kiritildi
       const mistakesCount = (session.mistakes || []).length;
-      buttons = buildFinishButtons(tId, session.subjectKey, mistakesCount);
+      buttons = await buildFinishButtons(tId, session.subjectKey, mistakesCount, session);
     } else {
       const groupEntry = await groupTestCache.get(chatId);
       if (groupEntry) {

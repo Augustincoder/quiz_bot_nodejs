@@ -126,35 +126,27 @@ async function cbCreateTest(ctx) {
     page = parseInt(ctx.callbackQuery.data.replace("create_test_", ""), 10) || 0;
   }
 
-  const tests = await dbService.getUserCreatedTests(ctx.from.id, false);
-  const subjects = {};
-  for (const t of tests) {
-    if (!subjects[t.subject]) subjects[t.subject] = [];
-    subjects[t.subject].push(t);
-  }
-
-  const uniqueSubjects = Object.keys(subjects);
+  const userSubjects = await dbService.getUserSubjects(ctx.from.id);
   const buttons = [];
 
-  if (uniqueSubjects.length > 0) {
+  if (userSubjects.length > 0) {
     buttons.push([Markup.button.callback("── Mavjud fanlar (Tezkor tanlash) ──", "ignore")]);
 
     // Paginatsiya sozlamalari
     const ITEMS_PER_PAGE = 5;
-    const totalPages = Math.ceil(uniqueSubjects.length / ITEMS_PER_PAGE);
+    const totalPages = Math.ceil(userSubjects.length / ITEMS_PER_PAGE);
     const validPage = Math.max(0, Math.min(page, totalPages - 1));
 
     // Joriy sahifadagi fanlarni qirqib olish
-    const currentSubjects = uniqueSubjects.slice(
+    const currentSubjects = userSubjects.slice(
       validPage * ITEMS_PER_PAGE,
       (validPage + 1) * ITEMS_PER_PAGE
     );
 
     // Fanlar ro'yxatini tugmaga aylantirish
     for (const subj of currentSubjects) {
-      const subTests = subjects[subj];
       buttons.push([
-        Markup.button.callback(`📁 ${subj}  •  ${subTests.length} ta blok`, `ct_exist_${subTests[0].id}`)
+        Markup.button.callback(`📁 ${subj.name}  •  ${subj.block_count || 0} ta blok`, `ct_exist_${subj.id}`)
       ]);
     }
 
@@ -174,8 +166,8 @@ async function cbCreateTest(ctx) {
 
   // Ekran matniga sahifa raqamini qo'shish
   let pageInfo = "";
-  if (uniqueSubjects.length > 5) {
-    const totalPages = Math.ceil(uniqueSubjects.length / 5);
+  if (userSubjects.length > 5) {
+    const totalPages = Math.ceil(userSubjects.length / 5);
     const validPage = Math.max(0, Math.min(page, totalPages - 1));
     pageInfo = `\n\n_Sahifa: ${validPage + 1} / ${totalPages}_`;
   }
@@ -239,29 +231,50 @@ async function onSubjectInput(ctx) {
   }
   if (!ctx.session || !ctx.session.data) return cbCancelCreation(ctx);
 
-  const subject = result.data;
-  await updateData(ctx, { subject });
+  const subjectName = result.data;
+  const subjectRecord = await dbService.getOrCreateSubject(ctx.from.id, subjectName);
+  const resolvedName = subjectRecord ? subjectRecord.name : subjectName;
+  const resolvedId = subjectRecord ? subjectRecord.id : null;
 
-  // Eski kod o'rniga yangi gibrid oynani chaqiramiz
+  await updateData(ctx, { subject: resolvedName, subject_id: resolvedId });
+
   await ctx
     .reply("⏳ Qabul qilindi...", { reply_markup: { remove_keyboard: true } })
     .then((m) =>
       ctx.telegram.deleteMessage(ctx.chat.id, m.message_id).catch(() => {}),
     );
-  await promptBlockNameOrAutoDocx(ctx, subject);
+  await promptBlockNameOrAutoDocx(ctx, resolvedName);
 }
 
 async function cbCtExist(ctx) {
   const refId = parseSuffix(ctx.callbackQuery.data, "ct_exist_");
-  const testData = await dbService.getUserTest(refId);
-  if (!testData)
+  let subject = await dbService.getSubjectById(refId);
+  let subjectName = subject?.name;
+  let subjectId = subject?.id;
+
+  // Backward compatibility: agar refId eski test ID bo'lsa
+  if (!subject) {
+    const testData = await dbService.getUserTest(refId);
+    if (testData) {
+      if (testData.subject_id) {
+        subject = await dbService.getSubjectById(testData.subject_id);
+        subjectId = subject ? subject.id : testData.subject_id;
+        subjectName = subject ? subject.name : testData.subject;
+      } else {
+        subjectName = testData.subject;
+        const s = await dbService.getOrCreateSubject(ctx.from.id, subjectName);
+        subjectId = s?.id || null;
+      }
+    }
+  }
+
+  if (!subjectName)
     return ctx.answerCbQuery("❌ Fan topilmadi", { show_alert: true });
 
-  await ctx.answerCbQuery(`✅ ${testData.subject} tanlandi`).catch(() => {});
-  await updateData(ctx, { subject: testData.subject });
+  await ctx.answerCbQuery(`✅ ${subjectName} tanlandi`).catch(() => {});
+  await updateData(ctx, { subject: subjectName, subject_id: subjectId });
 
-  // Eski kod o'rniga yangi gibrid oynani chaqiramiz
-  await promptBlockNameOrAutoDocx(ctx, testData.subject);
+  await promptBlockNameOrAutoDocx(ctx, subjectName);
 }
 
 async function cbAutoDocxInit(ctx) {
@@ -1572,6 +1585,7 @@ async function cbFinishCreation(ctx) {
 
   const botInfo = await ctx.telegram.getMe();
   const firstTestId = testIds[0];
+  const shareSubjectId = data.subject_id || firstTestId;
 
   const chunkMsg =
     testIds.length > 1
@@ -1580,18 +1594,18 @@ async function cbFinishCreation(ctx) {
 
   await safeEdit(
     ctx,
-    `🎉 <b>Muvaffaqiyatli saqlandi!</b>\n\n📚 Fan: <b>${escapeHtml(subject)}</b>\n📝 Asosiy Blok: <b>${escapeHtml(baseBlockName)}</b>\n🔢 Jami Savollar: <b>${questions.length} ta</b>${chunkMsg}\n\n🔗 <b>Butun fanni o'ynash (Marafon):</b>\n<code>https://t.me/${botInfo.username}?start=s_${firstTestId}</code>`,
+    `🎉 <b>Muvaffaqiyatli saqlandi!</b>\n\n📚 Fan: <b>${escapeHtml(subject)}</b>\n📝 Asosiy Blok: <b>${escapeHtml(baseBlockName)}</b>\n🔢 Jami Savollar: <b>${questions.length} ta</b>${chunkMsg}\n\n🔗 <b>Butun fanni o'ynash (Marafon):</b>\n<code>https://t.me/${botInfo.username}?start=s_${shareSubjectId}</code>`,
     Markup.inlineKeyboard([
       [
         Markup.button.callback(
           "➕ Shu fanga yana blok qo'shish",
-          `ct_exist_${firstTestId}`,
+          `ct_exist_${shareSubjectId}`,
         ),
       ],
       [
         Markup.button.url(
           "↗️ Guruhda o'ynash",
-          `https://t.me/${botInfo.username}?startgroup=s_${firstTestId}`,
+          `https://t.me/${botInfo.username}?startgroup=s_${shareSubjectId}`,
         ),
       ],
       [Markup.button.callback("📂 Mening Testlarim", "my_tests")],
@@ -1631,16 +1645,16 @@ async function cbCancelCreation(ctx) {
 }
 
 async function cbMyTests(ctx) {
+  await ctx.answerCbQuery().catch(() => {});
   clearState(ctx);
-  await ctx.answerCbQuery("📂 Testlaringiz yuklanmoqda...").catch(() => {});
 
   let page = 0;
-  if (ctx.callbackQuery.data.startsWith("my_tests_")) {
+  if (ctx.callbackQuery && ctx.callbackQuery.data && ctx.callbackQuery.data.startsWith("my_tests_")) {
     page = parseInt(ctx.callbackQuery.data.replace("my_tests_", ""), 10);
   }
 
-  const tests = await dbService.getUserCreatedTests(ctx.from.id, false);
-  if (!tests || tests.length === 0) {
+  const userSubjects = await dbService.getUserSubjects(ctx.from.id);
+  if (!userSubjects || userSubjects.length === 0) {
     return safeEdit(
       ctx,
       "📭 <b>Siz hali hech qanday test yaratmagansiz.</b>\n\nBu bo'limda siz AI yordamida yoki o'zingiz qo'lda yaratgan shaxsiy testlaringiz saqlanadi.",
@@ -1653,28 +1667,18 @@ async function cbMyTests(ctx) {
     );
   }
 
-  // Fanlar bo'yicha guruhlaymiz
-  const subjectsMap = {};
-  for (const t of tests) {
-    if (!subjectsMap[t.subject]) subjectsMap[t.subject] = [];
-    subjectsMap[t.subject].push(t);
-  }
-
-  const uniqueSubjects = Object.keys(subjectsMap);
   const itemsPerPage = 5;
-  const totalPages = Math.ceil(uniqueSubjects.length / itemsPerPage);
-  const currentSubjects = uniqueSubjects.slice(
+  const totalPages = Math.ceil(userSubjects.length / itemsPerPage);
+  const currentSubjects = userSubjects.slice(
     page * itemsPerPage,
     (page + 1) * itemsPerPage,
   );
 
   const buttons = currentSubjects.map((subj) => {
-    const subjTests = naturalSortBlocks(subjectsMap[subj]);
-    const firstTestId = subjTests[0].id;
     return [
       Markup.button.callback(
-        `📁 ${subj}  •  ${subjTests.length} ta blok`,
-        `manage_subj_${firstTestId}`,
+        `📁 ${subj.name}  •  ${subj.block_count || 0} ta blok`,
+        `manage_subj_${subj.id}`,
       ),
     ];
   });
@@ -1692,42 +1696,62 @@ async function cbMyTests(ctx) {
   if (navButtons.length > 0) buttons.push(navButtons);
   buttons.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
 
+  const totalBlocks = userSubjects.reduce((acc, s) => acc + (s.block_count || 0), 0);
+
   await safeEdit(
     ctx,
-    `📂 <b>Mening Testlarim</b> (Sahifa ${page + 1}/${totalPages}):\n\nQaysi fan bo'yicha testlarni ko'rmoqchisiz?\n\n📊 Jami: ${uniqueSubjects.length} ta fan, ${tests.length} ta test`,
+    `📂 <b>Mening Testlarim</b> (Sahifa ${page + 1}/${totalPages}):\n\nQaysi fan bo'yicha testlarni ko'rmoqchisiz?\n\n📊 Jami: ${userSubjects.length} ta fan, ${totalBlocks} ta test`,
     { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) },
   );
 }
+
 async function cbManageSubj(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const refId = parseSuffix(ctx.callbackQuery.data, "manage_subj_");
-  const testData = await dbService.getUserTest(refId);
-  if (!testData) return;
+  let subject = await dbService.getSubjectById(refId);
+  let subjTests = [];
 
-  const tests = await dbService.getUserCreatedTests(ctx.from.id);
-  const subjTests = naturalSortBlocks(tests.filter((t) => t.subject === testData.subject));
+  if (subject) {
+    subjTests = await dbService.getSubjectBlocks(subject.id);
+  } else {
+    // Backward compatibility for legacy test IDs
+    const testData = await dbService.getUserTest(refId);
+    if (!testData) return;
+    if (testData.subject_id) {
+      subject = await dbService.getSubjectById(testData.subject_id);
+      subjTests = await dbService.getSubjectBlocks(testData.subject_id);
+    } else {
+      const tests = await dbService.getUserCreatedTests(ctx.from.id);
+      subjTests = naturalSortBlocks((tests || []).filter((t) => t.subject === testData.subject));
+      subject = { id: refId, name: testData.subject };
+    }
+  }
+
+  const subjectId = subject?.id || refId;
+  const subjectName = subject?.name || 'Fan';
   const botInfo = await ctx.telegram.getMe();
 
-  const buttons = subjTests.map((t) => [
+  const buttons = (subjTests || []).map((t) => [
     Markup.button.callback(
       `📝 ${t.block_name}  •  ${(t.questions || []).length} savol`,
       `manage_test_${t.id}`,
     ),
   ]);
-  // cbManageSubj oxiridagi tugmalar:
+
   buttons.push([
     Markup.button.url(
       "🏃 Bu fanni guruhda Marafon qilish",
-      `https://t.me/${botInfo.username}?startgroup=s_${refId}`,
+      `https://t.me/${botInfo.username}?startgroup=s_${subjectId}`,
     ),
   ]);
   buttons.push([
-    Markup.button.callback("➕ Bu fanga blok qo'shish", `ct_exist_${refId}`),
+    Markup.button.callback("➕ Bu fanga blok qo'shish", `ct_exist_${subjectId}`),
   ]);
   buttons.push([Markup.button.callback("🔙 Mening Testlarimga", "my_tests")]);
+
   await safeEdit(
     ctx,
-    `📚 <b>Fan:</b> ${escapeHtml(testData.subject)}\n🔗 <b>Fan havolasi:</b>\n<code>https://t.me/${botInfo.username}?start=s_${refId}</code>\n\n📋 Bloklar:`,
+    `📚 <b>Fan:</b> ${escapeHtml(subjectName)}\n🔗 <b>Fan havolasi:</b>\n<code>https://t.me/${botInfo.username}?start=s_${subjectId}</code>\n\n📋 Bloklar:`,
     Markup.inlineKeyboard(buttons),
   );
 }
@@ -1742,7 +1766,6 @@ async function cbManageTest(ctx) {
   await safeEdit(
     ctx,
     `📝 <b>Blok Ma'lumotlari</b>\n📚 Fan: <b>${escapeHtml(testData.subject)}</b>\n🔖 Blok: <b>${escapeHtml(testData.block_name)}</b>\n🔢 Savollar: <b>${(testData.questions || []).length} ta</b>\n\n🔗 <b>Havola:</b>\n<code>https://t.me/${botInfo.username}?start=t_${testId}</code>`,
-
     Markup.inlineKeyboard([
       [
         Markup.button.url(
@@ -1758,7 +1781,7 @@ async function cbManageTest(ctx) {
       ],
       [Markup.button.callback("✏️ Tahrirlash", `edit_test_${testId}`)],
       [Markup.button.callback("🗑 Blokni o'chirish", `delete_test_${testId}`)],
-      [Markup.button.callback("🔙 Fanga qaytish", `manage_subj_${testId}`)],
+      [Markup.button.callback("🔙 Fanga qaytish", `manage_subj_${testData.subject_id || testId}`)],
       [Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")],
     ]),
   );

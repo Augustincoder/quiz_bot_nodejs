@@ -70,9 +70,24 @@ async function createLobby(ctx, param) {
     if (!testData) return ctx.reply("❌ Test topilmadi yoki o'chirilgan.");
     mode = 'block';
   } else if (param.startsWith('s_')) {
-    const id = param.split('_')[1];
-    testData = await dbService.getUserTest(id); 
-    if (!testData) return ctx.reply("❌ Fan topilmadi.");
+    const rawId = param.split('_')[1];
+    let subject = await dbService.getSubjectById(rawId);
+    if (subject) {
+      const blocks = await dbService.getSubjectBlocks(subject.id);
+      if (!blocks.length) return ctx.reply("❌ Bu fanda bloklar topilmadi.");
+      testData = {
+        ...blocks[0],
+        subject: subject.name,
+        subject_id: subject.id,
+      };
+    } else {
+      testData = await dbService.getUserTest(rawId);
+      if (!testData) return ctx.reply("❌ Fan topilmadi.");
+      if (testData.subject_id) {
+        const s = await dbService.getSubjectById(testData.subject_id);
+        if (s) testData.subject = s.name;
+      }
+    }
     mode = 'marathon';
   } else if (param.startsWith('offt_')) { 
     // Rasmiy test (Blok)
@@ -186,14 +201,22 @@ async function cbRoomStart(ctx) {
         })).sort((a, b) => parseInt(a.test_id) - parseInt(b.test_id));
       } else {
         // UGC (Foydalanuvchi) testlar marafoni
-        const tests = await dbService.getUserCreatedTests(room.testData.creator_id);
-        marathonBlocks = naturalSortBlocks(tests
-            .filter(t => t.subject === subjectKey)
-            .map(t => ({
-              ...t,
-              questions: deepClone(t.questions || [])
-            }))
-            );
+        if (room.testData.subject_id) {
+          const blocks = await dbService.getSubjectBlocks(room.testData.subject_id);
+          marathonBlocks = blocks.map(t => ({
+            ...t,
+            questions: deepClone(t.questions || [])
+          }));
+        } else {
+          const tests = await dbService.getUserCreatedTests(room.testData.creator_id);
+          marathonBlocks = naturalSortBlocks(tests
+              .filter(t => t.subject === subjectKey)
+              .map(t => ({
+                ...t,
+                questions: deepClone(t.questions || [])
+              }))
+          );
+        }
       }
           
       if (!marathonBlocks.length) return ctx.reply("❌ Bu fanda bloklar topilmadi.");
@@ -212,6 +235,7 @@ async function cbRoomStart(ctx) {
       chatType: 'group',
       initiatorId: room.initiatorId,
       subjectKey: room.testData.subject,
+      subjectId: room.testData.subject_id || null,
       testId: testId,
       blockName: blockName,
       messageThreadId: messageThreadId,
