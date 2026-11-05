@@ -477,6 +477,19 @@ const supabaseSrc = fs.readFileSync(require.resolve('../src/lib/supabase'), 'utf
 assert(supabaseSrc.includes("payload && payload.role === 'anon'"), 'supabase.js must check and warn if anon key is configured');
 console.log('  ✅ [PASS] Audit v3 Section 3: Supabase optimizations, migration, and key validation verified.\n');
 
+
+// ─── TEST 25: Deep Audit: Marathon Session Retention & Double-Start Guard ───
+console.log('25. Testing Deep Audit: Marathon Session Retention & Double-Start Guard');
+const coreQuizSrc25 = fs.readFileSync(require.resolve('../src/handlers/coreQuiz'), 'utf8');
+assert(coreQuizSrc25.includes('let isMarathonContinuing = false;'), 'finishTest must initialize isMarathonContinuing flag');
+assert(coreQuizSrc25.includes('isMarathonContinuing = true;'), 'finishTest must set isMarathonContinuing = true on block advance');
+assert(coreQuizSrc25.includes('if (!isMarathonContinuing) {'), 'finishTest finally block must guard deleteActiveTest with isMarathonContinuing');
+
+const groupQuizLogicCode = fs.readFileSync(require.resolve('../src/handlers/groupQuizLogic'), 'utf8');
+assert(groupQuizLogicCode.includes('session.questionState === "ACTIVE" || session.qIdx > 0'), 'cbRoomNextBlock must guard against starting an already active block');
+assert(groupQuizLogicCode.includes('session.marathonBlocks?.[session.currentBlockIdx] || {}'), 'cbRoomNextBlock must safely access marathonBlocks');
+console.log('  ✅ [PASS] Deep Audit: Marathon active session preserved across blocks and double-start guarded.\n');
+
 console.log('==================================================');
 console.log('🎉 ALL SENIOR AUDIT BUG FIXES VERIFIED SUCCESSFULLY!');
 console.log('==================================================');

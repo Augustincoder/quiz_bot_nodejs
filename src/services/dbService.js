@@ -109,17 +109,19 @@ async function getUsersStatsSummaryByIds(userIds) {
   await Promise.all(
     stringIds.map(async (uid) => {
       try {
-        const cached = await redis.get(`cache:user_stats:${uid}`);
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          resultMap.set(uid, {
-            user_id: uid,
-            tests_completed: parsed.tests_completed || 0,
-            total_correct: parsed.total_correct || 0,
-            total_wrong: parsed.total_wrong || 0,
-            history: parsed.history || [],
-          });
-          return;
+        if (redis) {
+          const cached = await redis.get(`cache:user_stats:${uid}`);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            resultMap.set(uid, {
+              user_id: uid,
+              tests_completed: parsed.tests_completed || 0,
+              total_correct: parsed.total_correct || 0,
+              total_wrong: parsed.total_wrong || 0,
+              history: parsed.history || [],
+            });
+            return;
+          }
         }
       } catch {}
       missingIds.push(uid);
@@ -143,6 +145,9 @@ async function getUsersStatsSummaryByIds(userIds) {
             total_wrong: row.total_wrong || 0,
             history: Array.isArray(row.history) ? row.history : [],
           });
+          if (redis) {
+            redis.set(`cache:user_stats:${row.user_id}`, JSON.stringify(row), 'EX', 300).catch(() => {});
+          }
         }
       }
     } catch (err) {

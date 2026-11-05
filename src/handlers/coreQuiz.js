@@ -451,6 +451,7 @@ async function sendNextQuestion(chatId, telegram) {
 
 // ─── TESTNI YAKUNLASH VA NATIJALARNI HISOBLASH ─────────────────
 async function finishTest(chatId, telegram) {
+  let isMarathonContinuing = false;
   const unlock = await mutex.lock(`finish:${chatId}`);
   let session;
   try {
@@ -671,6 +672,7 @@ async function finishTest(chatId, telegram) {
         if (session.messageThreadId) interOpts.message_thread_id = session.messageThreadId;
         await telegram.sendMessage(chatId, text, interOpts);
 
+        isMarathonContinuing = true;
         return; // Sessiyani o'chirmaymiz
       } else {
         // YAKUNIY REYTING (Oddiy blok yoki Marafon oxiri)
@@ -739,9 +741,11 @@ async function finishTest(chatId, telegram) {
   } catch (e) {
     console.error(`finishTest send error [${chatId}]:`, e.message);
   } finally {
-    if (session.pollId)
+    if (session?.pollId)
       await sessionService.deletePollChat(session.pollId).catch(() => { });
-    await sessionService.deleteActiveTest(chatId).catch(() => { });
+    if (!isMarathonContinuing) {
+      await sessionService.deleteActiveTest(chatId).catch(() => { });
+    }
   }
 }
 

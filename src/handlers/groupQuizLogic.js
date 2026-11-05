@@ -335,14 +335,19 @@ async function cbRoomNextBlock(ctx) {
          return ctx.answerCbQuery("⚠️ Faqat test muallifi keyingi blokni boshlay oladi!", {show_alert: true}).catch(()=>{});
      }
 
+     if (session.questionState === "ACTIVE" || session.qIdx > 0) {
+         return ctx.answerCbQuery("⚠️ Ushbu blok allaqachon boshlangan!", {show_alert: true}).catch(()=>{});
+     }
+
      await ctx.answerCbQuery().catch(()=>{});
      const { safeDelete } = require('../core/utils');
      await safeDelete(ctx); // Tugmali xabarni o'chiramiz
 
-     const nextBlock = session.marathonBlocks[session.currentBlockIdx];
+     const nextBlock = session.marathonBlocks?.[session.currentBlockIdx] || {};
+     const blockName = nextBlock.block_name || `${session.currentBlockIdx + 1}-Blok`;
      const nextBlockOpts = { parse_mode: "HTML" };
      if (session.messageThreadId) nextBlockOpts.message_thread_id = session.messageThreadId;
-     await ctx.telegram.sendMessage(chatId, `🚀 <b>${session.currentBlockIdx + 1}-Blok (${nextBlock.block_name}) boshlanmoqda!</b>\n\nDiqqatni jamlang!`, nextBlockOpts);
+     await ctx.telegram.sendMessage(chatId, `🚀 <b>${session.currentBlockIdx + 1}-Blok (${blockName}) boshlanmoqda!</b>\n\nDiqqatni jamlang!`, nextBlockOpts);
      
      const { sendNextQuestion } = require('./coreQuiz');
      await sendNextQuestion(chatId, ctx.telegram);
