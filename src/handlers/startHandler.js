@@ -62,6 +62,8 @@ async function cmdStart(ctx) {
       await sessionService.deletePollChat(session.pollId).catch(() => {});
     }
     try {
+      const { cancelSessionTimer } = require('./coreQuiz');
+      await cancelSessionTimer(session, chatId);
       const { quizTimerQueue } = require('../jobs/queues');
       await quizTimerQueue.getJob(`timeout:${chatId}:${session?.qIdx}`).then(j => j && j.remove()).catch(() => {});
     } catch {}
@@ -69,8 +71,12 @@ async function cmdStart(ctx) {
     // Testni o'chirish o'rniga javonga saqlaymiz
     if (session.sessionQuestions && session.sessionQuestions.length > 0 && session.qIdx < session.sessionQuestions.length) {
       const folderName = session.subjectKey || "Boshqalar";
+      let shelfTestId = session.testId || Date.now();
+      if (shelfTestId === "mock" || shelfTestId === "adaptive" || shelfTestId === "retry") {
+        shelfTestId = `${shelfTestId}_${Date.now()}`;
+      }
       await dbService.saveTestToShelf(ctx.from.id, folderName, {
-        testId: session.testId || Date.now(),
+        testId: shelfTestId,
         testName: session.blockName || session.testData?.block_name || "Tugallanmagan test",
         subject: session.subjectKey || "Noma'lum",
         questions: session.sessionQuestions,

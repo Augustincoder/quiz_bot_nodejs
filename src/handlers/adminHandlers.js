@@ -558,13 +558,13 @@ async function cbAdminUsersList(ctx) {
 
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
-    // Fetch stats only for current page
-    const statsResults = await Promise.allSettled(
-      chunk.map(u => dbService.getUserStats(u.telegram_id))
+    // Fetch stats summary (without heavy shelf) in a single batch query
+    const statsMap = await dbService.getUsersStatsSummaryByIds(
+      chunk.map(u => u.telegram_id)
     );
 
     const lines = chunk.map((u, i) => {
-      const st      = statsResults[i].status === 'fulfilled' ? statsResults[i].value : null;
+      const st      = statsMap.get(String(u.telegram_id)) || null;
       const history = Array.isArray(st?.history) ? st.history : [];
       const isActive = history.some(h => (h.timestamp || 0) > sevenDaysAgo);
 

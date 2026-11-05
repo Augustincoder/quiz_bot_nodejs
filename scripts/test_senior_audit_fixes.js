@@ -399,6 +399,84 @@ assert(!watcherCode.includes("currentHHMM === '20:30'"), 'scheduleWatcher must n
 assert(watcherCode.includes("isTimeInWindow('20:30')"), 'scheduleWatcher must use isTimeInWindow for 20:30');
 console.log('  ✅ [PASS] New Bug #7: contactAdmin target_id fallback and 20:30 time window verified.\n');
 
+
+// ─── TEST 19: Audit v3 Bug #1: Marathon Block 2 session state reset ───
+console.log('19. Testing Audit v3 Bug #1: Marathon Block 2 session state reset');
+const coreQuizSrc = fs.readFileSync(require.resolve('../src/handlers/coreQuiz'), 'utf8');
+assert(coreQuizSrc.includes('session.isFinished = false;'), 'coreQuiz.js must set session.isFinished = false on marathon block advance');
+assert(coreQuizSrc.includes('session.questionState = "PREPARING";'), 'coreQuiz.js must reset questionState to PREPARING on marathon block advance');
+assert(coreQuizSrc.includes('session.transitionLock = null;'), 'coreQuiz.js must reset transitionLock on marathon block advance');
+console.log('  ✅ [PASS] Audit v3 Bug #1: Marathon block 2 state reset verified.\n');
+
+// ─── TEST 20: Audit v3 Bug #2: UGC retry finish buttons (no ugc_start_NaN) ───
+console.log('20. Testing Audit v3 Bug #2: UGC retry finish buttons');
+(async () => {
+  const { buildFinishButtons } = require('../src/handlers/coreQuiz');
+  const sessionRetry = { subjectId: 280, creatorId: 12345 };
+  const retryBtns = await buildFinishButtons('retry', 'matematika', 0, sessionRetry);
+  const flatBtns = retryBtns.flat();
+  const hasNaNBtn = flatBtns.some(b => b.callback_data && b.callback_data.includes('NaN'));
+  assert(!hasNaNBtn, 'Finish buttons for UGC retry must never generate ugc_start_NaN');
+  const retryQuizBtn = flatBtns.find(b => b.callback_data && b.callback_data.startsWith('wm_start_quiz_'));
+  assert(retryQuizBtn, 'UGC retry finish must offer wm_start_quiz_ button');
+  const subjBlocksBtn = flatBtns.find(b => b.callback_data && b.callback_data === 'ugc_subj_280');
+  assert(subjBlocksBtn, 'UGC retry finish must offer ugc_subj_280 button');
+  console.log('  ✅ [PASS] Audit v3 Bug #2: UGC retry finish buttons generate valid callbacks without NaN.\n');
+})();
+
+// ─── TEST 21: Audit v3 Bug #3: startHandler & contactAdmin cancelSessionTimer ───
+console.log('21. Testing Audit v3 Bug #3: startHandler and contactAdmin cancelSessionTimer');
+const startHandlerSrc = fs.readFileSync(require.resolve('../src/handlers/startHandler'), 'utf8');
+assert(startHandlerSrc.includes('cancelSessionTimer(session, chatId)'), 'startHandler must call cancelSessionTimer');
+assert(startHandlerSrc.includes('Date.now()'), 'startHandler must append timestamp to shelf mock/adaptive testIds');
+
+const contactAdminSrc = fs.readFileSync(require.resolve('../src/handlers/contactAdmin'), 'utf8');
+assert(contactAdminSrc.includes('cancelSessionTimer(session, chatId)'), 'contactAdmin must call cancelSessionTimer on test cancellation');
+assert(contactAdminSrc.includes('stopPoll(chatId, session.msgId)'), 'contactAdmin must stop active poll on test cancellation');
+console.log('  ✅ [PASS] Audit v3 Bug #3: cancelSessionTimer wired to startHandler and contactAdmin.\n');
+
+// ─── TEST 22: Audit v3 Bug #4: parseTextQuestions with '# 4' without prefixes ───
+console.log('22. Testing Audit v3 Bug #4: parseTextQuestions with # 4 and no option prefixes');
+const sampleNoPrefix = `
+Savol matni nima?
+Birinchi variant
+Ikkinchi variant
+Uchinchi variant
+# 4
+`;
+const parsedNoPrefix = parseTextQuestions(sampleNoPrefix, 'hash');
+assert.strictEqual(parsedNoPrefix.valid.length, 1);
+assert.strictEqual(parsedNoPrefix.valid[0].options.length, 4, 'Options without letter prefixes must preserve # 4 as option, not drop it');
+assert.strictEqual(parsedNoPrefix.valid[0].correct_index, 3, '# 4 must be the correct option');
+console.log('  ✅ [PASS] Audit v3 Bug #4: # 4 without prefixes recognized as option and correct index.\n');
+
+// ─── TEST 23: Audit v3 Bug #5: safeCallbackData on finish & review buttons ───
+console.log('23. Testing Audit v3 Bug #5: safeCallbackData clamping on finish buttons');
+const longSubj = 'juda_uzun_fan_nomi_kirillcha_yozuvda_va_yana_koplab_belgilar_mavjud_bolgan_holatda';
+const { safeCallbackData } = require('../src/core/utils');
+const clampedWm = safeCallbackData(`wm_start_quiz_${longSubj}`, 64);
+assert(Buffer.byteLength(clampedWm, 'utf8') <= 64, 'wm_start_quiz_ callback_data must be <= 64 bytes');
+const clampedPost = safeCallbackData(`post_subj_${longSubj}`, 64);
+assert(Buffer.byteLength(clampedPost, 'utf8') <= 64, 'post_subj_ callback_data must be <= 64 bytes');
+console.log('  ✅ [PASS] Audit v3 Bug #5: Long subject finish callbacks safely clamped to 64 bytes.\n');
+
+// ─── TEST 24: Audit v3 Section 3: Supabase Optimizations & Security ───
+console.log('24. Testing Audit v3 Section 3: Supabase Optimizations & Security');
+const dbServiceSrc = fs.readFileSync(require.resolve('../src/services/dbService'), 'utf8');
+assert(dbServiceSrc.includes('getUsersStatsSummaryByIds'), 'dbService must export getUsersStatsSummaryByIds');
+assert(dbServiceSrc.includes('isNoOp'), 'upsertTimetableCache must check isNoOp to eliminate redundant writes');
+assert(dbServiceSrc.includes("updatePayload = {"), 'updateUserStats must use updatePayload excluding shelf');
+
+const adminHandlersSrc = fs.readFileSync(require.resolve('../src/handlers/adminHandlers'), 'utf8');
+assert(adminHandlersSrc.includes('getUsersStatsSummaryByIds'), 'adminHandlers must use getUsersStatsSummaryByIds in cbAdminUsersList');
+
+const rlsMigrationExists = fs.existsSync('migrations/supabase_optimization_and_rls.sql');
+assert(rlsMigrationExists, 'migrations/supabase_optimization_and_rls.sql must exist');
+
+const supabaseSrc = fs.readFileSync(require.resolve('../src/lib/supabase'), 'utf8');
+assert(supabaseSrc.includes("payload && payload.role === 'anon'"), 'supabase.js must check and warn if anon key is configured');
+console.log('  ✅ [PASS] Audit v3 Section 3: Supabase optimizations, migration, and key validation verified.\n');
+
 console.log('==================================================');
 console.log('🎉 ALL SENIOR AUDIT BUG FIXES VERIFIED SUCCESSFULLY!');
 console.log('==================================================');

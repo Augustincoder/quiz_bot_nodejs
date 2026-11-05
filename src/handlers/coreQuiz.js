@@ -97,9 +97,25 @@ async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = 
   const sid = String(tId);
   const isUgcSession = sid.startsWith("ugc_") || Boolean(session?.creatorId) || Boolean(session?.subjectId);
   if (isUgcSession) {
+    let subjectId = session?.subjectId;
+    if (sid === "retry" || sid.startsWith("retry_")) {
+      btns.push([
+        Markup.button.callback(
+          "🔁 Xatolarni qayta ishlash",
+          safeCallbackData(`wm_start_quiz_${subjectKey}`, 64),
+        ),
+      ]);
+      if (subjectId) {
+        btns.push([
+          Markup.button.callback("📚 Fan bloklari", safeCallbackData(`ugc_subj_${subjectId}`, 64)),
+        ]);
+      }
+      btns.push([Markup.button.callback("📥 Javonga saqlash", "shelf_save_init")]);
+      btns.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
+      return btns;
+    }
     const rawTestId = sid.startsWith("ugc_") ? parseInt(sid.replace("ugc_", ""), 10) : parseInt(sid, 10);
     let nextBlock = null;
-    let subjectId = session?.subjectId;
 
     // Agar sessionda subjectId bo'lmasa, testDb dan aniqlaymiz
     if (!subjectId && !isNaN(rawTestId)) {
@@ -125,23 +141,25 @@ async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = 
       btns.push([
         Markup.button.callback(
           `➡️ Keyingi (${nextBlock.block_name})`,
-          `ugc_start_${nextBlock.id}`,
+          safeCallbackData(`ugc_start_${nextBlock.id}`, 64),
         ),
       ]);
     }
 
-    btns.push([
-      Markup.button.callback(
-        "🔁 Qayta ishlash",
-        `ugc_start_${rawTestId}`,
-      ),
-    ]);
+    if (!isNaN(rawTestId)) {
+      btns.push([
+        Markup.button.callback(
+          "🔁 Qayta ishlash",
+          safeCallbackData(`ugc_start_${rawTestId}`, 64),
+        ),
+      ]);
+    }
 
     if (subjectId) {
       btns.push([
         Markup.button.callback(
           "📚 Fan bloklari",
-          `ugc_subj_${subjectId}`,
+          safeCallbackData(`ugc_subj_${subjectId}`, 64),
         ),
       ]);
     }
@@ -159,7 +177,7 @@ async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = 
     ]);
   } else if (sid === "retry" || sid.startsWith("retry_")) {
     btns.push([
-      Markup.button.callback("🔁 Xatolarni qayta ishlash", `wm_start_quiz_${subjectKey}`),
+      Markup.button.callback("🔁 Xatolarni qayta ishlash", safeCallbackData(`wm_start_quiz_${subjectKey}`, 64)),
     ]);
     if (sid.startsWith("retry_")) {
       const originalId = parseInt(sid.replace("retry_", ""), 10);
@@ -167,7 +185,7 @@ async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = 
         const memDb = require("../core/bot").memoryDb || {};
         if ((memDb[subjectKey] || {})[originalId + 1]) {
           btns.push([
-            Markup.button.callback(`➡️ Keyingi (${originalId + 1}-Blok)`, `post_start_${subjectKey}_${originalId + 1}`)
+            Markup.button.callback(`➡️ Keyingi (${originalId + 1}-Blok)`, safeCallbackData(`post_start_${subjectKey}_${originalId + 1}`, 64))
           ]);
         }
       }
@@ -176,7 +194,7 @@ async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = 
     btns.push([
       Markup.button.callback(
         "🔁 Qayta ishlash",
-        `post_start_${subjectKey}_${tId}`,
+        safeCallbackData(`post_start_${subjectKey}_${tId}`, 64),
       ),
     ]);
     const memDb = require("../core/bot").memoryDb || {};
@@ -184,7 +202,7 @@ async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = 
       btns.push([
         Markup.button.callback(
           `➡️ Keyingi (${tId + 1}-Blok)`,
-          `post_start_${subjectKey}_${tId + 1}`,
+          safeCallbackData(`post_start_${subjectKey}_${tId + 1}`, 64),
         ),
       ]);
     }
@@ -192,7 +210,7 @@ async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = 
 
   btns.push([Markup.button.callback("📥 Javonga saqlash", "shelf_save_init")]);
   btns.push([
-    Markup.button.callback("🔙 Fan menyusi", `post_subj_${subjectKey}`),
+    Markup.button.callback("🔙 Fan menyusi", safeCallbackData(`post_subj_${subjectKey}`, 64)),
     Markup.button.callback("🏠 Asosiy", "post_main"),
   ]);
 
@@ -628,6 +646,9 @@ async function finishTest(chatId, telegram) {
         session.qIdx = 0;
         session.groupScores = {}; // Keyingi blok uchun tozalaymiz
         session.finished = false; // Sessiyani ochiq qoldiramiz
+        session.isFinished = false;
+        session.questionState = "PREPARING";
+        session.transitionLock = null;
 
         await sessionService.setActiveTest(chatId, session);
 

@@ -687,9 +687,16 @@ async function cbCancelUserTest(ctx) {
       return;
     }
 
+    if (session.msgId) {
+      await ctx.telegram.stopPoll(chatId, session.msgId).catch(() => {});
+    }
     if (session.pollId) {
       await sessionService.deletePollChat(session.pollId).catch(() => {});
     }
+    try {
+      const { cancelSessionTimer } = require('./coreQuiz');
+      await cancelSessionTimer(session, chatId);
+    } catch {}
     
     await sessionService.deleteActiveTest(chatId);
 

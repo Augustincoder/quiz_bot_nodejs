@@ -437,8 +437,7 @@ function parseTextQuestions(text, mode = 'hash') {
         optionsBefore.every(line => /^(?:[a-zA-Z][\)\.]|\d+[\)\.])\s*/.test(line.trim()) && !/^[#*]/.test(line.trim()));
 
       const trailingWordMatch = lastLine.match(/^[#*]?\s*(?:to'?g'?ri\s+javob|javob)\s*[:=-]?\s*([a-jA-J1-9])$/i);
-      const trailingHashMatch = (optionsHavePrefixes && lastLine.match(/^[#*]\s*([a-jA-J1-9])$/i)) ||
-        lastLine.match(/^[#*]\s+([a-jA-J1-9])$/i);
+      const trailingHashMatch = optionsHavePrefixes && lastLine.match(/^[#*]\s*([a-jA-J1-9])$/i);
 
       const trailingAnswerMatch = trailingWordMatch || trailingHashMatch;
       if (trailingAnswerMatch) {

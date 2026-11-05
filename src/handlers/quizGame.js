@@ -826,12 +826,13 @@ async function cbReviewMistakes(ctx) {
   const metaRaw = await redisConnection.get(`mistakes_meta:${ctx.chat.id}`).catch(() => null);
   const meta = metaRaw ? JSON.parse(metaRaw) : null;
   let backBtn;
+  const { safeCallbackData } = require("../core/utils");
   if (meta?.isUgc) {
     backBtn = meta.subjectId
-      ? Markup.button.callback("🔙 Fan bloklariga qaytish", `ugc_subj_${meta.subjectId}`)
+      ? Markup.button.callback("🔙 Fan bloklariga qaytish", safeCallbackData(`ugc_subj_${meta.subjectId}`, 64))
       : Markup.button.callback("🔙 Mening testlarim", "my_tests");
   } else if (meta?.subjectKey && meta.subjectKey !== "main") {
-    backBtn = Markup.button.callback("🔙 Fan menyusiga qaytish", `post_subj_${meta.subjectKey}`);
+    backBtn = Markup.button.callback("🔙 Fan menyusiga qaytish", safeCallbackData(`post_subj_${meta.subjectKey}`, 64));
   } else {
     backBtn = Markup.button.callback("🏠 Asosiy Menyu", "post_main");
   }

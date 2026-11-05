@@ -100,6 +100,71 @@ async function getUserStats(userId) {
   }
 }
 
+async function getUsersStatsSummaryByIds(userIds) {
+  if (!Array.isArray(userIds) || userIds.length === 0) return new Map();
+  const stringIds = userIds.map(id => String(id));
+  const resultMap = new Map();
+
+  const missingIds = [];
+  await Promise.all(
+    stringIds.map(async (uid) => {
+      try {
+        const cached = await redis.get(`cache:user_stats:${uid}`);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          resultMap.set(uid, {
+            user_id: uid,
+            tests_completed: parsed.tests_completed || 0,
+            total_correct: parsed.total_correct || 0,
+            total_wrong: parsed.total_wrong || 0,
+            history: parsed.history || [],
+          });
+          return;
+        }
+      } catch {}
+      missingIds.push(uid);
+    })
+  );
+
+  if (missingIds.length > 0 && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('user_stats')
+        .select('user_id, tests_completed, total_correct, total_wrong, history')
+        .in('user_id', missingIds);
+
+      if (error) throw error;
+      if (Array.isArray(data)) {
+        for (const row of data) {
+          resultMap.set(String(row.user_id), {
+            user_id: String(row.user_id),
+            tests_completed: row.tests_completed || 0,
+            total_correct: row.total_correct || 0,
+            total_wrong: row.total_wrong || 0,
+            history: Array.isArray(row.history) ? row.history : [],
+          });
+        }
+      }
+    } catch (err) {
+      logger.error('getUsersStatsSummaryByIds error:', { error: err.message, missingIds });
+    }
+  }
+
+  for (const uid of stringIds) {
+    if (!resultMap.has(uid)) {
+      resultMap.set(uid, {
+        user_id: uid,
+        tests_completed: 0,
+        total_correct: 0,
+        total_wrong: 0,
+        history: [],
+      });
+    }
+  }
+
+  return resultMap;
+}
+
 // In-memory per-user update serialization queue to prevent lost updates on concurrent completions (Bug 47)
 const userStatsQueues = new Map();
 
@@ -141,7 +206,15 @@ async function updateUserStats(userId, correct, wrong, subjectKey, testId, mista
       delete stats._fetchFailed;
       stats.user_id = uid;
       if (supabase) {
-        const { error } = await supabase.from('user_stats').upsert(stats, { onConflict: 'user_id' });
+        // Exclude heavy 'shelf' column to prevent transferring massive JSONB on each test finish
+        const updatePayload = {
+          user_id: uid,
+          tests_completed: stats.tests_completed,
+          total_correct: stats.total_correct,
+          total_wrong: stats.total_wrong,
+          history: stats.history,
+        };
+        const { error } = await supabase.from('user_stats').upsert(updatePayload, { onConflict: 'user_id' });
         if (error) throw error;
       }
 
@@ -1413,8 +1486,19 @@ async function upsertTimetableCache({ groupName, groupNormalized, theme, fileId,
 
   const cacheKey = `cache:timetable_cdn:${norm}:${validTheme}`;
 
+  // Check in-memory fallback cache first to eliminate no-op Supabase writes
+  const existing = fallbackTimetableCache.get(cacheKey);
+  const isNoOp = existing &&
+    existing.file_id === row.file_id &&
+    existing.schedule_hash === row.schedule_hash &&
+    (existing.channel_message_id === row.channel_message_id || (!row.channel_message_id && existing.channel_message_id));
+
   // Update memory fallback cache
-  fallbackTimetableCache.set(cacheKey, row);
+  fallbackTimetableCache.set(cacheKey, {
+    ...existing,
+    ...row,
+    channel_message_id: row.channel_message_id || existing?.channel_message_id || null,
+  });
 
   // Update Redis immediately
   if (redis) {
@@ -1423,6 +1507,11 @@ async function upsertTimetableCache({ groupName, groupNormalized, theme, fileId,
     } catch (e) {
       logger.debug('Redis upsertTimetableCache error', { error: e.message });
     }
+  }
+
+  // Skip redundant Supabase write if cache data has not changed
+  if (isNoOp) {
+    return true;
   }
 
   if (!supabase) return true;
@@ -2173,6 +2262,7 @@ module.exports = {
   loadAllOfficialTests,
   saveOfficialTest,
   getUserStats,
+  getUsersStatsSummaryByIds,
   updateUserStats,
   getUserRank,
   getTopUsers,
