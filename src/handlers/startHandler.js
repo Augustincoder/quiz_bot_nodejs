@@ -232,21 +232,22 @@ async function cmdStop(ctx) {
   const session = await sessionServiceLocal.getActiveTest(chatId);
 
   if (session) {
-    if (isGroup && userId !== session.initiatorId) {
-      return ctx.reply('⚠️ Faqat testni boshlagan foydalanuvchi to\'xtata oladi.');
-    }
+    if (isGroup) {
+      if (userId !== session.initiatorId) {
+        return ctx.reply('⚠️ Faqat testni boshlagan foydalanuvchi to\'xtata oladi.');
+      }
 
-    const { cbStopTest, finishTest } = require('./quizGame');
-    if (cbStopTest) {
-      return cbStopTest(ctx);
-    } else {
       // 🛑 UX Flow: Marafonni majburiy to'xtatish bayrog'ini yoqamiz
       session.forceStopped = true;
       await sessionServiceLocal.setActiveTest(chatId, session);
 
       await ctx.reply('🛑 <b>Test majburiy to\'xtatildi!</b> Yakuniy reyting hisoblanmoqda...', { parse_mode: 'HTML' });
+      const { finishTest } = require('./quizGame');
       return finishTest(chatId, ctx.telegram);
     }
+
+    const { cbStopTest } = require('./quizGame');
+    return cbStopTest(ctx);
   }
 
   await ctx.reply('ℹ️ Hozirda faol test mavjud emas.', isGroup ? undefined : backToMainKb());

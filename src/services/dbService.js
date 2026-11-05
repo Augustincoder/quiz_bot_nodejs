@@ -121,6 +121,8 @@ async function updateUserStats(userId, correct, wrong, subjectKey, testId, mista
     stats.total_correct = (stats.total_correct || 0) + correct;
     stats.total_wrong = (stats.total_wrong || 0) + wrong;
 
+    const totalQ = (correct || 0) + (wrong || 0);
+    const percent = totalQ > 0 ? Math.round(((correct || 0) / totalQ) * 100) : 0;
     const entry = {
       date: new Date().toISOString().slice(0, 16).replace('T', ' '),
       timestamp: Date.now(),
@@ -128,6 +130,7 @@ async function updateUserStats(userId, correct, wrong, subjectKey, testId, mista
       test_id: testId,
       correct,
       wrong,
+      percent,
       mistakes,
     };
     if (!Array.isArray(stats.history)) stats.history = [];
@@ -1069,10 +1072,8 @@ async function saveTestToShelf(userId, folderName, testInfo) {
 
       if (!shelf[folderName]) shelf[folderName] = [];
 
-      const isExist = shelf[folderName].find(t => String(t.testId) === String(testInfo.testId));
-      if (isExist) return 'exist';
-
-      const compactQuestions = Array.isArray(testInfo.questions)
+      const existingIdx = shelf[folderName].findIndex(t => String(t.testId) === String(testInfo.testId));
+      const compactQuestions = Array.isArray(testInfo.questions) && testInfo.questions.length > 0
         ? testInfo.questions.map(q => ({
             question: q.question,
             options: q.options,
@@ -1081,14 +1082,25 @@ async function saveTestToShelf(userId, folderName, testInfo) {
           }))
         : [];
 
-      shelf[folderName].push({
-        testId: testInfo.testId,
-        testName: testInfo.testName,
-        subject: testInfo.subject,
-        questions: compactQuestions,
-        saved_at: new Date().toISOString(),
-        progress: testInfo.progress || null,
-      });
+      if (existingIdx !== -1) {
+        shelf[folderName][existingIdx] = {
+          ...shelf[folderName][existingIdx],
+          testName: testInfo.testName || shelf[folderName][existingIdx].testName,
+          subject: testInfo.subject || shelf[folderName][existingIdx].subject,
+          questions: compactQuestions.length > 0 ? compactQuestions : shelf[folderName][existingIdx].questions,
+          saved_at: new Date().toISOString(),
+          progress: testInfo.progress || shelf[folderName][existingIdx].progress || null,
+        };
+      } else {
+        shelf[folderName].push({
+          testId: testInfo.testId,
+          testName: testInfo.testName,
+          subject: testInfo.subject,
+          questions: compactQuestions,
+          saved_at: new Date().toISOString(),
+          progress: testInfo.progress || null,
+        });
+      }
 
       const { error } = await supabase.from('user_stats').update({ shelf }).eq('user_id', uid);
       if (error) {

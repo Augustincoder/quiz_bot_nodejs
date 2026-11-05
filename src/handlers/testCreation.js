@@ -68,8 +68,8 @@ async function showEditDashboard(ctx) {
 
   await safeEdit(
     ctx,
-    `✏️ *Testni Tahrirlash*\n\n📚 Fan: ${data.subject}\n📝 Blok: ${data.block_name}\n📊 Jami savollar: *${questions.length} ta*\n${bar}\n\nQuyidagi menyudan kerakli amalni tanlang:`,
-    { parse_mode: "Markdown", ...kb },
+    `✏️ <b>Testni Tahrirlash</b>\n\n📚 Fan: <b>${escapeHtml(data.subject || '')}</b>\n📝 Blok: <b>${escapeHtml(data.block_name || '')}</b>\n📊 Jami savollar: <b>${questions.length} ta</b>\n${bar}\n\nQuyidagi menyudan kerakli amalni tanlang:`,
+    { parse_mode: "HTML", ...kb },
   );
 }
 
@@ -1131,6 +1131,13 @@ async function processBatchedTextQuestions(ctx, fullText) {
     const format_added = (data.format_added || 0) + newQs.length;
     await updateData(ctx, { questions, format_added });
 
+    // Explicitly persist session to Redis after 400ms debounce (Bug 1 fix)
+    const redisConnection = require("../services/redisService");
+    const uid = ctx.from?.id || ctx.chat?.id;
+    if (uid && ctx.session) {
+      await redisConnection.set(`tg_session:${uid}`, JSON.stringify(ctx.session), "EX", 86400).catch(() => {});
+    }
+
     // 🤖 AQLLI MARSHRUT
     const finishAction = data.is_editing
       ? "back_to_edit_dash"
@@ -1395,10 +1402,13 @@ async function cbPreviewGrid(ctx, targetPage = null) {
     );
   if (navRow.length > 0) buttons.push(navRow);
 
+  await updateData(ctx, { editing_question_index: undefined });
+  const backAction = data.is_editing ? "back_to_edit_dash" : "back_to_dashboard";
+  const backText = data.is_editing ? "🔙 Tahrirlash paneliga qaytish" : "🔙 Boshqaruv Paneliga qaytish";
   buttons.push([
     Markup.button.callback(
-      "🔙 Boshqaruv Paneliga qaytish",
-      "back_to_dashboard",
+      backText,
+      backAction,
     ),
   ]);
 
@@ -1412,6 +1422,7 @@ async function cbPreviewGrid(ctx, targetPage = null) {
 async function cbPreviewQuestion(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const idx = parseInt(parseSuffix(ctx.callbackQuery.data, "preview_q_"), 10);
+  await updateData(ctx, { editing_question_index: undefined });
   const data = await getData(ctx);
   const questions = data.questions || [];
 
@@ -1486,14 +1497,13 @@ async function cbEditQuestionStart(ctx) {
 
   await safeEdit(
     ctx,
-    `✏️ *Savolni Tahrirlash* (${idx + 1}-savol)\n\nQuyidagi matnni nusxalang (ustiga bossangiz nusxalanadi), xatoni to'g'rilab, botga qayta yuboring:\n\n\`\`\`\n${textFormat}\`\`\`\n\n💡 _To'g'ri javob oldida # bo'lishi shart._`,
+    `✏️ <b>Savolni Tahrirlash</b> (${idx + 1}-savol)\n\nQuyidagi matnni nusxalang (ustiga bossangiz nusxalanadi), xatoni to'g'rilab, botga qayta yuboring:\n\n<pre><code>${escapeHtml(textFormat)}</code></pre>\n\n💡 <i>To'g'ri javob oldida # bo'lishi shart.</i>`,
     {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard([
         [Markup.button.callback("❌ Bekor qilish", `preview_q_${idx}`)],
       ]),
-    },
-  );
+    });
 }
 // ─── 4. YAKUNLASH VA MENYULAR ────────────────────────────────
 async function cbFinishCreation(ctx) {

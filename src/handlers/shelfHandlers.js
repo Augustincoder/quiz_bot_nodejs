@@ -163,6 +163,8 @@ async function executeSave(ctx, folderName, msgId) {
         .catch(() => {});
     } else if (result === "saved") {
       await redisConnection.del(`shelf_pending:${chatId}`).catch(() => {});
+      const sessionService = require("../services/sessionService");
+      await sessionService.deleteActiveTest(chatId).catch(() => {});
       logger.info('shelf:save', { userId: ctx.from.id, folder: folderName });
       await ctx.telegram
         .editMessageText(

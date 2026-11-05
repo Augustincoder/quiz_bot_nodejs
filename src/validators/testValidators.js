@@ -64,6 +64,15 @@ function sanitizeQuizQuestions(rawQuestions) {
     let numCorrect = Number(rawCorrect);
     if (!Number.isFinite(numCorrect)) numCorrect = 0;
 
+    // Convert 1-based indexing if LLM provided 1..rawOptions.length
+    let targetIdx = numCorrect;
+    if (targetIdx === rawOptions.length && targetIdx > 0 && targetIdx > 1) {
+      targetIdx = targetIdx - 1;
+    } else if (targetIdx < 0 || targetIdx >= rawOptions.length) {
+      targetIdx = 0;
+    }
+    const targetCorrectText = String(rawOptions[targetIdx] ?? '').trim().toLowerCase();
+
     for (let idx = 0; idx < rawOptions.length; idx++) {
       let opt = String(rawOptions[idx] || '').trim();
       if (!opt) continue;
@@ -78,26 +87,17 @@ function sanitizeQuizQuestions(rawQuestions) {
     if (options.length < 2) continue; // Minimum 2 options required
     if (options.length > 10) options.length = 10;
 
-    // Convert 1-based indexing if LLM provided 1..rawOptions.length
-    if (numCorrect >= 1 && numCorrect === rawOptions.length && rawOptions.length <= options.length) {
-      numCorrect = numCorrect - 1;
-    } else if (numCorrect >= 1 && numCorrect >= options.length) {
-      if (numCorrect - 1 < options.length) {
-        numCorrect = numCorrect - 1;
-      } else {
-        numCorrect = 0;
-      }
-    }
-
-    if (numCorrect < 0 || numCorrect >= options.length) {
-      numCorrect = 0;
+    // Track correct answer text position in deduplicated options
+    let resolvedCorrectIdx = options.findIndex((o) => o.toLowerCase() === targetCorrectText);
+    if (resolvedCorrectIdx === -1 || resolvedCorrectIdx >= options.length) {
+      resolvedCorrectIdx = 0;
     }
 
     const { safeTruncateExplanation } = require('../core/questionUtils');
     cleanList.push({
       question,
       options,
-      correct_index: numCorrect,
+      correct_index: resolvedCorrectIdx,
       explanation: item.explanation ? safeTruncateExplanation(String(item.explanation), 200) : undefined,
     });
   }

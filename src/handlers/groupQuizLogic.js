@@ -59,6 +59,10 @@ async function renderLobby(ctx, chatId, room, messageId = null) {
 // 1. Kutish zalini yaratish (startgroup dan kelganda)
 async function createLobby(ctx, param) {
   const chatId = ctx.chat.id;
+  const activeSession = await sessionService.getActiveTest(chatId);
+  if (activeSession && activeSession.status === 'running') {
+    return ctx.reply("⚠️ Ushbu guruhda allaqachon faol test ketmoqda!\n\nYangi test boshlash uchun avval joriy testni yakunlang yoki /stop buyrug'ini yuboring.");
+  }
   const messageThreadId = ctx.message?.message_thread_id || ctx.callbackQuery?.message?.message_thread_id || null;
   let testData = null;
   let mode = '';

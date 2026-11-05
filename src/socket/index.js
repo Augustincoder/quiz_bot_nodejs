@@ -39,6 +39,11 @@ function initSocket(httpServer) {
           room = await roomManager.createRoom(roomCode, userId, 'kahoot');
           console.log(`[room:create] Kahoot Room ${roomCode} created by ${userId}.`);
         }
+        socket.emit("room:created", {
+          roomCode,
+          mode: room?.mode || 'kahoot',
+          hostId: room?.hostId || userId,
+        });
       } catch (error) {
         socket.emit("room:error", { code: 500, message: error.message });
       }
@@ -128,7 +133,19 @@ function initSocket(httpServer) {
           return socket.emit("room:error", { code: 404, message: "Kahoot uchun savollar topilmadi" });
         }
         
-        room.questions = questions;
+        const flatQuestions = questions.flatMap(row => {
+          if (Array.isArray(row.questions)) {
+            return row.questions.map(q => ({ ...q, topic: row.topic }));
+          }
+          return [row];
+        });
+
+        if (!flatQuestions.length) {
+          room.status = 'lobby';
+          return socket.emit("room:error", { code: 404, message: "Kahoot uchun yaroqli savollar topilmadi" });
+        }
+
+        room.questions = flatQuestions;
         room.currentIndex = 0;
         
         console.log(`[room:start] Room ${roomCode}: Loaded ${room.questions.length} Kahoot questions.`);

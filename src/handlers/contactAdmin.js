@@ -27,11 +27,16 @@ async function getUserActivityContext(userId) {
       return '📊 <i>Hali test yechmagan</i>';
     }
     
-    const lastTest = history[history.length - 1];
-    const lastDate = new Date(lastTest.timestamp).toLocaleString('uz-UZ');
+    const lastTest = history[0];
+    const lastDate = lastTest.timestamp ? new Date(lastTest.timestamp).toLocaleString('uz-UZ') : (lastTest.date || '-');
     const totalTests = history.length;
     const avgScore = Math.round(
-      history.reduce((sum, h) => sum + (h.percent || 0), 0) / history.length
+      history.reduce((sum, h) => {
+        if (typeof h.percent === 'number') return sum + h.percent;
+        const total = (h.correct || 0) + (h.wrong || 0);
+        const pct = total > 0 ? Math.round(((h.correct || 0) / total) * 100) : 0;
+        return sum + pct;
+      }, 0) / history.length
     );
     
     return (
@@ -101,6 +106,13 @@ async function handleContactMessages(ctx, next) {
   if (!userId) return next();
   const state = ctx.session?.state;
 
+  const rawText = (ctx.message.text || '').trim();
+  if (rawText.startsWith('/')) return next();
+
+  if (state && state !== States.USER_CONTACT && state !== States.ADMIN_REPLY) {
+    return next();
+  }
+
   // ─── ADMIN REPLY HANDLER ──────────────────────────────
   // Admin o'z chatida biror xabarga reply qilsa → foydalanuvchiga yuboradi
   if (isAdmin(userId) && ctx.message?.reply_to_message) {
@@ -109,7 +121,6 @@ async function handleContactMessages(ctx, next) {
 
   if (state !== States.USER_CONTACT) return next();
 
-  const rawText = (ctx.message.text || '').trim();
   const isCommand = rawText.startsWith('/');
   const isMenuButton = [
     '📅 Dars jadvali', '🧪 Testlar', '🤖 AI Yordamchi', '👤 Profil', '📊 Statistika',

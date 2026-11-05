@@ -137,6 +137,13 @@ const resetUserFlows = async (userId, ctx) => {
 const updateData = async (ctx, patch) => {
   if (!ctx.session) ctx.session = {};
   ctx.session.data = { ...(ctx.session.data || {}), ...patch };
+  const uid = ctx.from?.id || ctx.chat?.id;
+  if (uid) {
+    try {
+      const redisConnection = require('../services/redisService');
+      await redisConnection.set(`tg_session:${uid}`, JSON.stringify(ctx.session), "EX", 86400);
+    } catch {}
+  }
 };
 const getData = async (ctx) => (ctx.session?.data || {});
 const getState = (ctx) => (ctx.session?.state || null);
@@ -385,7 +392,7 @@ function parseTextQuestions(text, mode = 'hash') {
     if (!block.includes('=====')) {
       for (let i = 1; i < parts.length; i++) {
         const p = parts[i];
-        if (/^[#*]?\s*[a-zA-Z0-9][\)\.]\s*/.test(p)) {
+        if (/^[#*]?\s*(?:[a-zA-Z][\)\.]|\d+\))\s+/.test(p)) {
           firstOptIdx = i;
           break;
         }
@@ -399,10 +406,26 @@ function parseTextQuestions(text, mode = 'hash') {
     let correctIdx = -1;
 
     for (let i = firstOptIdx; i < parts.length; i++) {
-      let optText = parts[i];
-      let isCorrect = (mode === 'hash' && optText.startsWith('#')) || (mode === 'first' && i === firstOptIdx);
-      if (mode === 'hash' && isCorrect) optText = optText.substring(1).trim();
-      optText = optText.replace(/^[a-zA-Z0-9][\)\.]\s*/, '').trim();
+      let optText = parts[i].trim();
+      let isCorrect = false;
+
+      // Agar oldinda # yoki * bo'lsa (masalan: #A) Javob yoki #Javob)
+      if (mode === 'hash' && (optText.startsWith('#') || optText.startsWith('*'))) {
+        isCorrect = true;
+        optText = optText.substring(1).trim();
+      }
+
+      // Faqat aniq variant prefikslarini tozalaymiz (A), B., a), 1) va hokazo; 1.5 kabi kasrlarga tegmaymiz
+      optText = optText.replace(/^(?:[a-zA-Z][\)\.]|\d+\))\s+/, '').trim();
+
+      // Agar prefiksdan keyin # qo'yilgan bo'lsa (masalan: A) #Javob yoki 1) #Javob)
+      if (mode === 'hash' && !isCorrect && (optText.startsWith('#') || optText.startsWith('*'))) {
+        isCorrect = true;
+        optText = optText.substring(1).trim();
+      }
+
+      if (mode === 'first' && i === firstOptIdx) isCorrect = true;
+
       if (!optText) continue;
       opts.push(optText);
       if (isCorrect) correctIdx = opts.length - 1;

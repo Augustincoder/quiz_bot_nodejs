@@ -141,14 +141,19 @@ async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = 
     btns.push([
       Markup.button.callback("🎯 Yana adaptiv", `adaptive_${subjectKey}`),
     ]);
-  } else if (sid.startsWith("retry_")) {
-    const originalId = parseInt(sid.replace("retry_", ""), 10);
-    if (!isNaN(originalId)) {
-      const memDb = require("../core/bot").memoryDb || {};
-      if ((memDb[subjectKey] || {})[originalId + 1]) {
-        btns.push([
-          Markup.button.callback(`➡️ Keyingi (${originalId + 1}-Blok)`, `post_start_${subjectKey}_${originalId + 1}`)
-        ]);
+  } else if (sid === "retry" || sid.startsWith("retry_")) {
+    btns.push([
+      Markup.button.callback("🔁 Xatolarni qayta ishlash", `wm_start_quiz_${subjectKey}`),
+    ]);
+    if (sid.startsWith("retry_")) {
+      const originalId = parseInt(sid.replace("retry_", ""), 10);
+      if (!isNaN(originalId)) {
+        const memDb = require("../core/bot").memoryDb || {};
+        if ((memDb[subjectKey] || {})[originalId + 1]) {
+          btns.push([
+            Markup.button.callback(`➡️ Keyingi (${originalId + 1}-Blok)`, `post_start_${subjectKey}_${originalId + 1}`)
+          ]);
+        }
       }
     }
   } else {
@@ -450,13 +455,16 @@ async function finishTest(chatId, telegram) {
     if (session.chatType === "private") {
       // ─── SHAXSIY TEST YAKUNI ───
       // UX FLOW: Xatolar qaysi blokdan ekanligi va oldingi natijani xotiraga yozamiz
+      const isUgc = String(tId).startsWith('ugc_') || Boolean(session.creatorId) || Boolean(session.subjectId) || Boolean(session.isUgc);
       const redisConnection = require("../services/redisService");
       await redisConnection.set(`mistakes_meta:${chatId}`, JSON.stringify({
         subjectKey: session.subjectKey,
         testId: tId,
         blockName: tName,
         correct: session.correct,
-        wrong: session.wrong
+        wrong: session.wrong,
+        isUgc: isUgc,
+        subjectId: session.subjectId || null,
       }), "EX", 3600).catch(() => { });
 
       if (Array.isArray(session.mistakes) && session.mistakes.length > 0) {
@@ -514,8 +522,12 @@ async function finishTest(chatId, telegram) {
         `⏱ Vaqt: <b>${time}</b>` +
         funFeedback;
 
+      let saveTestId = tId;
+      if (saveTestId === "mock" || saveTestId === "adaptive" || saveTestId === "retry") {
+        saveTestId = `${saveTestId}_${Date.now()}`;
+      }
       const shelfData = {
-        testId: tId,
+        testId: saveTestId,
         testName: tName,
         subject: session.subjectKey,
         questions: session.sessionQuestions || [],
