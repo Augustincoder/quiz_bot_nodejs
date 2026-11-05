@@ -112,7 +112,9 @@ function getSimplifiedSchedule(schedule) {
         subject: (l.subject || '').trim(),
         teacher: (l.teacher || '').trim(),
         room: (l.room || l.classroom || '').trim(),
-      })).sort((a, b) => `${a.subject}:${a.room}:${a.teacher}`.localeCompare(`${b.subject}:${b.room}:${b.teacher}`));
+        subgroup: (l.subgroup || '').trim(),
+        weekParity: (l.weekParity || l.week_parity || '').trim(),
+      })).sort((a, b) => `${a.subject}:${a.room}:${a.teacher}:${a.subgroup}:${a.weekParity}`.localeCompare(`${b.subject}:${b.room}:${b.teacher}:${b.subgroup}:${b.weekParity}`));
     }
   }
   return simplified;
@@ -1148,7 +1150,7 @@ function getWatcherStatus() {
 // SMART TIMETABLE V2: 1-MINUTE PRECISION SCHEDULER & 5-MIN BELL
 // ═══════════════════════════════════════════════════════════════════
 
-let isMinuteTickRunning = false;
+
 const minuteLocalDedupe = new TTLMap(60 * 60 * 1000, 3000); // 1-hour dedupe memory map
 
 /**
@@ -1329,6 +1331,12 @@ async function runSmartScheduleIntervalTick(bot) {
     const nowMins = nowTashkent.getMinutes();
     const currentMinFromMidnight = nowHours * 60 + nowMins;
     const currentHHMM = `${String(nowHours).padStart(2, '0')}:${String(nowMins).padStart(2, '0')}`;
+    const isTimeInWindow = (targetHHMM, windowMinutes = 10) => {
+      if (!targetHHMM) return false;
+      const [th, tm] = targetHHMM.split(':').map(Number);
+      const targetMin = (th || 0) * 60 + (tm || 0);
+      return currentMinFromMidnight >= targetMin && currentMinFromMidnight < targetMin + windowMinutes;
+    };
 
     const yyyy = nowTashkent.getFullYear();
     const mm = String(nowTashkent.getMonth() + 1).padStart(2, '0');
@@ -1385,10 +1393,10 @@ async function runSmartScheduleIntervalTick(bot) {
 
           if (user.notify_mode === 'shift_aware') {
             // If 1st lesson < 13:00 -> 07:00; If 1st lesson >= 13:00 -> 11:30
-            if (firstStartMin < 13 * 60 && currentHHMM === '07:00') {
+            if (firstStartMin < 13 * 60 && isTimeInWindow('07:00')) {
               shouldSendBriefing = true;
               briefingReason = '☀️ <b>Bugungi dars jadvalingiz (Ertalabki smena):</b>';
-            } else if (firstStartMin >= 13 * 60 && currentHHMM === '11:30') {
+            } else if (firstStartMin >= 13 * 60 && isTimeInWindow('11:30')) {
               shouldSendBriefing = true;
               briefingReason = `🌤 <b>Bugungi dars jadvalingiz (2-smena, ${firstLesson.startTime} da boshlanadi):</b>`;
             }
@@ -1400,12 +1408,12 @@ async function runSmartScheduleIntervalTick(bot) {
               briefingReason = `⏰ <b>Birinchi darsingiz boshlanishiga ${offset} daqiqa qoldi (${firstLesson.startTime}):</b>`;
             }
           } else if (user.notify_mode === 'custom_time') {
-            if (user.custom_morning_time === currentHHMM && currentMinFromMidnight < 18 * 60) {
+            if (user.custom_morning_time && isTimeInWindow(user.custom_morning_time) && currentMinFromMidnight < 18 * 60) {
               shouldSendBriefing = true;
               briefingReason = `🎯 <b>Belgilangan vaqtdagi dars jadvali (${currentHHMM}):</b>`;
             }
           } else if (user.notify_mode === 'standard_both') {
-            if (currentHHMM === '07:30') {
+            if (isTimeInWindow('07:30')) {
               shouldSendBriefing = true;
               briefingReason = '☀️ <b>Bugungi dars jadvalingiz:</b>';
             }
@@ -1428,12 +1436,12 @@ async function runSmartScheduleIntervalTick(bot) {
           let eveningReason = '';
 
           if (user.notify_mode === 'custom_time') {
-            if (user.custom_evening_time === currentHHMM && currentMinFromMidnight >= 18 * 60) {
+            if (user.custom_evening_time && isTimeInWindow(user.custom_evening_time) && currentMinFromMidnight >= 18 * 60) {
               shouldSendEvening = true;
               eveningReason = `🌙 <b>Ertangi dars jadvali (${currentHHMM}):</b>`;
             }
           } else if (user.notify_mode === 'standard_both' || user.notify_mode === 'shift_aware') {
-            if (currentHHMM === '20:00') {
+            if (isTimeInWindow('20:00')) {
               shouldSendEvening = true;
               eveningReason = '🌙 <b>Ertangi kun dars jadvali:</b>';
             }

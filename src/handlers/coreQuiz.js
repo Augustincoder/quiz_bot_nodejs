@@ -37,6 +37,18 @@ const groupTestCache = {
   },
   delete: async (chatId) => await redisConnection.del(`group_cache:${chatId}`)
 };
+
+async function cancelSessionTimer(session, chatId) {
+  try {
+    const { quizTimerQueue } = require("../jobs/queues");
+    if (!quizTimerQueue) return;
+    const jId = session?.timerJobId || (session?.pollId ? `timeout:${chatId}:${session?.qIdx}:${session.pollId}` : `timeout:${chatId}:${session?.qIdx}`);
+    await quizTimerQueue.getJob(jId).then(j => j && j.remove()).catch(() => {});
+    if (session?.qIdx !== undefined) {
+      quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
+    }
+  } catch {}
+}
 // ─── Redis-backed Mistakes Cache ─────────────────────────────
 const lastMistakesCache = {
   set: async (chatId, mistakes) => {
@@ -211,6 +223,9 @@ async function sendNextQuestion(chatId, telegram) {
     if (correctIndex < 0 || correctIndex >= options.length) {
       correctIndex = 0;
     }
+    // Bug #9 fix: Sinxronlash (Poll va savol indeksi 100% mos bo'lishi shart)
+    q.options = options;
+    q.correct_index = correctIndex;
 
     const qFull = `${progress} ${q.question || ""}`;
     const needsSplit =
@@ -276,10 +291,7 @@ async function sendNextQuestion(chatId, telegram) {
         if (session?.pollId) {
           await sessionService.deletePollChat(session.pollId).catch(() => {});
         }
-        try {
-          const { quizTimerQueue } = require("../jobs/queues");
-          await quizTimerQueue.getJob(`timeout:${chatId}:${session?.qIdx}`).then(j => j && j.remove()).catch(() => {});
-        } catch {}
+        await cancelSessionTimer(session, chatId);
         return;
       }
 
@@ -350,12 +362,16 @@ async function sendNextQuestion(chatId, telegram) {
     await sessionService.setPollChat(msg.poll.id, String(chatId));
 
     const { quizTimerQueue } = require("../jobs/queues");
+    const timerJobId = `timeout:${chatId}:${session.qIdx}:${msg.poll.id}`;
+    session.timerJobId = timerJobId;
+    await sessionService.setActiveTest(chatId, session);
+
     await quizTimerQueue.add(
       "timeout",
       { chatId, expectedIdx: session.qIdx, pollId: msg.poll.id },
       {
         delay: 31_000,
-        jobId: `timeout:${chatId}:${session.qIdx}`,
+        jobId: timerJobId,
         removeOnComplete: true,
       },
     );
@@ -380,10 +396,7 @@ async function sendNextQuestion(chatId, telegram) {
       if (session?.pollId) {
         await sessionService.deletePollChat(session.pollId).catch(() => {});
       }
-      try {
-        const { quizTimerQueue } = require("../jobs/queues");
-        await quizTimerQueue.getJob(`timeout:${chatId}:${session?.qIdx}`).then(j => j && j.remove()).catch(() => {});
-      } catch {}
+      await cancelSessionTimer(session, chatId);
       return;
     }
 
@@ -425,20 +438,15 @@ async function finishTest(chatId, telegram) {
     unlock();
   }
 
-  try {
-    const { quizTimerQueue } = require("../jobs/queues");
-    quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
-  } catch {
-    /* silent */
-  }
+  await cancelSessionTimer(session, chatId);
 
   await activePollsCache.delete(session.pollId);
   if (session.chatType !== "private") {
     const groupEntry = await groupTestCache.get(chatId);
     if (groupEntry) {
       session.groupScores = groupEntry.scores;
-      await groupTestCache.delete(chatId);
     }
+    await groupTestCache.delete(chatId);
   }
   const tId = session.testId;
   const tName = resolveTestName(tId, session.blockName);
@@ -768,6 +776,36 @@ async function handlePollAnswer(pollAnswer, telegram) {
         });
       }
       await groupTestCache.set(chatId, groupEntry);
+
+      // Guruh testida barcha kutish zalida ro'yxatdan o'tganlar javob berganini tekshiramiz
+      const voterCount = typeof redisConnection.scard === 'function'
+        ? await redisConnection.scard(`poll_voters:${pollId}`).catch(() => 0)
+        : 0;
+      const session = await sessionService.getActiveTest(chatId);
+      if (
+        session &&
+        session.status !== "paused" &&
+        !session.finished &&
+        !session.isFinished &&
+        session.pollId === pollId &&
+        session.expectedParticipantsCount >= 2 &&
+        voterCount >= session.expectedParticipantsCount &&
+        session.transitionLock !== session.qIdx &&
+        session.questionState !== "TRANSITIONING"
+      ) {
+        session.transitionLock = session.qIdx;
+        session.questionState = "TRANSITIONING";
+        session.consecutiveTimeouts = 0;
+        session.qIdx++;
+        await sessionService.setActiveTest(chatId, session);
+
+        await cancelSessionTimer(session, chatId);
+        try {
+          await telegram.stopPoll(chatId, session.msgId);
+        } catch {}
+
+        setTimeout(() => sendNextQuestion(chatId, telegram), 1000);
+      }
     } finally {
       unlockGroup();
     }
@@ -812,12 +850,7 @@ async function handlePollAnswer(pollAnswer, telegram) {
     await sessionService.deletePollChat(pollId).catch(() => {});
 
     // Pending savol taymerini BullMQ navbatidan bekor qilamiz
-    try {
-      const { quizTimerQueue } = require("../jobs/queues");
-      quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
-    } catch {
-      /* silent */
-    }
+    await cancelSessionTimer(session, chatId);
 
     if (isCorrect) {
       session.correct++;
@@ -912,6 +945,27 @@ async function questionTimeout(chatId, expectedIdx, pollId, telegram) {
       }
     }
 
+    if (session.chatType !== "private") {
+      const voterCount = typeof redisConnection.scard === 'function'
+        ? await redisConnection.scard(`poll_voters:${pollId}`).catch(() => 0)
+        : 0;
+      if (voterCount === 0) {
+        session.consecutiveTimeouts = (session.consecutiveTimeouts || 0) + 1;
+      } else {
+        session.consecutiveTimeouts = 0;
+      }
+
+      if (session.consecutiveTimeouts >= 3) {
+        await telegram.sendMessage(
+          chatId,
+          `🛑 <b>Musobaqa to'xtatildi!</b>\n\nKetma-ket 3 ta savolga hech kim javob bermagani sababli test avtomatik yakunlandi.`,
+          { parse_mode: "HTML" }
+        ).catch(() => {});
+        await sessionService.setActiveTest(chatId, session);
+        return finishTest(chatId, telegram);
+      }
+    }
+
     await sessionService.setActiveTest(chatId, session);
     await sendNextQuestion(chatId, telegram);
   } finally {
@@ -929,4 +983,5 @@ module.exports = {
   groupTestCache,
   activePollsCache,
   buildFinishButtons,
+  cancelSessionTimer,
 };

@@ -40,6 +40,10 @@ const AI_WARNING_TEXT = `\n\n⚠️ *Eslatma:* _Bu javoblar tezkor AI modellarid
 
 // ─── TAHRIRLASH DASHBOARD ────────────────────────────────────
 async function showEditDashboard(ctx) {
+  await updateData(ctx, {
+    editing_question_index: undefined,
+    fixing_error_index: undefined,
+  });
   const data = await getData(ctx);
   const questions = data.questions || [];
   const bar = progressBar(Math.min(questions.length, 50), 50);
@@ -331,18 +335,27 @@ async function onNameInput(ctx) {
 // ─── DRAFT DASHBOARD (BOSHQARUV PANELI) ──────────────────────
 
 async function showDraftDashboard(ctx) {
+  await updateData(ctx, {
+    editing_question_index: undefined,
+    fixing_error_index: undefined,
+  });
   const data = await getData(ctx);
   const qCount = (data.questions || []).length;
+  const invalidCount = (data.invalidQs || []).length;
   const subject = data.subject || "🤖 AI Smart Quiz";
   const blockName = data.block_name || "1-Blok";
 
   let text = `📚 *Fan:* ${escapeMarkdown(subject)}\n`;
   text += `📝 *Blok:* ${escapeMarkdown(blockName)}\n`;
-  text += `🛒 *Savatdagi savollar:* ${qCount} ta\n\n`;
+  text += `🛒 *Savatdagi savollar:* ${qCount} ta\n`;
+  if (invalidCount > 0) {
+    text += `⚠️ *Xato formatdagi savollar:* ${invalidCount} ta\n`;
+  }
+  text += `\n`;
 
   const buttons = [];
 
-  if (qCount === 0) {
+  if (qCount === 0 && invalidCount === 0) {
     text += `_Savat bo'sh. Qaysi usulda savol qo'shmoqchisiz? O'zingizga qulayini tanlang:_`;
   } else {
     text += `_Yana savol qo'shishingiz mumkin. Yoki jarayonni yakunlang:_`;
@@ -357,6 +370,15 @@ async function showDraftDashboard(ctx) {
     Markup.button.callback("📄 Word fayl", "fmt_docx"),
     Markup.button.callback("🤖 AI Smart Quiz", "fmt_ai"),
   ]);
+
+  if (invalidCount > 0) {
+    buttons.push([
+      Markup.button.callback(
+        `⚠️ Xatolarni to'g'rilash (${invalidCount} ta)`,
+        "fix_errors_0",
+      ),
+    ]);
+  }
 
   // Agar savol bo'lsa, Global Preview va Saqlash chiqadi
   if (qCount > 0) {
@@ -395,7 +417,12 @@ async function cbFmt(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const fmt = parseSuffix(ctx.callbackQuery.data, "fmt_");
   const data = await getData(ctx);
-  await updateData(ctx, { format: fmt, format_added: 0 });
+  await updateData(ctx, {
+    format: fmt,
+    format_added: 0,
+    editing_question_index: undefined,
+    fixing_error_index: undefined,
+  });
 
   // 🤖 AQLLI MARSHRUT: Tahrirlash rejimidami yoki Yangi yaratishdami?
   const backAction = data.is_editing ? "edit_add_q" : "back_to_dashboard";
@@ -1010,6 +1037,10 @@ async function showAutoDocxStatusMenu(
   limitMsg = "",
   startPartOverride,
 ) {
+  await updateData(ctx, {
+    editing_question_index: undefined,
+    fixing_error_index: undefined,
+  });
   const data = await getData(ctx);
   const startPart = startPartOverride || data.start_part || 1;
   const buttons = chunks.map((chunk, index) => [
@@ -1125,6 +1156,21 @@ async function processBatchedTextQuestions(ctx, fullText) {
     data.parse_mode || "hash",
   );
   const newQs = parsed.valid || [];
+  const newInvalids = parsed.invalid || [];
+  let currentInvalids = data.invalidQs || [];
+
+  if (newInvalids.length > 0) {
+    currentInvalids = [...currentInvalids, ...newInvalids];
+    await updateData(ctx, { invalidQs: currentInvalids });
+  }
+
+  // 🤖 AQLLI MARSHRUT
+  const finishAction = data.is_editing
+    ? "back_to_edit_dash"
+    : "back_to_dashboard";
+  const finishText = data.is_editing
+    ? "🔙 Tahrirlash paneliga (Yakunlash)"
+    : "🔙 Panelga qaytish (Yakunlash)";
 
   if (newQs.length > 0) {
     questions = [...questions, ...newQs];
@@ -1138,23 +1184,52 @@ async function processBatchedTextQuestions(ctx, fullText) {
       await redisConnection.set(`tg_session:${uid}`, JSON.stringify(ctx.session), "EX", 86400).catch(() => {});
     }
 
-    // 🤖 AQLLI MARSHRUT
-    const finishAction = data.is_editing
-      ? "back_to_edit_dash"
-      : "back_to_dashboard";
-    const finishText = data.is_editing
-      ? "🔙 Tahrirlash paneliga (Yakunlash)"
-      : "🔙 Panelga qaytish (Yakunlash)";
+    const buttons = [
+      [
+        Markup.button.callback(
+          `👁 Shu ${format_added} tasini ko'rib chiqish`,
+          "preview_local_0",
+        ),
+      ],
+    ];
+    if (currentInvalids.length > 0) {
+      buttons.push([
+        Markup.button.callback(
+          `⚠️ Xatolarni to'g'rilash (${currentInvalids.length} ta)`,
+          "fix_errors_0",
+        ),
+      ]);
+    }
+    buttons.push([Markup.button.callback(finishText, finishAction)]);
+
+    let statusMsg = `✅ *${newQs.length} ta savol qo'shildi!*\n\nYana savol yuborishingiz mumkin.\n_Joriy formatda yig'ilganlar: ${format_added} ta_`;
+    if (newInvalids.length > 0) {
+      statusMsg += `\n⚠️ *Xato formatdagi savollar:* ${newInvalids.length} ta`;
+    }
 
     await ctx.reply(
-      `✅ *${newQs.length} ta savol qo'shildi!*\n\nYana savol yuborishingiz mumkin.\n_Joriy formatda yig'ilganlar: ${format_added} ta_`,
+      statusMsg,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard(buttons),
+      },
+    );
+  } else if (newInvalids.length > 0) {
+    const redisConnection = require("../services/redisService");
+    const uid = ctx.from?.id || ctx.chat?.id;
+    if (uid && ctx.session) {
+      await redisConnection.set(`tg_session:${uid}`, JSON.stringify(ctx.session), "EX", 86400).catch(() => {});
+    }
+
+    await ctx.reply(
+      `⚠️ *${newInvalids.length} ta savolda format xatosi aniqlandi!*\nSavollar saqlanmadi (masalan, to'g'ri javob oldida # belgisi yo'q yoki variantlar yetarli emas).`,
       {
         parse_mode: "Markdown",
         ...Markup.inlineKeyboard([
           [
             Markup.button.callback(
-              `👁 Shu ${format_added} tasini ko'rib chiqish`,
-              "preview_local_0",
+              `⚠️ Xatolarni to'g'rilash (${currentInvalids.length} ta)`,
+              "fix_errors_0",
             ),
           ],
           [Markup.button.callback(finishText, finishAction)],
@@ -1331,6 +1406,10 @@ async function cbPreviewGrid(ctx, targetPage = null) {
   if (ctx.callbackQuery) {
     await ctx.answerCbQuery().catch(() => {});
   }
+  await updateData(ctx, {
+    editing_question_index: undefined,
+    fixing_error_index: undefined,
+  });
   const page = targetPage !== null
     ? targetPage
     : (parseInt(parseSuffix(ctx.callbackQuery?.data, "preview_grid_"), 10) || 0);
@@ -1402,7 +1481,10 @@ async function cbPreviewGrid(ctx, targetPage = null) {
     );
   if (navRow.length > 0) buttons.push(navRow);
 
-  await updateData(ctx, { editing_question_index: undefined });
+  await updateData(ctx, {
+    editing_question_index: undefined,
+    fixing_error_index: undefined,
+  });
   const backAction = data.is_editing ? "back_to_edit_dash" : "back_to_dashboard";
   const backText = data.is_editing ? "🔙 Tahrirlash paneliga qaytish" : "🔙 Boshqaruv Paneliga qaytish";
   buttons.push([
@@ -1422,7 +1504,10 @@ async function cbPreviewGrid(ctx, targetPage = null) {
 async function cbPreviewQuestion(ctx) {
   await ctx.answerCbQuery().catch(() => {});
   const idx = parseInt(parseSuffix(ctx.callbackQuery.data, "preview_q_"), 10);
-  await updateData(ctx, { editing_question_index: undefined });
+  await updateData(ctx, {
+    editing_question_index: undefined,
+    fixing_error_index: undefined,
+  });
   const data = await getData(ctx);
   const questions = data.questions || [];
 
@@ -1565,7 +1650,8 @@ async function cbFinishCreation(ctx) {
     }
 
     // YANGI TEST YARATISH: Avto-bo'lish (Chunking)
-    if (questions.length <= CHUNK_SIZE && !data.is_auto_docx) {
+    const SINGLE_BLOCK_MAX = data.is_auto_docx ? 25 : 50;
+    if (questions.length <= SINGLE_BLOCK_MAX && !data.is_auto_docx) {
       // Savollar oz bo'lsa va auto-docx bo'lmasa, bitta qilib saqlaymiz
       const tId = await dbService.saveUserTest(
         ctx.from.id,
@@ -1574,7 +1660,7 @@ async function cbFinishCreation(ctx) {
         questions,
         resolvedSubjectId,
       );
-      testIds.push(tId);
+      if (tId) testIds.push(tId);
     } else {
       // 25 tadan bo'lib chiqamiz
       const chunks = [];
@@ -1593,7 +1679,7 @@ async function cbFinishCreation(ctx) {
         resolvedSubjectId,
       );
       if (ids && ids.length) {
-        testIds.push(...ids);
+        testIds.push(...ids.filter(Boolean));
       } else {
         for (let i = 0; i < chunks.length; i++) {
           const chunkName = `${baseBlockName} (${startPart + i}-qism)`;
@@ -1608,6 +1694,17 @@ async function cbFinishCreation(ctx) {
         }
       }
     }
+  }
+
+  testIds = testIds.filter(Boolean);
+  if (!testIds.length) {
+    logger.error("cbFinishCreation: failed to save test to DB", { userId: ctx.from.id, subject });
+    return ctx.reply("❌ Testni saqlashda xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.", {
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("🔄 Qaytadan saqlash", "finish_test_creation")],
+        [Markup.button.callback("🔙 Savatga qaytish", "back_to_dashboard")],
+      ]),
+    });
   }
 
   const botInfo = await ctx.telegram.getMe();

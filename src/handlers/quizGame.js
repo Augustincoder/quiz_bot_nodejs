@@ -32,6 +32,8 @@ const {
   handlePollAnswer,
   questionTimeout,
   lastMistakesCache,
+  groupTestCache,
+  cancelSessionTimer,
 } = require("./coreQuiz");
 const {
   cbRoomReady,
@@ -1380,12 +1382,12 @@ async function cbForceFinish(ctx) {
       await sessionService.deletePollChat(session.pollId).catch(() => { });
     }
     try {
-      const { quizTimerQueue } = require("../jobs/queues");
-      quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
+      await cancelSessionTimer(session, chatId);
     } catch {
       /* silent */
     }
     await sessionService.deleteActiveTest(chatId).catch(() => { });
+    await groupTestCache.delete(chatId);
   }
 
   await safeDelete(ctx); // Bosilgan menyuni ekrandan tozalaymiz

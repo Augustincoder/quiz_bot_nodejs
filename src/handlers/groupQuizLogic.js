@@ -258,6 +258,7 @@ async function cbRoomStart(ctx) {
       mistakes: [],
       consecutiveTimeouts: 0,
       groupScores: {},
+      expectedParticipantsCount: Object.keys(room.readyUsers || {}).length,
       finished: false,
       status: 'running',
       transitionLock: null,

@@ -1457,12 +1457,16 @@ async function onReplyMessage(ctx) {
   const sending = await ctx.reply('📤 Yuborilmoqda...');
 
   try {
-    const adminText = ctx.message?.text || '';
+    const adminText = ctx.message?.text || ctx.message?.caption || '';
     const hasMedia  = !!(
       ctx.message?.photo ||
       ctx.message?.video ||
       ctx.message?.voice ||
-      ctx.message?.document
+      ctx.message?.audio ||
+      ctx.message?.document ||
+      ctx.message?.sticker ||
+      ctx.message?.video_note ||
+      ctx.message?.animation
     );
 
     const replyCard =
@@ -1547,7 +1551,7 @@ async function adminPrompt(ctx, fmt, total, edit = false) {
       `📝 <b>Matn formatida yuboring:</b>\n\n` +
       `Savol?\n` +
       `A) variant\nB) variant\nC) variant\nD) variant\n` +
-      `# to'g'ri javob (A, B, C yoki D)`
+      `# A (yoki to'g'ri variant oldiga # qo'ying: #A) variant)`
     )
     : `📄 <b>Word (.docx) fayl yuboring</b>`;
 

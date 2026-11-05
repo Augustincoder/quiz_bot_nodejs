@@ -487,12 +487,16 @@ async function getUsersByClassName(className) {
     while (true) {
       const { data, error } = await supabase
         .from('users')
-        .select('telegram_id, name, class_name')
+        .select('telegram_id, full_name, class_name')
         .ilike('class_name', className)
         .range(from, from + pageSize - 1);
       if (error) throw error;
       if (!data || data.length === 0) break;
-      allUsers.push(...data);
+      const mapped = data.map(u => ({
+        ...u,
+        name: u.full_name || ''
+      }));
+      allUsers.push(...mapped);
       if (data.length < pageSize) break;
       from += pageSize;
     }
