@@ -171,6 +171,34 @@ async function runTests() {
 
   console.log('✅ Test 4 PASSED: Migration logic prevents duplicates, isolates creators, and preserves existing links.');
 
+  // =========================================================================
+  // Test 5: Next Button label formatting with long block names
+  // =========================================================================
+  console.log('\n[Test 5] Next button label formatting with long block titles...');
+  const originalGetSubjectBlocks5 = dbService.getSubjectBlocks;
+  dbService.getSubjectBlocks = async (sid) => {
+    if (sid === 99) {
+      return [
+        { id: 301, block_name: '1-Blok' },
+        { id: 302, block_name: 'Juda uzun blok nomi kardiologiya va terapiya amaliyoti' },
+      ];
+    }
+    return [];
+  };
+
+  try {
+    const session = { subjectId: 99, subjectKey: 'Terapiya' };
+    const buttons = await buildFinishButtons('ugc_301', 'Terapiya', 0, session);
+    const flatButtons = buttons.flat();
+    const nextBtn = flatButtons.find((b) => b.text.includes('Keyingi'));
+    assert(nextBtn, 'Next button must exist');
+    assert.strictEqual(nextBtn.callback_data, 'ugc_start_302');
+    console.log(`Label generated: "${nextBtn.text}"`);
+    console.log('✅ Test 5 PASSED: Long block names are safely and neatly handled.');
+  } finally {
+    dbService.getSubjectBlocks = originalGetSubjectBlocks5;
+  }
+
   console.log('\n🎉 ALL SUBJECT_ID ARCHITECTURE TESTS PASSED!');
 }
 

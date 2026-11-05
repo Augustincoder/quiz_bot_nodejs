@@ -4,7 +4,7 @@ const dbService = require('../services/dbService');
 const { getMainKeyboard } = require('../keyboards/keyboards');
 const sessionService = require('../services/sessionService');
 const {
-  userNameCache, clearState, resetUserFlows, safeEdit, safeAnswerCb, backToMainKb, escapeHtml,
+  userNameCache, resetUserFlows, safeEdit, safeAnswerCb, backToMainKb, escapeHtml,
 } = require('../core/utils');
 
 async function cmdStart(ctx) {

@@ -5,6 +5,7 @@ const path = require("path");
 const { Markup } = require("telegraf");
 const os = require("os");
 const dbService = require("../services/dbService");
+const logger = require("../core/logger");
 const {
   States,
   setState,
@@ -1540,6 +1541,18 @@ async function cbFinishCreation(ctx) {
       } catch {}
     }
 
+    // Aniq subject_id ni olish yoki yaratish
+    let resolvedSubjectId = data.subject_id;
+    if (!resolvedSubjectId && subject) {
+      try {
+        const s = await dbService.getOrCreateSubject(ctx.from.id, subject);
+        if (s?.id) {
+          resolvedSubjectId = s.id;
+          data.subject_id = resolvedSubjectId;
+        }
+      } catch {}
+    }
+
     // YANGI TEST YARATISH: Avto-bo'lish (Chunking)
     if (questions.length <= CHUNK_SIZE && !data.is_auto_docx) {
       // Savollar oz bo'lsa va auto-docx bo'lmasa, bitta qilib saqlaymiz
@@ -1548,6 +1561,7 @@ async function cbFinishCreation(ctx) {
         subject,
         baseBlockName,
         questions,
+        resolvedSubjectId,
       );
       testIds.push(tId);
     } else {
@@ -1565,6 +1579,7 @@ async function cbFinishCreation(ctx) {
         ctx.from.id,
         subject,
         blocksToSave,
+        resolvedSubjectId,
       );
       if (ids && ids.length) {
         testIds.push(...ids);
@@ -1576,6 +1591,7 @@ async function cbFinishCreation(ctx) {
             subject,
             chunkName,
             chunks[i],
+            resolvedSubjectId,
           );
           if (tId) testIds.push(tId);
         }

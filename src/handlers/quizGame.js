@@ -435,9 +435,13 @@ async function showUgcSubjectBlocks(ctx, subjectIdOrCreator, subjectName = null,
           opts
         );
         return;
-      } catch (err) {
+      } catch {
         // Fallback agar editMessageText xatolik bersa
       }
+    }
+
+    if (ctx.callbackQuery) {
+      return safeEdit(ctx, text, opts);
     }
 
     await ctx.reply(text, opts);

@@ -633,7 +633,8 @@ async function getUserSubjects(creatorId) {
     const legacyMap = new Map();
     for (const t of tests || []) {
       if (t.subject_id) {
-        blockCounts.set(t.subject_id, (blockCounts.get(t.subject_id) || 0) + 1);
+        const sid = String(t.subject_id);
+        blockCounts.set(sid, (blockCounts.get(sid) || 0) + 1);
       } else if (t.subject) {
         const norm = t.subject.trim().toLowerCase();
         legacyMap.set(norm, (legacyMap.get(norm) || 0) + 1);
@@ -642,8 +643,26 @@ async function getUserSubjects(creatorId) {
 
     const result = (subjects || []).map((s) => ({
       ...s,
-      block_count: blockCounts.get(s.id) || legacyMap.get(String(s.name || '').trim().toLowerCase()) || 0,
+      block_count: blockCounts.get(String(s.id)) || legacyMap.get(String(s.name || '').trim().toLowerCase()) || 0,
     }));
+
+    // Self-healing: agar user_tests ichida subjects jadvaliga kirmay qolgan eski fanlar bo'lsa, ularni ham ko'rsatish
+    const existingNames = new Set((subjects || []).map(s => String(s.name || '').trim().toLowerCase()));
+    for (const t of tests || []) {
+      if (t.subject && !t.subject_id) {
+        const norm = String(t.subject).trim().toLowerCase();
+        if (!existingNames.has(norm)) {
+          existingNames.add(norm);
+          result.push({
+            id: t.id,
+            name: String(t.subject).trim(),
+            creator_id: uid,
+            block_count: legacyMap.get(norm) || 1,
+            is_legacy: true,
+          });
+        }
+      }
+    }
 
     if (redis) {
       await redis.set(cacheKey, JSON.stringify(result), 'EX', 300).catch(() => {});
