@@ -421,6 +421,7 @@ async function cbRunTest(ctx) {
     const test = (shelf[folderName] || [])[idx];
 
     if (!test) return safeEdit(ctx, "❌ Test topilmadi.");
+    test.folderName = folderName;
 
     const quizGame = require("./quizGame");
     await quizGame.resumeTestFromShelf(ctx, test);

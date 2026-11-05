@@ -25,6 +25,8 @@ async function getActiveTest(chatId) {
       localActiveTestCache.set(cid, { data: parsed, expiresAt: Date.now() + TTL * 1000 });
       return parsed;
     }
+    localActiveTestCache.delete(cid);
+    return null;
   } catch (err) {
     logger.error('sessionService.getActiveTest failed, falling back to local memory', { chatId: cid, error: err.message });
   }
@@ -68,6 +70,8 @@ async function getPollChat(pollId) {
       localPollMapCache.set(pid, { chatId: chat, expiresAt: Date.now() + POLL_TTL * 1000 });
       return chat;
     }
+    localPollMapCache.delete(pid);
+    return null;
   } catch (err) {
     logger.error('sessionService.getPollChat failed, checking local backup', { pollId: pid, error: err.message });
   }
@@ -114,6 +118,8 @@ async function getWaitingRoom(chatId) {
       localWaitingRoomCache.set(cid, { data: room, expiresAt: Date.now() + 300 * 1000 });
       return room;
     }
+    localWaitingRoomCache.delete(cid);
+    return null;
   } catch (err) {
     logger.error('sessionService.getWaitingRoom failed, checking local fallback', { chatId: cid, error: err.message });
   }

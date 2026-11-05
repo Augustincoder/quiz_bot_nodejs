@@ -219,32 +219,48 @@ async function cbBackToMain(ctx) {
   await safeEdit(ctx, welcomeText, { parse_mode: 'HTML', ...getMainKeyboard() });
 }
 
+async function canManageLobbyOrGame(ctx, chatId, userId, initiatorId) {
+  if (userId === initiatorId) return true;
+  const config = require('../config/config');
+  if (config.ADMIN_IDS && config.ADMIN_IDS.map(Number).includes(Number(userId))) return true;
+  if (ctx.chat?.type !== 'private') {
+    try {
+      const member = await ctx.telegram.getChatMember(chatId, userId);
+      if (member && (member.status === 'creator' || member.status === 'administrator')) {
+        return true;
+      }
+    } catch {}
+  }
+  return false;
+}
+
 async function cmdStop(ctx) {
   await resetUserFlows(ctx.from?.id, ctx);
   const chatId = ctx.chat.id;
   const userId = ctx.from.id;
-  const isGroup = ctx.chat.type !== 'private'; // Guruh ekanligini aniqlaymiz
+  const isGroup = ctx.chat.type !== 'private';
 
   const sessionServiceLocal = require('../services/sessionService');
   const room = await sessionServiceLocal.getWaitingRoom(chatId);
 
   if (room) {
-    if (userId === room.initiatorId || !isGroup) {
+    const canManage = await canManageLobbyOrGame(ctx, chatId, userId, room.initiatorId);
+    if (canManage || !isGroup) {
       await sessionServiceLocal.deleteWaitingRoom(chatId);
       return ctx.reply('🛑 Test bekor qilindi.', isGroup ? undefined : backToMainKb());
     }
-    return ctx.reply('⚠️ Faqat testni boshlagan foydalanuvchi bekor qila oladi.');
+    return ctx.reply('⚠️ Faqat testni boshlagan foydalanuvchi yoki guruh admini bekor qila oladi.');
   }
 
   const session = await sessionServiceLocal.getActiveTest(chatId);
 
   if (session) {
     if (isGroup) {
-      if (userId !== session.initiatorId) {
-        return ctx.reply('⚠️ Faqat testni boshlagan foydalanuvchi to\'xtata oladi.');
+      const canManage = await canManageLobbyOrGame(ctx, chatId, userId, session.initiatorId);
+      if (!canManage) {
+        return ctx.reply('⚠️ Faqat testni boshlagan foydalanuvchi yoki guruh admini to\'xtata oladi.');
       }
 
-      // 🛑 UX Flow: Marafonni majburiy to'xtatish bayrog'ini yoqamiz
       session.forceStopped = true;
       await sessionServiceLocal.setActiveTest(chatId, session);
 

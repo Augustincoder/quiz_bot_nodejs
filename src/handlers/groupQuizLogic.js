@@ -164,7 +164,22 @@ async function cbRoomReady(ctx) {
   }
 }
 
-// 3. Testni boshlash tugmasi bosilganda (Faqat muallif uchun)
+async function canManageLobbyOrGame(ctx, chatId, userId, initiatorId) {
+  if (userId === initiatorId) return true;
+  const config = require('../config/config');
+  if (config.ADMIN_IDS && config.ADMIN_IDS.map(Number).includes(Number(userId))) return true;
+  if (ctx.chat?.type !== 'private') {
+    try {
+      const member = await ctx.telegram.getChatMember(chatId, userId);
+      if (member && (member.status === 'creator' || member.status === 'administrator')) {
+        return true;
+      }
+    } catch {}
+  }
+  return false;
+}
+
+// 3. Testni boshlash tugmasi bosilganda (Muallif yoki Guruh Admini uchun)
 async function cbRoomStart(ctx) {
   const chatId = ctx.chat.id;
   const unlock = await mutex.lock(`room_start:${chatId}`);
@@ -172,8 +187,9 @@ async function cbRoomStart(ctx) {
     const room = await sessionService.getWaitingRoom(chatId);
     if (!room) return ctx.answerCbQuery('Kutish zali yopilgan!', { show_alert: true }).catch(() => {});
 
-    if (ctx.from.id !== room.initiatorId) {
-      return ctx.answerCbQuery('⚠️ Faqat testni boshlagan kishi ishga tushira oladi!', { show_alert: true }).catch(() => {});
+    const canManage = await canManageLobbyOrGame(ctx, chatId, ctx.from.id, room.initiatorId);
+    if (!canManage) {
+      return ctx.answerCbQuery('⚠️ Faqat test muallifi yoki guruh admini ishga tushira oladi!', { show_alert: true }).catch(() => {});
     }
 
     if (Object.keys(room.readyUsers).length < 2) {
@@ -305,15 +321,16 @@ async function cbRoomStart(ctx) {
   }
 }
 
-// 4. Bekor qilish tugmasi (Faqat muallif uchun)
+// 4. Bekor qilish tugmasi (Muallif yoki Guruh Admini uchun)
 async function cbRoomCancel(ctx) {
   const chatId = ctx.chat.id;
   try {
     const room = await sessionService.getWaitingRoom(chatId);
     if (!room) return ctx.answerCbQuery('Kutish zali allaqachon yopilgan.', { show_alert: true }).catch(() => {});
 
-    if (ctx.from.id !== room.initiatorId) {
-      return ctx.answerCbQuery('⚠️ Faqat testni boshlagan kishi bekor qila oladi!', { show_alert: true }).catch(() => {});
+    const canManage = await canManageLobbyOrGame(ctx, chatId, ctx.from.id, room.initiatorId);
+    if (!canManage) {
+      return ctx.answerCbQuery('⚠️ Faqat test muallifi yoki guruh admini bekor qila oladi!', { show_alert: true }).catch(() => {});
     }
 
     await sessionService.deleteWaitingRoom(chatId);
@@ -323,7 +340,7 @@ async function cbRoomCancel(ctx) {
     console.error('cbRoomCancel error:', e.message);
   }
 }
-// 5. Marafonda keyingi blokni boshlash tugmasi (Faqat muallif uchun)
+// 5. Marafonda keyingi blokni boshlash tugmasi (Muallif yoki Guruh Admini uchun)
 async function cbRoomNextBlock(ctx) {
   const chatId = ctx.chat.id;
   const unlock = await mutex.lock(`room_next:${chatId}`);
@@ -331,8 +348,9 @@ async function cbRoomNextBlock(ctx) {
      const session = await sessionService.getActiveTest(chatId);
      if (!session || !session.isMarathon) return ctx.answerCbQuery("Test topilmadi", {show_alert: true}).catch(()=>{});
      
-     if (ctx.from.id !== session.initiatorId) {
-         return ctx.answerCbQuery("⚠️ Faqat test muallifi keyingi blokni boshlay oladi!", {show_alert: true}).catch(()=>{});
+     const canManage = await canManageLobbyOrGame(ctx, chatId, ctx.from.id, session.initiatorId);
+     if (!canManage) {
+         return ctx.answerCbQuery("⚠️ Faqat test muallifi yoki guruh admini keyingi blokni boshlay oladi!", {show_alert: true}).catch(()=>{});
      }
 
      if (session.questionState === "ACTIVE" || session.qIdx > 0) {

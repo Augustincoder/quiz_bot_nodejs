@@ -45,7 +45,7 @@ async function cancelSessionTimer(session, chatId) {
     if (!quizTimerQueue) return;
     const jId = session?.timerJobId || (session?.pollId ? `timeout_${chatId}_${session?.qIdx}_${session.pollId}` : `timeout_${chatId}_${session?.qIdx}`);
     await quizTimerQueue.getJob(jId).then(j => j && j.remove()).catch(() => {});
-    if (session?.qIdx !== undefined) {
+    if (!session?.timerJobId && session?.qIdx !== undefined) {
       quizTimerQueue.getJob(`timeout_${chatId}_${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
       quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
     }
@@ -65,6 +65,9 @@ const lastMistakesCache = {
   get: async (chatId) => {
     const data = await redisConnection.get(`mistakes:${chatId}`);
     return data ? JSON.parse(data) : [];
+  },
+  clear: async (chatId) => {
+    await redisConnection.del(`mistakes:${chatId}`).catch(() => {});
   },
 };
 
@@ -176,16 +179,29 @@ async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = 
       Markup.button.callback("🎯 Yana adaptiv", safeCallbackData(`adaptive_${subjectKey}`, 64)),
     ]);
   } else if (sid === "retry" || sid.startsWith("retry_")) {
-    btns.push([
-      Markup.button.callback("🔁 Xatolarni qayta ishlash", safeCallbackData(`wm_start_quiz_${subjectKey}`, 64)),
-    ]);
+    if (mistakesCount > 0) {
+      btns.push([
+        Markup.button.callback("🔁 Xatolarni qayta ishlash", safeCallbackData(`wm_start_quiz_${subjectKey}`, 64)),
+      ]);
+    }
     if (sid.startsWith("retry_")) {
       const originalId = parseInt(sid.replace("retry_", ""), 10);
-      if (!isNaN(originalId)) {
+      if (!isNaN(originalId) && originalId > 0 && originalId < 1000000) {
         const memDb = require("../core/bot").memoryDb || {};
+        if ((memDb[subjectKey] || {})[originalId]) {
+          btns.push([
+            Markup.button.callback(
+              `🔁 ${originalId}-Blokni qayta ishlash`,
+              safeCallbackData(`post_start_${subjectKey}_${originalId}`, 64),
+            ),
+          ]);
+        }
         if ((memDb[subjectKey] || {})[originalId + 1]) {
           btns.push([
-            Markup.button.callback(`➡️ Keyingi (${originalId + 1}-Blok)`, safeCallbackData(`post_start_${subjectKey}_${originalId + 1}`, 64))
+            Markup.button.callback(
+              `➡️ Keyingi (${originalId + 1}-Blok)`,
+              safeCallbackData(`post_start_${subjectKey}_${originalId + 1}`, 64),
+            ),
           ]);
         }
       }
@@ -274,92 +290,129 @@ async function sendNextQuestion(chatId, telegram) {
       pollOpts = options.map((o) => (String(o).trim() || "Variant").slice(0, 100));
     }
     let msg;
-    try {
-      const pollExtra = {
-        type: "quiz",
-        correct_option_id: correctIndex,
-        is_anonymous: false,
-        open_period: 30,
-      };
-      if (session.messageThreadId) {
-        pollExtra.message_thread_id = session.messageThreadId;
-      }
-      if (q.explanation) {
-        const { safeTruncateExplanation } = require("../core/questionUtils");
-        const exp = safeTruncateExplanation(escapeHtml(String(q.explanation).trim()), 200);
-        pollExtra.explanation = exp;
-        pollExtra.explanation_parse_mode = "HTML";
-      }
-      msg = await telegram.sendPoll(chatId, pollQ, pollOpts, pollExtra);
-    } catch (e) {
-      console.error(`sendPoll error [${chatId}]:`, e.message);
+    let sendAttempts = 0;
+    const maxSendAttempts = 3;
+    let explanationError = false;
 
-      const errMsg = String(e?.message || '');
-      const migrateTo = e?.parameters?.migrate_to_chat_id || e?.response?.parameters?.migrate_to_chat_id;
-      const isFatalChatError =
-        errMsg.includes('bot was kicked') ||
-        errMsg.includes('not a member') ||
-        errMsg.includes('bot was blocked') ||
-        errMsg.includes('chat not found') ||
-        errMsg.includes('TOPIC_CLOSED') ||
-        errMsg.includes('chat write forbidden') ||
-        errMsg.includes('group chat was upgraded') ||
-        !!migrateTo;
-
-      if (isFatalChatError) {
-        console.warn(`[coreQuiz] Fatal chat error detected for chatId ${chatId}: ${errMsg} (migrateTo: ${migrateTo}). Force stopping session.`);
-        await sessionService.deleteActiveTest(chatId).catch(() => {});
-        await sessionService.deleteWaitingRoom(chatId).catch(() => {});
-        if (session?.pollId) {
-          await sessionService.deletePollChat(session.pollId).catch(() => {});
+    while (sendAttempts < maxSendAttempts) {
+      sendAttempts++;
+      try {
+        const pollExtra = {
+          type: "quiz",
+          correct_option_id: correctIndex,
+          is_anonymous: false,
+          open_period: 30,
+        };
+        if (session.messageThreadId) {
+          pollExtra.message_thread_id = session.messageThreadId;
         }
-        await cancelSessionTimer(session, chatId);
-        return;
-      }
+        if (q.explanation && !explanationError) {
+          const { safeTruncateExplanation } = require("../core/questionUtils");
+          const exp = safeTruncateExplanation(escapeHtml(String(q.explanation).trim()), 200);
+          pollExtra.explanation = exp;
+          pollExtra.explanation_parse_mode = "HTML";
+        }
+        msg = await telegram.sendPoll(chatId, pollQ, pollOpts, pollExtra);
+        break;
+      } catch (e) {
+        console.error(`sendPoll error [${chatId}] attempt ${sendAttempts}:`, e.message);
 
-      session.sendErrors = (session.sendErrors || 0) + 1;
-      const errSendOpts = { parse_mode: "HTML" };
-      if (session.messageThreadId) errSendOpts.message_thread_id = session.messageThreadId;
+        const errMsg = String(e?.message || '');
+        const migrateTo = e?.parameters?.migrate_to_chat_id || e?.response?.parameters?.migrate_to_chat_id;
+        const isFatalChatError =
+          errMsg.includes('bot was kicked') ||
+          errMsg.includes('not a member') ||
+          errMsg.includes('bot was blocked') ||
+          errMsg.includes('chat not found') ||
+          errMsg.includes('TOPIC_CLOSED') ||
+          errMsg.includes('chat write forbidden') ||
+          errMsg.includes('group chat was upgraded') ||
+          !!migrateTo;
 
-      if (session.sendErrors >= 3) {
-        session.status = "paused";
-        await sessionService.setActiveTest(chatId, session);
+        if (isFatalChatError) {
+          console.warn(`[coreQuiz] Fatal chat error detected for chatId ${chatId}: ${errMsg} (migrateTo: ${migrateTo}). Force stopping session.`);
+          await sessionService.deleteActiveTest(chatId).catch(() => {});
+          await sessionService.deleteWaitingRoom(chatId).catch(() => {});
+          if (session?.pollId) {
+            await sessionService.deletePollChat(session.pollId).catch(() => {});
+          }
+          await cancelSessionTimer(session, chatId);
+          return;
+        }
+
+        // 1. Explanation HTML parsing error -> retry without parse_mode
+        if (errMsg.includes("can't parse entities") || errMsg.includes('parse entities')) {
+          explanationError = true;
+          continue;
+        }
+
+        // 2. 429 Too Many Requests -> wait retry_after and retry same question
+        const retryAfter = e?.parameters?.retry_after || e?.response?.parameters?.retry_after;
+        if (retryAfter || errMsg.includes('429') || errMsg.includes('Too Many Requests')) {
+          const waitSec = Number(retryAfter) || 2;
+          console.warn(`[coreQuiz] Rate limit (429) on sendPoll for ${chatId}. Waiting ${waitSec}s...`);
+          await new Promise(r => setTimeout(r, waitSec * 1000));
+          continue;
+        }
+
+        // 3. Transient network error -> wait 1s and retry
+        const isTransientNetwork =
+          errMsg.includes('ETIMEDOUT') ||
+          errMsg.includes('ECONNRESET') ||
+          errMsg.includes('ECONNREFUSED') ||
+          errMsg.includes('502') ||
+          errMsg.includes('503') ||
+          errMsg.includes('504');
+        if (isTransientNetwork && sendAttempts < maxSendAttempts) {
+          console.warn(`[coreQuiz] Transient network error on sendPoll for ${chatId}: ${errMsg}. Retrying after 1s...`);
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+
+        session.sendErrors = (session.sendErrors || 0) + 1;
+        const errSendOpts = { parse_mode: "HTML" };
+        if (session.messageThreadId) errSendOpts.message_thread_id = session.messageThreadId;
+
+        if (session.sendErrors >= 3) {
+          session.status = "paused";
+          await sessionService.setActiveTest(chatId, session);
+          await telegram.sendMessage(
+            chatId,
+            `⚠️ <b>Texnik xatolik:</b> Telegram savollarni yuborishda muammo yuzaga keldi. Test avtomatik pauza qilindi.\n\nIltimos, birozdan so'ng "▶️ Davom etish" tugmasini bosing.`,
+            {
+              ...errSendOpts,
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback("▶️ Davom etish", "pause_resume")],
+                [Markup.button.callback("🏁 Yakunlash", "pause_finish")],
+              ]),
+            }
+          ).catch(() => { });
+          return;
+        }
+
+        // 🛑 UX Flow: Faqat haqiqiy xato savol bo'lsagina o'tkazib yuboramiz
         await telegram.sendMessage(
           chatId,
-          `⚠️ <b>Texnik xatolik:</b> Telegram savollarni yuborishda muammo yuzaga keldi. Test avtomatik pauza qilindi.\n\nIltimos, birozdan so'ng "▶️ Davom etish" tugmasini bosing.`,
-          {
-            ...errSendOpts,
-            ...Markup.inlineKeyboard([
-              [Markup.button.callback("▶️ Davom etish", "pause_resume")],
-              [Markup.button.callback("🏁 Yakunlash", "pause_finish")],
-            ]),
-          }
+          `⚠️ <b>Texnik xatolik:</b> Bu savolni Telegram qabul qilmadi. Savol o'tkazib yuborildi.`,
+          errSendOpts
         ).catch(() => { });
-        return;
+
+        // O'tkazib yuborilgan savolni xato (wrong) deb belgilaymiz
+        session.wrong++;
+        session.mistakes.push({
+          question: String(q.question || "Noma'lum savol").substring(0, 100),
+          correct_ans: options[correctIndex] || "Noma'lum",
+          wrong_ans: "⚠️ Savol yuklanmadi",
+          options: options,
+          correct_index: correctIndex,
+        });
+        session.qIdx++;
+        await sessionService.setActiveTest(chatId, session);
+
+        // Kaskadli qulashning oldini olish uchun 1 soniya kutamiz
+        await new Promise(r => setTimeout(r, 1000));
+        return sendNextQuestion(chatId, telegram);
       }
-
-      // 🛑 UX Flow: Foydalanuvchiga xabar beramiz va keyingi savolga xavfsiz o'tkazamiz
-      await telegram.sendMessage(
-        chatId,
-        `⚠️ <b>Texnik xatolik:</b> Bu savolni Telegram qabul qilmadi. Savol o'tkazib yuborildi.`,
-        errSendOpts
-      ).catch(() => { });
-
-      // O'tkazib yuborilgan savolni xato (wrong) deb belgilaymiz
-      session.wrong++;
-      session.mistakes.push({
-        question: String(q.question || "Noma'lum savol").substring(0, 100),
-        correct_ans: options[correctIndex] || "Noma'lum",
-        wrong_ans: "⚠️ Savol yuklanmadi",
-        options: options,
-        correct_index: correctIndex,
-      });
-      session.qIdx++;
-      await sessionService.setActiveTest(chatId, session);
-
-      // Kaskadli qulashning oldini olish uchun 1 soniya kutamiz
-      await new Promise(r => setTimeout(r, 1000));
-      return sendNextQuestion(chatId, telegram);
     }
     session.sendErrors = 0;
     session.pollId = msg.poll.id;
@@ -370,6 +423,7 @@ async function sendNextQuestion(chatId, telegram) {
         chatId: chatId,
         correct_index: q.correct_index,
         qData: q,
+        expectedParticipantsCount: session.expectedParticipantsCount || 0,
       });
       if (!(await groupTestCache.get(chatId))) {
         await groupTestCache.set(chatId, { scores: session.groupScores || {} });
@@ -380,13 +434,12 @@ async function sendNextQuestion(chatId, telegram) {
     session.msgId = msg.message_id;
     session.transitionLock = null;
     session.questionState = "ACTIVE";
+    const timerJobId = `timeout_${chatId}_${session.qIdx}_${msg.poll.id}`;
+    session.timerJobId = timerJobId;
     await sessionService.setActiveTest(chatId, session);
     await sessionService.setPollChat(msg.poll.id, String(chatId));
 
     const { quizTimerQueue } = require("../jobs/queues");
-    const timerJobId = `timeout_${chatId}_${session.qIdx}_${msg.poll.id}`;
-    session.timerJobId = timerJobId;
-    await sessionService.setActiveTest(chatId, session);
 
     try {
       await quizTimerQueue.add(
@@ -476,6 +529,7 @@ async function finishTest(chatId, telegram) {
     await groupTestCache.delete(chatId);
   }
   const tId = session.testId;
+  const sid = String(tId);
   const tName = resolveTestName(tId, session.blockName);
   const subjName = SUBJECTS[session.subjectKey] || session.subjectKey;
   const elapsed = Math.floor((Date.now() - session.startTime) / 1000);
@@ -504,22 +558,42 @@ async function finishTest(chatId, telegram) {
 
       if (Array.isArray(session.mistakes) && session.mistakes.length > 0) {
         await lastMistakesCache.set(chatId, session.mistakes).catch(() => { });
+      } else if (sid === "retry" || sid.startsWith("retry_")) {
+        await lastMistakesCache.clear(chatId).catch(() => {});
       }
 
-      dbService
-        .updateUserStats(
-          chatId,
-          session.correct,
-          session.wrong,
-          session.subjectKey,
-          tId,
-          session.mistakes,
-        )
-        .catch((e) => console.error("Stats update error:", e.message));
+      const answeredTotal = session.correct + session.wrong;
+      const totalQuestions = session.sessionQuestions.length || answeredTotal;
+      const skipped = Math.max(0, totalQuestions - answeredTotal);
+      const pct = safePercent(session.correct, totalQuestions);
 
-      const total = session.correct + session.wrong;
-      const skipped = session.sessionQuestions.length - total;
-      const pct = safePercent(session.correct, total);
+      if (answeredTotal > 0) {
+        dbService.updateUserStats(
+            chatId,
+            session.correct,
+            session.wrong + skipped,
+            session.subjectKey,
+            tId,
+            session.mistakes,
+          )
+          .catch((e) => console.error("Stats update error:", e.message));
+      }
+
+      if (session.shelfFolder) {
+        dbService.saveTestToShelf(chatId, session.shelfFolder, {
+          testId: tId,
+          testName: session.blockName || tName,
+          subject: session.subjectKey,
+          subjectId: session.subjectId || null,
+          creatorId: session.creatorId || null,
+          questions: session.sessionQuestions,
+          progress: {
+            current_index: totalQuestions,
+            correct: session.correct || 0,
+            mistakes: session.mistakes || [],
+          },
+        }).catch(() => {});
+      }
 
       // Telemetry
       logger.info("test:finish", {
@@ -528,6 +602,7 @@ async function finishTest(chatId, telegram) {
         testId: tId,
         correct: session.correct,
         wrong: session.wrong,
+        skipped,
         percent: pct,
         elapsed,
       });
@@ -645,8 +720,11 @@ async function finishTest(chatId, telegram) {
         session.testId = nextBlock.id || nextBlock.test_id;
         session.blockName = nextBlock.block_name;
         session.qIdx = 0;
-        session.groupScores = {}; // Keyingi blok uchun tozalaymiz
-        session.finished = false; // Sessiyani ochiq qoldiramiz
+        session.consecutiveTimeouts = 0;
+        session.pollId = null;
+        session.msgId = null;
+        session.groupScores = {};
+        session.finished = false;
         session.isFinished = false;
         session.questionState = "PREPARING";
         session.transitionLock = null;
@@ -814,6 +892,11 @@ async function handlePollAnswer(pollAnswer, telegram) {
       const voterCount = typeof redisConnection.scard === 'function'
         ? await redisConnection.scard(`poll_voters:${pollId}`).catch(() => 0)
         : 0;
+      const expCount = cachedPoll.expectedParticipantsCount || 0;
+      if (expCount >= 2 && voterCount < expCount) {
+        // Hali hamma ovoz berib bo'lmadi, getActiveTest chaqirish shart emas
+        return;
+      }
       const session = await sessionService.getActiveTest(chatId);
       if (
         session &&

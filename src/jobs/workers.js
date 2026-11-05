@@ -248,7 +248,8 @@ function initWorkers(bot, scheduleService) {
     await quizGame.questionTimeout(chatId, expectedIdx, pollId, bot.telegram);
   }, {
     connection: redisConnection.createWorkerConnection(),
-    concurrency: 5,
+    concurrency: 25,
+    limiter: { max: 25, duration: 1000 },
     lockDuration: 60000,
     maxStalledCount: 2,
   });

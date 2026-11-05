@@ -505,6 +505,102 @@ const startHandlerShelfSrc = fs.readFileSync(require.resolve('../src/handlers/st
 assert(startHandlerShelfSrc.includes('if (folderName.length > 20) folderName = folderName.slice(0, 20);'), 'startHandler must clamp shelf folderName to <= 20 chars');
 console.log('  ✅ [PASS] Shelf 64-byte safety, folder guards and DB upsert fallback verified.\n');
 
+// ─── TEST 27: Audit v4 Issue #1: sendNextQuestion Retry Loop (429, network, parse) ───
+console.log('27. Testing Audit v4 Issue #1: sendPoll 429/Network/Parse Retry Loop');
+const coreQuizSrc27 = fs.readFileSync(require.resolve('../src/handlers/coreQuiz'), 'utf8');
+assert(coreQuizSrc27.includes('let sendAttempts = 0;'), 'sendNextQuestion must initialize sendAttempts');
+assert(coreQuizSrc27.includes('while (sendAttempts < maxSendAttempts)'), 'sendNextQuestion must use a retry loop for sendPoll');
+assert(coreQuizSrc27.includes('retry_after') && coreQuizSrc27.includes('Too Many Requests'), 'sendNextQuestion must handle 429 rate limits without marking question wrong');
+assert(coreQuizSrc27.includes("can't parse entities"), 'sendNextQuestion must retry without parse_mode on entity errors');
+assert(coreQuizSrc27.includes('isTransientNetwork'), 'sendNextQuestion must retry on transient network errors');
+console.log('  ✅ [PASS] Audit v4 Issue #1: sendPoll retry loop with 429 backoff and network tolerance verified.\n');
+
+// ─── TEST 28: Audit v4 Issue #2: cbStopTest, cbPauseResume, cbForceFinish Mutex poll:chatId Guard ───
+console.log('28. Testing Audit v4 Issue #2: Stop/Pause/Resume/Finish Race Condition Mutex Guards');
+const quizGameSrc28 = fs.readFileSync(require.resolve('../src/handlers/quizGame'), 'utf8');
+assert(quizGameSrc28.includes('async function cbStopTest(ctx) {') && quizGameSrc28.includes('const unlock = await mutex.lock(`poll:${chatId}`);') && quizGameSrc28.includes('session.pollId = null;'),
+       'cbStopTest must lock poll:chatId and nullify pollId');
+assert(quizGameSrc28.includes('async function cbForceFinish(ctx) {') && quizGameSrc28.includes('const unlock = await mutex.lock(`poll:${chatId}`);'), 'cbForceFinish must lock poll:chatId');
+assert(quizGameSrc28.includes('async function cbPauseResume(ctx) {') && quizGameSrc28.includes('const unlock = await mutex.lock(`poll:${chatId}`);'), 'cbPauseResume must lock poll:chatId');
+console.log('  ✅ [PASS] Audit v4 Issue #2: Session lifecycle operations guarded with poll:chatId mutex.\n');
+
+// ─── TEST 29: Audit v4 Issue #3: Mistakes Interactive Review Double-Tap & Idempotency Guard ───
+console.log('29. Testing Audit v4 Issue #3: Mistakes Review Step Idempotency & Double-Tap Prevention');
+assert(quizGameSrc28.includes('state.step = (state.step || 0) + 1;'), 'sendNextInlineMistake must advance state.step');
+assert(quizGameSrc28.includes('wm_ans_${state.step}_${i}_${isCorrect ? 1 : 0}'), 'Mistakes review buttons must embed state.step and option index');
+assert(quizGameSrc28.includes('state.awaitingNext'), 'cbWmAns and sendNextInlineMistake must track state.awaitingNext');
+assert(quizGameSrc28.includes('match(/^wm_ans_(\\d+)_(\\d+)_([01])$/)') || quizGameSrc28.includes('match(/^wm_ans_(\d+)_(\d+)_([01])$/)'), 'cbWmAns must parse step and answer from callback_data');
+console.log('  ✅ [PASS] Audit v4 Issue #3: Mistakes review step-indexed callbacks and double-tap guards verified.\n');
+
+// ─── TEST 30: Audit v4 Issue #4: BullMQ Concurrency: 25 & Snappy Start Countdown ───
+console.log('30. Testing Audit v4 Issue #4: BullMQ Concurrency 25 & Snappy Ready Start');
+const workersSrc30 = fs.readFileSync(require.resolve('../src/jobs/workers'), 'utf8');
+assert(workersSrc30.includes('concurrency: 25'), 'quizTimerWorker must have concurrency: 25');
+assert(workersSrc30.includes('limiter: { max: 25, duration: 1000 }'), 'quizTimerWorker must configure rate limiter for concurrency');
+assert(!quizGameSrc28.includes('3️⃣') && !quizGameSrc28.includes('2️⃣') && !quizGameSrc28.includes('1️⃣'), 'cbUserReadyStart must eliminate multi-second countdown spam');
+assert(quizGameSrc28.includes("🚀 <b>Kamarlarni taqing! BOSHLADIK!</b>"), 'cbUserReadyStart must use snappy single start message');
+console.log('  ✅ [PASS] Audit v4 Issue #4: quizTimerWorker concurrency 25 and snappy start countdown verified.\n');
+
+// ─── TEST 31: Audit v4 Issue #5: SessionService Memory Consistency & Duplicate Write Removal ───
+console.log('31. Testing Audit v4 Issue #5: Cache Invalidation on Null & Redundant Query Elimination');
+const sessionServiceSrc31 = fs.readFileSync(require.resolve('../src/services/sessionService'), 'utf8');
+assert(sessionServiceSrc31.includes('localActiveTestCache.delete(cid);') && sessionServiceSrc31.includes('return null;'), 'getActiveTest must delete local fallback and return null on redis miss');
+assert(sessionServiceSrc31.includes('localPollMapCache.delete(pid);') && sessionServiceSrc31.includes('return null;'), 'getPollChat must delete local fallback and return null on redis miss');
+assert(sessionServiceSrc31.includes('localWaitingRoomCache.delete(cid);') && sessionServiceSrc31.includes('return null;'), 'getWaitingRoom must delete local fallback and return null on redis miss');
+
+// Duplicate setActiveTest in sendNextQuestion check
+assert(coreQuizSrc27.includes('session.timerJobId = timerJobId;') && coreQuizSrc27.includes('await sessionService.setActiveTest(chatId, session);'),
+       'sendNextQuestion must assign timerJobId before calling setActiveTest once');
+
+// cancelSessionTimer legacy search check
+assert(coreQuizSrc27.includes('if (!session?.timerJobId && session?.qIdx !== undefined)'), 'cancelSessionTimer must skip legacy searches if timerJobId is set');
+
+// group poll cached expectedParticipantsCount check
+assert(coreQuizSrc27.includes('expectedParticipantsCount: session.expectedParticipantsCount || 0'), 'sendNextQuestion must store expectedParticipantsCount in activePollsCache');
+assert(coreQuizSrc27.includes('if (expCount >= 2 && voterCount < expCount)'), 'handlePollAnswer must skip getActiveTest if voterCount < expectedParticipantsCount');
+console.log('  ✅ [PASS] Audit v4 Issue #5: Cache consistency, single setActiveTest, and group voter query reduction verified.\n');
+
+// ─── TEST 32: Audit v5 Bug #1 & #2: UGC Subj Registration & Interactive Mistakes Stop ───
+console.log('32. Testing Audit v5 Bug #1 & #2: ugc_subj_ & wm_stop Registration & Labels');
+const quizGameSrc32 = fs.readFileSync(require.resolve('../src/handlers/quizGame'), 'utf8');
+assert(quizGameSrc32.includes('bot.action(/^ugc_subj_/, cbUgcSubj);'), 'quizGame register must register bot.action(/^ugc_subj_/, cbUgcSubj)');
+assert(quizGameSrc32.includes('bot.action("wm_stop", cbWmStop);'), 'quizGame register must register bot.action("wm_stop", cbWmStop)');
+assert(quizGameSrc32.includes('"I", "J"'), 'sendNextInlineMistake must include I and J in labels for up to 10 options');
+assert(quizGameSrc32.includes('async function cbWmStop(ctx)'), 'quizGame must implement cbWmStop to clean up wmTimer and wm_state');
+console.log('  ✅ [PASS] Audit v5 Bug #1 & #2: ugc_subj_ registered and interactive mistake stop handler verified.\n');
+
+// ─── TEST 33: Audit v5 Bug #3: Classical Quiz Mistakes testId & 100% Mastery Cache Clear ───
+console.log('33. Testing Audit v5 Bug #3: cbWmStartQuiz retry testId & Cache Clear on Mastery');
+assert(quizGameSrc32.includes('retryTestId = `retry_${meta.testId}`;'), 'cbWmStartQuiz must preserve retry testId so finish buttons know the source test');
+const coreQuizSrc33 = fs.readFileSync(require.resolve('../src/handlers/coreQuiz'), 'utf8');
+assert(coreQuizSrc33.includes('if (mistakesCount > 0) {') && coreQuizSrc33.includes('🔁 Xatolarni qayta ishlash'), 'buildFinishButtons must only show retry if mistakesCount > 0');
+assert(coreQuizSrc33.includes('await lastMistakesCache.clear(chatId)'), 'finishTest and sendNextInlineMistake must clear mistakes cache upon 100% mastery');
+console.log('  ✅ [PASS] Audit v5 Bug #3: retry testId preservation and mastery cache clearance verified.\n');
+
+// ─── TEST 34: Audit v5 Bug #4: Percentage Calculation over totalQuestions ───
+console.log('34. Testing Audit v5 Bug #4: Percentage Calculation over totalQuestions (No False 100% on 1/25)');
+assert(coreQuizSrc33.includes('const totalQuestions = session.sessionQuestions.length || answeredTotal;'), 'finishTest must base totalQuestions on sessionQuestions.length');
+assert(coreQuizSrc33.includes('const pct = safePercent(session.correct, totalQuestions);'), 'finishTest percentage must divide by totalQuestions');
+assert(coreQuizSrc33.includes('if (answeredTotal > 0) {') && coreQuizSrc33.includes('dbService.updateUserStats'), 'finishTest must guard updateUserStats so 0-answer finishes do not pollute stats');
+console.log('  ✅ [PASS] Audit v5 Bug #4: Safe percentage computation over full question set verified.\n');
+
+// ─── TEST 35: Audit v5 Bug #6: Shelf Resumed Test Auto-Update on Finish ───
+console.log('35. Testing Audit v5 Bug #6: Shelf Resumed Test Auto-Update on Finish');
+const shelfSrc35 = fs.readFileSync(require.resolve('../src/handlers/shelfHandlers'), 'utf8');
+assert(shelfSrc35.includes('test.folderName = folderName;'), 'shelfHandlers cbRunTest must attach folderName to test before resumption');
+assert(quizGameSrc32.includes('shelfFolder: savedTest.folderName || null,'), 'quizGame resumeTestFromShelf must record shelfFolder in session');
+assert(coreQuizSrc33.includes('if (session.shelfFolder) {') && coreQuizSrc33.includes('dbService.saveTestToShelf'), 'coreQuiz finishTest must update shelf progress when shelfFolder is present');
+console.log('  ✅ [PASS] Audit v5 Bug #6: Shelf resumed test progress tracking and completion update verified.\n');
+
+// ─── TEST 36: Audit v5 Bug #7: Group AFK Initiator Prevention ───
+console.log('36. Testing Audit v5 Bug #7: Group AFK Initiator Prevention (Admin / Creator Override)');
+const groupQuizSrc36 = fs.readFileSync(require.resolve('../src/handlers/groupQuizLogic'), 'utf8');
+assert(groupQuizSrc36.includes('canManageLobbyOrGame'), 'groupQuizLogic must implement canManageLobbyOrGame');
+assert(groupQuizSrc36.includes("member.status === 'creator' || member.status === 'administrator'"), 'canManageLobbyOrGame must grant permissions to Telegram group admins');
+const startHandlerSrc36 = fs.readFileSync(require.resolve('../src/handlers/startHandler'), 'utf8');
+assert(startHandlerSrc36.includes('canManageLobbyOrGame'), 'startHandler cmdStop must use canManageLobbyOrGame to let group admins stop abandoned tests');
+console.log('  ✅ [PASS] Audit v5 Bug #7: Group AFK initiator prevention and admin management verified.\n');
+
 console.log('==================================================');
 console.log('🎉 ALL SENIOR AUDIT BUG FIXES VERIFIED SUCCESSFULLY!');
 console.log('==================================================');
