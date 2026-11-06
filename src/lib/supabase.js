@@ -23,7 +23,22 @@ if (!supabaseUrl || !supabaseKey) {
   } catch {}
 
   try {
-    supabase = createClient(supabaseUrl, supabaseKey);
+    const SUPABASE_TIMEOUT_MS = parseInt(process.env.SUPABASE_TIMEOUT_MS, 10) || 20000;
+    supabase = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+      global: {
+        fetch: (url, options = {}) => {
+          const timeoutSignal = AbortSignal.timeout(SUPABASE_TIMEOUT_MS);
+          const signal = options.signal
+            ? (AbortSignal.any ? AbortSignal.any([options.signal, timeoutSignal]) : options.signal)
+            : timeoutSignal;
+          return fetch(url, { ...options, signal });
+        },
+      },
+    });
   } catch (err) {
     console.error("❌ Supabase initialization error:", err.message);
   }

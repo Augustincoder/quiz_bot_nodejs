@@ -545,7 +545,6 @@ async function finishTest(chatId, telegram) {
       // ─── SHAXSIY TEST YAKUNI ───
       // UX FLOW: Xatolar qaysi blokdan ekanligi va oldingi natijani xotiraga yozamiz
       const isUgc = String(tId).startsWith('ugc_') || Boolean(session.creatorId) || Boolean(session.subjectId) || Boolean(session.isUgc);
-      const redisConnection = require("../services/redisService");
       await redisConnection.set(`mistakes_meta:${chatId}`, JSON.stringify({
         subjectKey: session.subjectKey,
         testId: tId,

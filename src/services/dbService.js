@@ -883,8 +883,12 @@ async function getUserTest(testId) {
 
   try {
     const cacheKey = `cache:user_test:${tid}`;
-    const cached = await redis.get(cacheKey);
-    if (cached) return JSON.parse(cached);
+    if (redis) {
+      const cached = await redis.get(cacheKey).catch(() => null);
+      if (cached) return JSON.parse(cached);
+    }
+
+    if (!supabase) return null;
 
     const { data, error } = await supabase
       .from('user_tests')
@@ -893,7 +897,7 @@ async function getUserTest(testId) {
       .maybeSingle();
 
     if (error) throw error;
-    if (data) {
+    if (data && redis) {
       await redis.set(cacheKey, JSON.stringify(data), 'EX', 3600).catch(() => {});
     }
     return data || null;
@@ -1901,6 +1905,7 @@ async function getAllActiveScheduleSubscribers(forceRefresh = false) {
 
   const PAGE_SIZE = 1000;
   const subscriberMap = new Map();
+  let hasError = false;
 
   try {
     // 1. Fetch base users from public.users with pagination
@@ -1915,6 +1920,7 @@ async function getAllActiveScheduleSubscribers(forceRefresh = false) {
 
       if (error) {
         logger.warn('getAllActiveScheduleSubscribers users error:', { error: error.message });
+        hasError = true;
         break;
       }
       if (!data || data.length === 0) break;
@@ -1953,6 +1959,7 @@ async function getAllActiveScheduleSubscribers(forceRefresh = false) {
 
       if (error) {
         logger.warn('getAllActiveScheduleSubscribers settings error:', { error: error.message });
+        hasError = true;
         break;
       }
       if (!data || data.length === 0) break;
@@ -1988,12 +1995,19 @@ async function getAllActiveScheduleSubscribers(forceRefresh = false) {
       from += PAGE_SIZE;
     }
 
+    if (hasError && activeSubscribersCache && activeSubscribersCache.length > 0) {
+      logger.warn(`getAllActiveScheduleSubscribers encountered upstream error; serving stale cache (${activeSubscribersCache.length} subscribers)`);
+      activeSubscribersCacheExpiresAt = Date.now() + 30000;
+      return activeSubscribersCache;
+    }
+
     activeSubscribersCache = Array.from(subscriberMap.values());
     activeSubscribersCacheExpiresAt = Date.now() + SUBSCRIBERS_CACHE_TTL_MS;
     return activeSubscribersCache;
   } catch (err) {
     logger.error('getAllActiveScheduleSubscribers exception:', { error: err.message });
-    if (activeSubscribersCache) {
+    if (activeSubscribersCache && activeSubscribersCache.length > 0) {
+      activeSubscribersCacheExpiresAt = Date.now() + 30000;
       return activeSubscribersCache;
     }
     return Array.from(subscriberMap.values());

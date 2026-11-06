@@ -961,7 +961,6 @@ async function cbWmStartInline(ctx) {
       subjectId: meta?.subjectId || null,
     };
 
-    const redisConnection = require("../services/redisService");
     await redisConnection.set(
       `wm_state:${chatId}`,
       JSON.stringify(stateData),
@@ -990,7 +989,6 @@ async function sendNextInlineMistake(ctx) {
   try {
     const chatId = ctx.chat.id;
     clearWmTimer(chatId);
-    const redisConnection = require("../services/redisService");
 
     // Redisdan ishonchli tarzda o'qiymiz
     const rawState = await redisConnection.get(`wm_state:${chatId}`);
@@ -1088,12 +1086,12 @@ async function sendNextInlineMistake(ctx) {
     // Ekran holatiga qarab xavfsiz jo'natish
     // 🛑 UX Flow: Ekran holatiga qarab xavfsiz jo'natish va Message ID ni olish
     let msgId;
-    if (ctx.callbackQuery) {
+    if (ctx.callbackQuery && ctx.callbackQuery.message) {
       await safeEdit(ctx, text, { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) });
       msgId = ctx.callbackQuery.message.message_id;
     } else {
       const sentMsg = await ctx.reply(text, { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) });
-      msgId = sentMsg.message_id;
+      msgId = sentMsg?.message_id;
     }
 
     // Haqiqiy avto-taymer (20 soniya)
@@ -1114,14 +1112,16 @@ async function sendNextInlineMistake(ctx) {
 
           const correctText = q.correct_ans || (q.options ? q.options[q.correct_index] : "Noma'lum");
 
-          // Ekrani yangilab qoyamiz (xabar matni o'zgaradi)
-          await ctx.telegram.editMessageText(chatId, msgId, undefined,
-            `⏳ <b>Vaqt tugadi!</b> (20 soniyadan o'tib ketdi)\n\nSiz hech qanday javob belgilamadingiz.\nTo'g'ri javob:\n<b>✅ ${escapeHtml(String(correctText))}</b>\n\n<i>Bu savol ro'yxat oxiriga tushdi!</i>`,
-            {
-              parse_mode: "HTML",
-              ...Markup.inlineKeyboard([[Markup.button.callback("➡️ Davom etish", "wm_next")]])
-            }
-          ).catch(() => { });
+          // Ekranni yangilab qo'yamiz (xabar matni o'zgaradi)
+          if (msgId) {
+            await ctx.telegram.editMessageText(chatId, msgId, undefined,
+              `⏳ <b>Vaqt tugadi!</b> (20 soniyadan o'tib ketdi)\n\nSiz hech qanday javob belgilamadingiz.\nTo'g'ri javob:\n<b>✅ ${escapeHtml(String(correctText))}</b>\n\n<i>Bu savol ro'yxat oxiriga tushdi!</i>`,
+              {
+                parse_mode: "HTML",
+                ...Markup.inlineKeyboard([[Markup.button.callback("➡️ Davom etish", "wm_next")]])
+              }
+            ).catch(() => { });
+          }
         }
       } catch (err) {
         console.error("Inline Timeout Xatosi:", err.message);
@@ -1568,11 +1568,15 @@ module.exports = {
   showUgcSubjectBlocks,
   cbUgcSubj,
   cbAdaptiveRun,
-  showUgcSubjectBlocks,
   startUgcTest,
   resumeTestFromShelf,
   sendNextQuestion,
   initAndStartTest,
   cbOfficialTests,
   cbSubject,
+  cbWmStartInline,
+  cbWmStartQuiz,
+  cbWmAns,
+  cbWmNext,
+  cbWmStop,
 };
