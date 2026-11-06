@@ -92,5 +92,7 @@ ${content}
 });
 
 const outPath = path.join(ROOT, 'ALL_SYSTEM_CODE.txt');
+const prodPath = path.join(ROOT, 'ALL_PRODUCTION_CODE.txt');
 fs.writeFileSync(outPath, output, 'utf8');
-console.log(`✅ Successfully consolidated ${files.length} files into ALL_SYSTEM_CODE.txt (${(Buffer.byteLength(output, 'utf8') / 1024 / 1024).toFixed(2)} MB)`);
+fs.writeFileSync(prodPath, output, 'utf8');
+console.log(`✅ Successfully consolidated ${files.length} files into ALL_SYSTEM_CODE.txt and ALL_PRODUCTION_CODE.txt (${(Buffer.byteLength(output, 'utf8') / 1024 / 1024).toFixed(2)} MB)`);
