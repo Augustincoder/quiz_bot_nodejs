@@ -623,10 +623,17 @@ async function getOrCreateSubject(creatorId, subjectName) {
     }
 
     // 2. Ensure creator exists in users table (prevent FK violation)
-    await supabase.from('users').upsert(
-      { telegram_id: uid, full_name: 'Foydalanuvchi' },
-      { onConflict: 'telegram_id', ignoreDuplicates: true }
-    ).catch(() => {});
+    try {
+      const { error: userErr } = await supabase.from('users').upsert(
+        { telegram_id: uid, full_name: 'Foydalanuvchi' },
+        { onConflict: 'telegram_id', ignoreDuplicates: true }
+      );
+      if (userErr) {
+        logger.warn('Failed to ensure user in users table before subject creation:', { creatorId: uid, error: userErr.message });
+      }
+    } catch (e) {
+      logger.warn('Exception ensuring user in users table:', { creatorId: uid, error: e.message });
+    }
 
     // 3. Upsert subject atomically using UNIQUE (name, creator_id) constraint
     const { data: created, error: insertErr } = await supabase
@@ -642,7 +649,24 @@ async function getOrCreateSubject(creatorId, subjectName) {
       .select('*')
       .single();
 
-    if (insertErr) throw insertErr;
+    if (insertErr) {
+      // Fallback: check if it was inserted concurrently
+      const { data: fallbackExisting } = await supabase
+        .from('subjects')
+        .select('*')
+        .eq('creator_id', uid)
+        .ilike('name', rawName)
+        .limit(1)
+        .maybeSingle();
+      if (fallbackExisting) {
+        if (redis) {
+          await redis.set(cacheKey, JSON.stringify(fallbackExisting), 'EX', 3600).catch(() => {});
+          await redis.set(`cache:subject:${fallbackExisting.id}`, JSON.stringify(fallbackExisting), 'EX', 3600).catch(() => {});
+        }
+        return fallbackExisting;
+      }
+      throw insertErr;
+    }
 
     if (created && redis) {
       await redis.set(cacheKey, JSON.stringify(created), 'EX', 3600).catch(() => {});

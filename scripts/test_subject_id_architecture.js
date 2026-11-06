@@ -199,6 +199,76 @@ async function runTests() {
     dbService.getSubjectBlocks = originalGetSubjectBlocks5;
   }
 
+  // =========================================================================
+  // Test 6: getOrCreateSubject works with Supabase PostgrestBuilder (no .catch)
+  // =========================================================================
+  console.log('\n[Test 6] getOrCreateSubject with Supabase Postgrest Thenable (no .catch method)...');
+  const fs = require('fs');
+  const dbSrc = fs.readFileSync(require.resolve('../src/services/dbService'), 'utf8');
+  assert(!dbSrc.includes(".upsert(" + "\n" + "      { telegram_id: uid, full_name: 'Foydalanuvchi' }," + "\n" + "      { onConflict: 'telegram_id', ignoreDuplicates: true }" + "\n" + "    ).catch("),
+    'dbService must NOT call .catch on supabase upsert builder');
+
+  let mockUsersUpsertCalled = false;
+  let mockSubjectsUpsertCalled = false;
+
+  const mockPostgrestThenable = (resolveVal) => ({
+    then: (resolve, reject) => Promise.resolve(resolveVal).then(resolve, reject),
+    // PostgrestBuilder is a PromiseLike (implements then, but NOT catch)
+    select: () => ({
+      single: () => Promise.resolve({ data: { id: 888, name: 'Accounting in Business', creator_id: '6109006282' }, error: null }),
+      maybeSingle: () => Promise.resolve({ data: null, error: null })
+    })
+  });
+
+  const mockSupabase = {
+    from: (table) => {
+      if (table === 'users') {
+        return {
+          upsert: (payload, opts) => {
+            mockUsersUpsertCalled = true;
+            return mockPostgrestThenable({ data: null, error: null });
+          }
+        };
+      }
+      if (table === 'subjects') {
+        return {
+          select: () => ({
+            eq: () => ({
+              ilike: () => ({
+                limit: () => ({
+                  maybeSingle: () => Promise.resolve({ data: null, error: null })
+                })
+              })
+            })
+          }),
+          upsert: (payload, opts) => {
+            mockSubjectsUpsertCalled = true;
+            return mockPostgrestThenable({ data: null, error: null });
+          }
+        };
+      }
+      throw new Error('Unknown table: ' + table);
+    }
+  };
+
+  // Re-require dbService with mocked supabase to verify run-time execution
+  delete require.cache[require.resolve('../src/lib/supabase')];
+  delete require.cache[require.resolve('../src/services/dbService')];
+  require.cache[require.resolve('../src/lib/supabase')] = {
+    id: require.resolve('../src/lib/supabase'),
+    filename: require.resolve('../src/lib/supabase'),
+    loaded: true,
+    exports: { supabase: mockSupabase }
+  };
+
+  const freshDbService = require('../src/services/dbService');
+  const subjectRes = await freshDbService.getOrCreateSubject('6109006282', 'Accounting in Business');
+  assert(subjectRes, 'getOrCreateSubject must return a valid subject object');
+  assert.strictEqual(subjectRes.id, 888, 'Must return created subject id');
+  assert.strictEqual(mockUsersUpsertCalled, true, 'Must have attempted to ensure user existence');
+  assert.strictEqual(mockSubjectsUpsertCalled, true, 'Must have upserted the new subject');
+  console.log('✅ Test 6 PASSED: getOrCreateSubject correctly handles PostgrestBuilder thenable without .catch error.');
+
   console.log('\n🎉 ALL SUBJECT_ID ARCHITECTURE TESTS PASSED!');
 }
 
