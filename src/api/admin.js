@@ -97,6 +97,9 @@ const SingleKahootQuestionSchema = z.object({
   correct_index: z.number().int().min(0),
   time_limit: z.number().int().min(5).max(120).optional(),
   explanation: z.string().max(1000).optional(),
+}).refine(d => d.correct_index < d.options.length, {
+  message: 'correct_index variantlar sonidan kichik bo\'lishi shart',
+  path: ['correct_index'],
 });
 
 const KahootItemSchema = z.union([

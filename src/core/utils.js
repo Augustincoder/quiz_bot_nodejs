@@ -131,6 +131,11 @@ const resetUserFlows = async (userId, ctx) => {
     try {
       const redisConnection = require('../services/redisService');
       await redisConnection.del(`tg_session:${uid}`);
+      await redisConnection.del(`wm_state:${uid}`);
+    } catch {}
+    try {
+      const { clearWmTimer } = require('../handlers/quizGame');
+      clearWmTimer(uid);
     } catch {}
   }
 };
@@ -141,7 +146,9 @@ const updateData = async (ctx, patch) => {
   if (uid) {
     try {
       const redisConnection = require('../services/redisService');
-      await redisConnection.set(`tg_session:${uid}`, JSON.stringify(ctx.session), "EX", 86400);
+      const serialized = JSON.stringify(ctx.session);
+      ctx._lastSyncedSessionStr = serialized;
+      await redisConnection.set(`tg_session:${uid}`, serialized, "EX", 86400);
     } catch {}
   }
 };
@@ -412,7 +419,7 @@ function parseTextQuestions(text, mode = 'hash') {
     if (!block.includes('=====')) {
       for (let i = 1; i < parts.length; i++) {
         const p = parts[i];
-        if (/^[#*]?\s*(?:[a-zA-Z][\)\.]|\d+\))\s+/.test(p)) {
+        if (/^[#*]?\s*(?:[a-zA-Z][\)\.]|\d+\))\s*/.test(p)) {
           firstOptIdx = i;
           break;
         }
@@ -435,9 +442,15 @@ function parseTextQuestions(text, mode = 'hash') {
       const optionsBefore = parts.slice(firstOptIdx, parts.length - 1);
       const optionsHavePrefixes = optionsBefore.length >= 2 &&
         optionsBefore.every(line => /^(?:[a-zA-Z][\)\.]|\d+[\)\.])\s*/.test(line.trim()) && !/^[#*]/.test(line.trim()));
+      const noHashBefore = optionsBefore.length >= 2 &&
+        optionsBefore.every(line => !/^[#*]/.test(line.trim()));
 
       const trailingWordMatch = lastLine.match(/^[#*]?\s*(?:to'?g'?ri\s+javob|javob)\s*[:=-]?\s*([a-jA-J1-9])$/i);
-      const trailingHashMatch = optionsHavePrefixes && lastLine.match(/^[#*]\s*([a-jA-J1-9])$/i);
+      const isTrailingHashKey = noHashBefore && (
+        optionsHavePrefixes ||
+        optionsBefore.length >= 4
+      );
+      const trailingHashMatch = isTrailingHashKey && lastLine.match(/^[#*]\s*([a-jA-J1-9])$/i);
 
       const trailingAnswerMatch = trailingWordMatch || trailingHashMatch;
       if (trailingAnswerMatch) {
@@ -465,7 +478,7 @@ function parseTextQuestions(text, mode = 'hash') {
       }
 
       // Faqat aniq variant prefikslarini tozalaymiz (A), B., a), 1) va hokazo; 1.5 kabi kasrlarga tegmaymiz
-      optText = optText.replace(/^(?:[a-zA-Z][\)\.]|\d+\))\s+/, '').trim();
+      optText = optText.replace(/^(?:[a-zA-Z][\)\.]|\d+\))\s*/, '').trim();
 
       // Agar prefiksdan keyin # qo'yilgan bo'lsa (masalan: A) #Javob yoki 1) #Javob)
       if (mode === 'hash' && !isCorrect && (optText.startsWith('#') || optText.startsWith('*'))) {
@@ -485,19 +498,32 @@ function parseTextQuestions(text, mode = 'hash') {
       correctIdx = explicitCorrectIdx;
     }
 
+    // Variantlarni unikal qilish (BUG-05 fix)
+    const seenOpts = new Set();
+    const uniqueOpts = [];
+    opts.forEach((opt, idx) => {
+      let candidate = opt;
+      if (seenOpts.has(candidate.toLowerCase())) {
+        const suffix = ` (${idx + 1})`;
+        candidate = candidate.slice(0, 100 - suffix.length) + suffix;
+      }
+      seenOpts.add(candidate.toLowerCase());
+      uniqueOpts.push(candidate);
+    });
+
     // Telegram poll chegarasi: maksimal 10 ta variant
-    if (opts.length > 10) {
+    if (uniqueOpts.length > 10) {
       if (correctIdx >= 10) {
-        const correctOpt = opts[correctIdx];
-        opts.length = 10;
-        opts[9] = correctOpt;
+        const correctOpt = uniqueOpts[correctIdx];
+        uniqueOpts.length = 10;
+        uniqueOpts[9] = correctOpt;
         correctIdx = 9;
       } else {
-        opts.length = 10;
+        uniqueOpts.length = 10;
       }
     }
 
-    if (correctIdx !== -1 && opts.length >= 2) valid.push({ question: questionText, options: opts, correct_index: correctIdx });
+    if (correctIdx !== -1 && uniqueOpts.length >= 2) valid.push({ question: questionText, options: uniqueOpts, correct_index: correctIdx });
     else invalid.push(block.trim());
   }
   return { valid, invalid };

@@ -37,11 +37,11 @@ async function cbShelfSaveInit(ctx) {
     const folders = Object.keys(shelf || {});
 
     const buttons = [];
-    folders.forEach(f => {
-      buttons.push([Markup.button.callback(`📁 ${f} papkasiga`, safeCallbackData(`sh_save_${f}`, 64))]);
+    folders.forEach((f, fIdx) => {
+      buttons.push([Markup.button.callback(`📁 ${f} papkasiga`, `sh_save_idx_${fIdx}`)]);
     });
     if (data.subject && !folders.includes(data.subject)) {
-      buttons.push([Markup.button.callback(`📁 "${data.subject}" papkasiga`, safeCallbackData(`sh_save_${data.subject}`, 64))]);
+      buttons.push([Markup.button.callback(`📁 "${data.subject}" papkasiga`, `sh_save_subj`)]);
     }
     buttons.push([Markup.button.callback("➕ Yangi papka ochish", "sh_new_folder")]);
     buttons.push([Markup.button.callback("❌ Bekor qilish", "back_to_main")]);
@@ -110,7 +110,20 @@ async function onNewFolderInput(ctx) {
 async function cbShelfSaveFolder(ctx) {
   try {
     await ctx.answerCbQuery().catch(() => {});
-    const folderName = ctx.callbackQuery.data.replace("sh_save_", "");
+    const data = ctx.callbackQuery.data;
+    let folderName;
+    if (data.startsWith("sh_save_idx_")) {
+      const fIdx = parseInt(data.replace("sh_save_idx_", ""), 10);
+      const shelf = await dbService.getUserShelf(ctx.from.id);
+      const folders = Object.keys(shelf || {});
+      folderName = folders[fIdx] || "Asosiy";
+    } else if (data === "sh_save_subj") {
+      const rawPending = await redisConnection.get(`shelf_pending:${ctx.chat?.id || ctx.from?.id}`);
+      const parsed = rawPending ? JSON.parse(rawPending) : {};
+      folderName = parsed.subject || "Asosiy";
+    } else {
+      folderName = data.replace("sh_save_", "");
+    }
     await safeEdit(ctx, "⏳ <i>Saqlanmoqda...</i>", { parse_mode: "HTML" });
     await executeSave(ctx, folderName, ctx.callbackQuery.message.message_id);
   } catch (e) {
@@ -244,11 +257,11 @@ async function cbMyShelf(ctx) {
     }
 
     const buttons = [];
-    folders.forEach((folder) => {
+    folders.forEach((folder, fIdx) => {
       buttons.push([
         Markup.button.callback(
           `📁 ${folder} (${shelf[folder].length} ta)`,
-          `sh_open_${folder}`,
+          `sh_open_${fIdx}`,
         ),
       ]);
     });
@@ -266,29 +279,40 @@ async function cbMyShelf(ctx) {
 async function cbOpenFolder(ctx) {
   try {
     await ctx.answerCbQuery().catch(() => {});
-    const folderName = ctx.callbackQuery.data.replace("sh_open_", "");
+    const raw = ctx.callbackQuery.data.replace("sh_open_", "");
     const shelf = await dbService.getUserShelf(ctx.from.id);
+    const folders = Object.keys(shelf || {});
+    let folderName = raw;
+    let fIdx = -1;
+    if (/^\d+$/.test(raw)) {
+      fIdx = parseInt(raw, 10);
+      folderName = folders[fIdx] || raw;
+    } else {
+      fIdx = folders.indexOf(raw);
+    }
     const folderTests = shelf[folderName] || [];
 
     const buttons = [];
-    folderTests.forEach((test, idx) => {
+    folderTests.forEach((test, tIdx) => {
       const tName = String(test.testName || test.name || "Test");
       const displayName =
         tName.length > 25
           ? tName.slice(0, 22) + "..."
           : tName;
+      const viewCb = fIdx >= 0 ? `sh_view_${fIdx}_${tIdx}` : safeCallbackData(`sh_view_${folderName}_${tIdx}`, 64);
       buttons.push([
         Markup.button.callback(
           `📝 ${displayName}`,
-          safeCallbackData(`sh_view_${folderName}_${idx}`, 64),
+          viewCb,
         ),
       ]);
     });
 
+    const delFolderCb = fIdx >= 0 ? `sh_del_folder_${fIdx}` : safeCallbackData(`sh_del_folder_${folderName}`, 64);
     buttons.push([
       Markup.button.callback(
         "🗑 Papkani o'chirish",
-        safeCallbackData(`sh_del_folder_${folderName}`, 64),
+        delFolderCb,
       ),
     ]);
     buttons.push([
@@ -307,13 +331,23 @@ async function cbOpenFolder(ctx) {
 async function cbViewTest(ctx) {
   try {
     await ctx.answerCbQuery().catch(() => {});
-    const suffix = ctx.callbackQuery.data.replace("sh_view_", "");
-    const parts = suffix.split("_");
-    const idx = parseInt(parts.pop(), 10);
-    const folderName = parts.join("_");
-
+    const raw = ctx.callbackQuery.data.replace("sh_view_", "");
     const shelf = await dbService.getUserShelf(ctx.from.id);
-    const test = (shelf[folderName] || [])[idx];
+    const folders = Object.keys(shelf || {});
+    let folderName, tIdx, fIdx = -1;
+
+    if (/^(\d+)_(\d+)$/.test(raw)) {
+      fIdx = parseInt(RegExp.$1, 10);
+      tIdx = parseInt(RegExp.$2, 10);
+      folderName = folders[fIdx];
+    } else {
+      const parts = raw.split("_");
+      tIdx = parseInt(parts.pop(), 10);
+      folderName = parts.join("_");
+      fIdx = folders.indexOf(folderName);
+    }
+
+    const test = (shelf[folderName] || [])[tIdx];
 
     if (!test)
       return safeEdit(
@@ -349,15 +383,19 @@ async function cbViewTest(ctx) {
       `━━━━━━━━━━━━━━━━\n\n` +
       `💡 <b>Maslahat:</b> Testni qolgan joyidan davom ettirganingizda, oldingi natijalaringiz (to'g'ri/xatolar) saqlanib qoladi va test vaqti asabingizni buzmaydi.`;
 
+    const runCb = fIdx >= 0 ? `sh_run_${fIdx}_${tIdx}` : safeCallbackData(`sh_run_${folderName}_${tIdx}`, 64);
+    const delCb = fIdx >= 0 ? `sh_del_test_${fIdx}_${tIdx}` : safeCallbackData(`sh_del_test_${folderName}_${tIdx}`, 64);
+    const backCb = fIdx >= 0 ? `sh_open_${fIdx}` : safeCallbackData(`sh_open_${folderName}`, 64);
+
     const buttons = [
-      [Markup.button.callback(resumeBtnText, safeCallbackData(`sh_run_${folderName}_${idx}`, 64))],
+      [Markup.button.callback(resumeBtnText, runCb)],
       [
         Markup.button.callback(
           "🗑 Javondan o'chirish",
-          safeCallbackData(`sh_del_test_${folderName}_${idx}`, 64),
+          delCb,
         ),
       ],
-      [Markup.button.callback("🔙 Papkaga qaytish", safeCallbackData(`sh_open_${folderName}`, 64))],
+      [Markup.button.callback("🔙 Papkaga qaytish", backCb)],
     ];
 
     await safeEdit(ctx, text, {
@@ -371,23 +409,35 @@ async function cbViewTest(ctx) {
 
 async function cbDeleteTest(ctx) {
   try {
-    await ctx.answerCbQuery("✅ Test o'chirildi!").catch(() => {});
-    const suffix = ctx.callbackQuery.data.replace("sh_del_test_", "");
-    const parts = suffix.split("_");
-    const idx = parseInt(parts.pop(), 10);
-    const folderName = parts.join("_");
-
+    const raw = ctx.callbackQuery.data.replace("sh_del_test_", "");
     const shelf = await dbService.getUserShelf(ctx.from.id);
-    if (shelf[folderName]) {
-      shelf[folderName].splice(idx, 1);
-      if (shelf[folderName].length === 0) delete shelf[folderName];
-      await dbService.updateUserShelf(ctx.from.id, shelf);
+    const folders = Object.keys(shelf || {});
+    let folderName, tIdx, fIdx = -1;
+
+    if (/^(\d+)_(\d+)$/.test(raw)) {
+      fIdx = parseInt(RegExp.$1, 10);
+      tIdx = parseInt(RegExp.$2, 10);
+      folderName = folders[fIdx];
+    } else {
+      const parts = raw.split("_");
+      tIdx = parseInt(parts.pop(), 10);
+      folderName = parts.join("_");
+      fIdx = folders.indexOf(folderName);
     }
+
+    if (isNaN(tIdx) || !folderName || !shelf[folderName] || tIdx < 0 || tIdx >= shelf[folderName].length) {
+      return ctx.answerCbQuery("❌ Xatolik: Test topilmadi!", { show_alert: true }).catch(() => {});
+    }
+
+    await ctx.answerCbQuery("✅ Test o'chirildi!").catch(() => {});
+    shelf[folderName].splice(tIdx, 1);
+    if (shelf[folderName].length === 0) delete shelf[folderName];
+    await dbService.updateUserShelf(ctx.from.id, shelf);
 
     if (!shelf[folderName]) {
       return cbMyShelf(ctx);
     }
-    ctx.callbackQuery.data = `sh_open_${folderName}`;
+    ctx.callbackQuery.data = fIdx >= 0 ? `sh_open_${fIdx}` : `sh_open_${folderName}`;
     await cbOpenFolder(ctx);
   } catch (e) {
     console.error(e);
@@ -396,13 +446,20 @@ async function cbDeleteTest(ctx) {
 
 async function cbDeleteFolder(ctx) {
   try {
-    await ctx.answerCbQuery("✅ Papka o'chirildi!").catch(() => {});
-    const folderName = ctx.callbackQuery.data.replace("sh_del_folder_", "");
+    const raw = ctx.callbackQuery.data.replace("sh_del_folder_", "");
     const shelf = await dbService.getUserShelf(ctx.from.id);
-    if (shelf[folderName]) {
-      delete shelf[folderName];
-      await dbService.updateUserShelf(ctx.from.id, shelf);
+    const folders = Object.keys(shelf || {});
+    let folderName = raw;
+    if (/^\d+$/.test(raw)) {
+      const fIdx = parseInt(raw, 10);
+      folderName = folders[fIdx];
     }
+    if (!folderName || !shelf[folderName]) {
+      return ctx.answerCbQuery("❌ Papka topilmadi!").catch(() => {});
+    }
+    await ctx.answerCbQuery("✅ Papka o'chirildi!").catch(() => {});
+    delete shelf[folderName];
+    await dbService.updateUserShelf(ctx.from.id, shelf);
     await cbMyShelf(ctx);
   } catch (e) {
     console.error(e);
@@ -412,13 +469,22 @@ async function cbDeleteFolder(ctx) {
 async function cbRunTest(ctx) {
   try {
     await ctx.answerCbQuery().catch(() => {});
-    const suffix = ctx.callbackQuery.data.replace("sh_run_", "");
-    const parts = suffix.split("_");
-    const idx = parseInt(parts.pop(), 10);
-    const folderName = parts.join("_");
-
+    const raw = ctx.callbackQuery.data.replace("sh_run_", "");
     const shelf = await dbService.getUserShelf(ctx.from.id);
-    const test = (shelf[folderName] || [])[idx];
+    const folders = Object.keys(shelf || {});
+    let folderName, tIdx;
+
+    if (/^(\d+)_(\d+)$/.test(raw)) {
+      const fIdx = parseInt(RegExp.$1, 10);
+      tIdx = parseInt(RegExp.$2, 10);
+      folderName = folders[fIdx];
+    } else {
+      const parts = raw.split("_");
+      tIdx = parseInt(parts.pop(), 10);
+      folderName = parts.join("_");
+    }
+
+    const test = (shelf[folderName] || [])[tIdx];
 
     if (!test) return safeEdit(ctx, "❌ Test topilmadi.");
     test.folderName = folderName;

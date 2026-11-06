@@ -110,7 +110,7 @@ async function getUsersStatsSummaryByIds(userIds) {
     stringIds.map(async (uid) => {
       try {
         if (redis) {
-          const cached = await redis.get(`cache:user_stats:${uid}`);
+          const cached = await redis.get(`cache:user_stats:${uid}`) || await redis.get(`cache:user_stats_summary:${uid}`);
           if (cached) {
             const parsed = JSON.parse(cached);
             resultMap.set(uid, {
@@ -146,7 +146,7 @@ async function getUsersStatsSummaryByIds(userIds) {
             history: Array.isArray(row.history) ? row.history : [],
           });
           if (redis) {
-            redis.set(`cache:user_stats:${row.user_id}`, JSON.stringify(row), 'EX', 300).catch(() => {});
+            redis.set(`cache:user_stats_summary:${row.user_id}`, JSON.stringify(row), 'EX', 300).catch(() => {});
           }
         }
       }
@@ -1181,6 +1181,17 @@ async function saveTestToShelf(userId, folderName, testInfo) {
         logger.error('saveTestToShelf aborted: could not retrieve user stats due to DB error', { userId: uid });
         return 'error';
       }
+
+      // Self-healing: agar keshda shelf yo'q bo'lsa, bazadan tekshirib to'liq shelfni olish
+      if (!stats.shelf && supabase) {
+        try {
+          const { data: dbRow } = await supabase.from('user_stats').select('shelf').eq('user_id', uid).maybeSingle();
+          if (dbRow && dbRow.shelf) {
+            stats.shelf = dbRow.shelf;
+          }
+        } catch {}
+      }
+
       let shelf = stats.shelf || {};
 
       if (!shelf[folderName]) shelf[folderName] = [];
@@ -1200,6 +1211,9 @@ async function saveTestToShelf(userId, folderName, testInfo) {
           ...shelf[folderName][existingIdx],
           testName: testInfo.testName || shelf[folderName][existingIdx].testName,
           subject: testInfo.subject || shelf[folderName][existingIdx].subject,
+          subjectId: testInfo.subjectId || shelf[folderName][existingIdx].subjectId || null,
+          creatorId: testInfo.creatorId || shelf[folderName][existingIdx].creatorId || null,
+          isUgc: testInfo.isUgc !== undefined ? Boolean(testInfo.isUgc) : Boolean(shelf[folderName][existingIdx].isUgc),
           questions: compactQuestions.length > 0 ? compactQuestions : shelf[folderName][existingIdx].questions,
           saved_at: new Date().toISOString(),
           progress: testInfo.progress || shelf[folderName][existingIdx].progress || null,
@@ -1209,6 +1223,9 @@ async function saveTestToShelf(userId, folderName, testInfo) {
           testId: testInfo.testId,
           testName: testInfo.testName,
           subject: testInfo.subject,
+          subjectId: testInfo.subjectId || null,
+          creatorId: testInfo.creatorId || null,
+          isUgc: Boolean(testInfo.isUgc),
           questions: compactQuestions,
           saved_at: new Date().toISOString(),
           progress: testInfo.progress || null,
@@ -1249,6 +1266,9 @@ async function saveToShelf(userId, testInfo) {
     testId: testInfo.test_id || testInfo.testId,
     testName: testInfo.test_name || testInfo.testName,
     subject: testInfo.subject,
+    subjectId: testInfo.subject_id || testInfo.subjectId || null,
+    creatorId: testInfo.creator_id || testInfo.creatorId || null,
+    isUgc: Boolean(testInfo.is_ugc || testInfo.isUgc),
     questions: testInfo.questions,
     progress: testInfo.progress,
   });

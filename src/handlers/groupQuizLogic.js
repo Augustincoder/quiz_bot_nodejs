@@ -21,15 +21,26 @@ async function renderLobby(ctx, chatId, room, messageId = null) {
   }
 
   const modeText = room.mode === 'marathon' ? '🏆 <b>Rejim:</b> MARAFON (Barcha bloklar)' : '📝 <b>Rejim:</b> Bitta Blok';
+  const isAuto = room.autoAdvance !== false;
+  const autoModeText = isAuto
+    ? '⚡ <b>Savol almashishi:</b> Hamma qatnashchilar javob berganda (Avto)'
+    : '⏱ <b>Savol almashishi:</b> Faqat vaqt tugaganda (30 soniya)';
   
   const text = `🎯 <b>MUSOBAQA KUTISH ZALI</b>\n\n` +
                `${modeText}\n` +
-               `📚 <b>Fan:</b> ${escapeHtml(room.testData.subject || '')} ${room.mode === 'block' ? '| 🔖 ' + escapeHtml(room.testData.block_name || '') : ''}\n\n` +
+               `📚 <b>Fan:</b> ${escapeHtml(room.testData?.subject || '')} ${room.mode === 'block' ? '| 🔖 ' + escapeHtml(room.testData?.block_name || '') : ''}\n` +
+               `${autoModeText}\n\n` +
                `👥 <b>Qatnashchilar (${users.length}):</b>\n${usersList}\n\n` +
-               `<i>⚠️ Testni faqatgina muallif (${escapeHtml(room.initiatorName || 'Muallif')}) boshlay oladi.</i>`;
+               `<i>⚠️ Sozlamani o'zgartirish va testni boshlash faqat muallif (${escapeHtml(room.initiatorName || 'Muallif')}) yoki guruh adminiga ruxsat etilgan.</i>`;
 
   const buttons = [
     [Markup.button.callback('✋ Qatnashish', 'room_ready')],
+    [
+      Markup.button.callback(
+        isAuto ? '⚡ Avto-o\'tish: YOQILGAN ✅' : '⏱ Avto-o\'tish: O\'CHIQ (30s) ❌',
+        'room_toggle_auto'
+      )
+    ],
     [
       Markup.button.callback('▶️ Boshlash', 'room_start'),
       Markup.button.callback('❌ Bekor qilish', 'room_cancel')
@@ -130,6 +141,7 @@ async function createLobby(ctx, param) {
     mode: mode,
     isOfficial: isOfficial, // Rasmiy ekanligini belgilab qo'yamiz
     messageThreadId: messageThreadId,
+    autoAdvance: true,
     readyUsers: {} 
   };
   
@@ -179,6 +191,36 @@ async function canManageLobbyOrGame(ctx, chatId, userId, initiatorId) {
   return false;
 }
 
+// 2.1. Avto-o'tish sozlamasini o'zgartirish (Toggle Auto-Advance)
+async function cbRoomToggleAuto(ctx) {
+  const chatId = ctx.chat.id;
+  const unlock = await mutex.lock(`room_ready:${chatId}`);
+  try {
+    const room = await sessionService.getWaitingRoom(chatId);
+    if (!room) {
+      return ctx.answerCbQuery('Kutish zali yopilgan!', { show_alert: true }).catch(() => {});
+    }
+
+    const canManage = await canManageLobbyOrGame(ctx, chatId, ctx.from.id, room.initiatorId);
+    if (!canManage) {
+      return ctx.answerCbQuery('⚠️ Faqat test muallifi yoki guruh admini bu sozlamani o\'zgartira oladi!', { show_alert: true }).catch(() => {});
+    }
+
+    room.autoAdvance = room.autoAdvance === false ? true : false;
+    await sessionService.setWaitingRoom(chatId, room);
+
+    await renderLobby(ctx, chatId, room, ctx.callbackQuery.message.message_id);
+    const statusMsg = room.autoAdvance
+      ? '⚡ Yoqildi: Barcha qatnashchilar javob berganda keyingi savolga o\'tiladi!'
+      : '⏱ O\'chirildi: Har bir savol to\'liq 30 soniya davom etadi!';
+    await ctx.answerCbQuery(statusMsg, { show_alert: false }).catch(() => {});
+  } catch (e) {
+    console.error('cbRoomToggleAuto error:', e.message);
+  } finally {
+    unlock();
+  }
+}
+
 // 3. Testni boshlash tugmasi bosilganda (Muallif yoki Guruh Admini uchun)
 async function cbRoomStart(ctx) {
   const chatId = ctx.chat.id;
@@ -202,7 +244,7 @@ async function cbRoomStart(ctx) {
     const { safeDelete } = require('../core/utils');
     await safeDelete(ctx); // Kutish zali xabarini o'chiramiz
 
-  let marathonBlocks = [];
+    let marathonBlocks = [];
     let currentBlockIdx = 0;
     let sessionQ = [];
     let testId = '';
@@ -256,6 +298,8 @@ async function cbRoomStart(ctx) {
       blockName = room.testData.block_name;
     }
 
+    const readyUserIds = Object.keys(room.readyUsers || {}).map(String);
+
     // O'yin sessiyasini yaratamiz
     await sessionService.setActiveTest(chatId, {
       chatType: 'group',
@@ -276,7 +320,9 @@ async function cbRoomStart(ctx) {
       mistakes: [],
       consecutiveTimeouts: 0,
       groupScores: {},
-      expectedParticipantsCount: Object.keys(room.readyUsers || {}).length,
+      expectedParticipantsCount: readyUserIds.length,
+      readyUserIds: readyUserIds,
+      autoAdvance: room.autoAdvance !== false,
       finished: false,
       status: 'running',
       transitionLock: null,
@@ -353,9 +399,17 @@ async function cbRoomNextBlock(ctx) {
          return ctx.answerCbQuery("⚠️ Faqat test muallifi yoki guruh admini keyingi blokni boshlay oladi!", {show_alert: true}).catch(()=>{});
      }
 
-     if (session.questionState === "ACTIVE" || session.qIdx > 0) {
+     if (session.questionState !== "PREPARING" || session.questionState === "ACTIVE" || session.qIdx > 0) {
          return ctx.answerCbQuery("⚠️ Ushbu blok allaqachon boshlangan!", {show_alert: true}).catch(()=>{});
      }
+
+     session.questionState = "STARTING";
+     await sessionService.setActiveTest(chatId, session);
+
+     try {
+       const { quizTimerQueue } = require('../jobs/queues');
+       await quizTimerQueue.getJob(`marathon_wait:${chatId}:${session.currentBlockIdx}`).then(j => j && j.remove()).catch(() => {});
+     } catch {}
 
      await ctx.answerCbQuery().catch(()=>{});
      const { safeDelete } = require('../core/utils');
@@ -378,7 +432,9 @@ async function cbRoomNextBlock(ctx) {
 module.exports = { 
   createLobby, 
   cbRoomReady, 
+  cbRoomToggleAuto,
   cbRoomStart, 
   cbRoomCancel,
   cbRoomNextBlock,
+  canManageLobbyOrGame,
 };

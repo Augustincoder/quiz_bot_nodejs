@@ -142,14 +142,15 @@ bot.use(async (ctx, next) => {
         }
       } else {
         const newSessionStr = JSON.stringify(sess);
-        if (originalSessionStr !== newSessionStr) {
+        const baseSessionStr = ctx._lastSyncedSessionStr || originalSessionStr;
+        if (baseSessionStr !== newSessionStr) {
           // Concurrent updates merge check (Bug #19 fix)
           const latestRedisStr = await redisConnection.get(key).catch(() => null);
-          if (latestRedisStr && latestRedisStr !== originalSessionStr) {
+          if (latestRedisStr && latestRedisStr !== baseSessionStr) {
             try {
               const latestSess = JSON.parse(latestRedisStr);
               sess.data = { ...(latestSess.data || {}), ...(sess.data || {}) };
-              if (sess.state === JSON.parse(originalSessionStr).state && latestSess.state) {
+              if (sess.state === JSON.parse(baseSessionStr).state && latestSess.state) {
                 sess.state = latestSess.state;
               }
             } catch {}
@@ -378,6 +379,9 @@ bot.command("unban", async (ctx) => {
 
 // ═══ GLOBAL TEXT STATE ROUTER ════════════════════════════════
 bot.on("message", async (ctx, next) => {
+  // Wizard va state'lar faqat shaxsiy (private) chatda ishlashi shart (BUG-02 fix)
+  if (ctx.chat?.type !== "private") return next();
+
   // Check active /note wizard first (handles user sending text, photo, docx, voice for notes)
   if (handlers.notes && typeof handlers.notes.handleNoteWizardInput === "function") {
     let passedThrough = false;

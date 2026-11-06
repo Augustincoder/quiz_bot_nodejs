@@ -18,7 +18,10 @@ module.exports = [
                 clearInterval: "readonly",
                 setImmediate: "readonly",
                 clearImmediate: "readonly",
-                Buffer: "readonly"
+                Buffer: "readonly",
+                fetch: "readonly",
+                AbortSignal: "readonly",
+                AbortController: "readonly"
             }
         },
         plugins: {

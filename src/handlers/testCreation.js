@@ -28,7 +28,7 @@ const {
   BlockNameSchema,
   escapeMarkdown,
 } = require("../validators/testValidators");
-const AI_WARNING_TEXT = `\n\n⚠️ *Eslatma:* _Bu javoblar tezkor AI modellarida tayyorlanmoqda va xatolar ehtimolligi bor. Rasmiy imtihonga tayyorlanayotganlar yoki Pro modellar uchun adminga murojaat qiling:_ @AvazovM`;
+const AI_WARNING_TEXT = `\n\n⚠️ <b>Eslatma:</b> <i>Bu javoblar tezkor AI modellarida tayyorlanmoqda va xatolar ehtimolligi bor. Rasmiy imtihonga tayyorlanayotganlar yoki Pro modellar uchun adminga murojaat qiling:</i> @AvazovM`;
 
 // ─── TUGMALAR GENERATORI ─────────────────────────────────────
 
@@ -53,7 +53,7 @@ async function showEditDashboard(ctx) {
     [
       Markup.button.callback(
         `👁/🗑 Savollarni ko'rish va o'chirish`,
-        "preview_q_0",
+        "preview_grid_0",
       ),
     ],
     [
@@ -91,6 +91,7 @@ async function cbEditTest(ctx) {
   await updateData(ctx, {
     editing_test_id: testId,
     subject: testData.subject,
+    subject_id: testData.subject_id || null,
     block_name: testData.block_name,
     questions: testData.questions || [],
     is_editing: true,
@@ -437,9 +438,9 @@ async function cbFmt(ctx) {
         block_name: data.block_name || "1-Blok",
       });
     }
-    const aiText = `🤖 *AI Smart Quiz — Sun'iy Intellekt bilan test yaratish*...`;
+    const aiText = `🤖 <b>AI Smart Quiz — Sun'iy Intellekt bilan test yaratish</b>\n\nQaysi manba orqali test tuzmoqchisiz? Quyidagilardan birini tanlang:`;
     return safeEdit(ctx, aiText, {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard([
         [
           Markup.button.callback("📄 Matndan", "ai_mode_text"),
@@ -970,8 +971,8 @@ async function onDocxFile(ctx) {
         { parse_mode: "Markdown" },
       );
 
-      // Asosiy Panelga (Draft Dashboard) qaytaramiz
-      return showDraftDashboard(ctx);
+      // Asosiy Panelga (Draft yoki Edit Dashboard) qaytaramiz
+      return data.is_editing ? showEditDashboard(ctx) : showDraftDashboard(ctx);
     }
   } catch {
     await ctx.telegram.editMessageText(
@@ -1344,10 +1345,15 @@ async function onQuestionMessage(ctx) {
 
     let chunkState = userTextChunks.get(userId);
     if (!chunkState) {
-      chunkState = { text: '', timer: null, ctx };
+      chunkState = { text: '', timer: null, ctx, lastMsgLen: 0 };
       userTextChunks.set(userId, chunkState);
     }
-    chunkState.text += (chunkState.text ? '\n\n' : '') + ctx.message.text;
+    const msgLen = ctx.message?.text ? ctx.message.text.length : 0;
+    const sep = chunkState.text
+      ? (chunkState.lastMsgLen >= 4000 ? '' : '\n\n')
+      : '';
+    chunkState.text += sep + (ctx.message?.text || '');
+    chunkState.lastMsgLen = msgLen;
     chunkState.ctx = ctx;
 
     if (chunkState.timer) clearTimeout(chunkState.timer);
@@ -1841,7 +1847,11 @@ async function cbMyTests(ctx) {
 
 async function cbManageSubj(ctx) {
   await ctx.answerCbQuery().catch(() => {});
-  const refId = parseSuffix(ctx.callbackQuery.data, "manage_subj_");
+  const rawSuffix = parseSuffix(ctx.callbackQuery.data, "manage_subj_");
+  const parts = rawSuffix.split("_");
+  const refId = parts[0];
+  const page = parseInt(parts[1], 10) || 0;
+
   let subject = await dbService.getSubjectById(refId);
   let subjTests = [];
 
@@ -1865,12 +1875,29 @@ async function cbManageSubj(ctx) {
   const subjectName = subject?.name || 'Fan';
   const botInfo = await ctx.telegram.getMe();
 
-  const buttons = (subjTests || []).map((t) => [
+  const PAGE_SIZE = 10;
+  const totalPages = Math.ceil((subjTests || []).length / PAGE_SIZE) || 1;
+  const currentPage = Math.max(0, Math.min(page, totalPages - 1));
+  const pageSlice = (subjTests || []).slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+
+  const buttons = pageSlice.map((t) => [
     Markup.button.callback(
       `📝 ${t.block_name}  •  ${(t.questions || []).length} savol`,
       `manage_test_${t.id}`,
     ),
   ]);
+
+  if (totalPages > 1) {
+    const navRow = [];
+    if (currentPage > 0) {
+      navRow.push(Markup.button.callback("⬅️ Oldingi", `manage_subj_${refId}_${currentPage - 1}`));
+    }
+    navRow.push(Markup.button.callback(`${currentPage + 1} / ${totalPages}`, "noop"));
+    if (currentPage < totalPages - 1) {
+      navRow.push(Markup.button.callback("Keyingi ➡️", `manage_subj_${refId}_${currentPage + 1}`));
+    }
+    buttons.push(navRow);
+  }
 
   const subjShareUrl = buildShareLink(botInfo.username, 's', subjectId);
   const groupSubjShareUrl = buildShareLink(botInfo.username, 's', subjectId, true);
@@ -1894,6 +1921,7 @@ async function cbManageSubj(ctx) {
 }
 
 async function cbManageTest(ctx) {
+  clearState(ctx);
   await ctx.answerCbQuery().catch(() => {});
   const testId = parseSuffix(ctx.callbackQuery.data, "manage_test_");
   const testData = await dbService.getUserTest(testId);
@@ -2007,7 +2035,7 @@ async function cbFixErrors(ctx, targetIdx = null) {
     if (data.is_auto_docx && data.chunks) {
       return showAutoDocxStatusMenu(ctx, data.chunks, 0);
     }
-    return showDraftDashboard(ctx);
+    return data.is_editing ? showEditDashboard(ctx) : showDraftDashboard(ctx);
   }
 
   const badText = invalidQs[idx];

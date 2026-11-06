@@ -243,7 +243,17 @@ function initWorkers(bot, scheduleService) {
   });
 
   const quizGame = require('../handlers/quizGame');
+  const sessionService = require('../services/sessionService');
   const quizTimerWorker = new Worker('quizTimerQueue', async (job) => {
+    if (job.data?.isMarathonWait) {
+      const { chatId } = job.data;
+      const session = await sessionService.getActiveTest(chatId);
+      if (session && session.isMarathon && session.questionState === 'PREPARING') {
+        const { finishTest } = require('../handlers/coreQuiz');
+        await finishTest(chatId, bot.telegram);
+      }
+      return;
+    }
     const { chatId, expectedIdx, pollId } = job.data;
     await quizGame.questionTimeout(chatId, expectedIdx, pollId, bot.telegram);
   }, {

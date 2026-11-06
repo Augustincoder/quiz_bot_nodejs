@@ -24,6 +24,7 @@ const {
   safeAnswerCb,
   clearState,
   naturalSortBlocks,
+  safeCallbackData,
 } = require("../core/utils");
 
 const {
@@ -81,17 +82,30 @@ async function sendWaitingRoomMessage(ctx, chatId, subjectKey, testId, qCount) {
       usersList = Object.values(room.readyUsers).map((u) => (typeof u === "string" ? u : u.name || "Foydalanuvchi"));
     }
   }
+  const isAuto = room.autoAdvance !== false;
+  const autoModeText = isAuto
+    ? '⚡ <b>Savol almashishi:</b> Hamma qatnashchilar javob berganda (Avto)'
+    : '⏱ <b>Savol almashishi:</b> Faqat vaqt tugaganda (30 soniya)';
+
   const text =
     `🎯 <b>Kutish Zali</b>\n\n` +
     `📚 Fan: <b>${escapeHtml(subjectKey)}</b>\n` +
-    `🔢 Savollar: <b>${qCount} ta</b>\n\n` +
+    `🔢 Savollar: <b>${qCount} ta</b>\n` +
+    `${autoModeText}\n\n` +
     `👥 Qatnashchilar: ${usersList.length} ta\n` +
     (usersList.length
       ? usersList.map((name, i) => `<b>${i + 1}.</b> ${escapeHtml(name)}`).join("\n")
-      : "<i>Hali hech kim yo'q</i>");
+      : "<i>Hali hech kim yo'q</i>") +
+    `\n\n<i>⚠️ Sozlamani o'zgartirish va testni boshlash faqat muallif (${escapeHtml(room.initiatorName || 'Muallif')}) yoki guruh adminiga ruxsat etilgan.</i>`;
 
   const buttons = [
     [Markup.button.callback("✋ Men ham qatnashaman", "room_ready")],
+    [
+      Markup.button.callback(
+        isAuto ? "⚡ Avto-o'tish: YOQILGAN ✅" : "⏱ Avto-o'tish: O'CHIQ (30s) ❌",
+        "room_toggle_auto",
+      ),
+    ],
     [
       Markup.button.callback("▶️ Boshlash", "room_start"),
       Markup.button.callback("❌ Bekor qilish", "room_cancel"),
@@ -154,7 +168,10 @@ async function initAndStartTest(
       parse_mode: "HTML",
       reply_markup: {
         inline_keyboard: [
-          [{ text: "▶️ Boshlash", callback_data: "user_ready_start" }],
+          [
+            { text: "▶️ Boshlash", callback_data: "user_ready_start" },
+            { text: "❌ Bekor qilish", callback_data: "force_finish" },
+          ],
         ],
       },
     });
@@ -216,23 +233,28 @@ async function cbStartTest(ctx) {
   try {
     const existing = await sessionService.getActiveTest(chatId);
     if (existing) {
-      await ctx
-        .answerCbQuery("⚠️ Faol test mavjud!", { show_alert: false })
-        .catch(() => { });
-      return ctx.reply(
-        "⚠️ <b>Sizda tugallanmagan (yoki qotib qolgan) test bor.</b>\n\nYangi test boshlashdan oldin uni to'xtatishingiz kerak:",
-        {
-          parse_mode: "HTML",
-          ...Markup.inlineKeyboard([
-            [
-              Markup.button.callback(
-                "🛑 Faol testni to'xtatish",
-                "force_finish",
-              ),
-            ],
-          ]),
-        },
-      );
+      if (existing.status === 'preparing') {
+        await sessionService.deleteActiveTest(chatId);
+      } else {
+        await ctx
+          .answerCbQuery("⚠️ Faol test mavjud!", { show_alert: false })
+          .catch(() => { });
+        const kb = existing.status === 'paused'
+          ? Markup.inlineKeyboard([
+              [Markup.button.callback("▶️ Davom etish", "resume_test")],
+              [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
+            ])
+          : Markup.inlineKeyboard([
+              [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
+            ]);
+        return ctx.reply(
+          "⚠️ <b>Sizda tugallanmagan test bor.</b>\n\nYangi test boshlashdan oldin uni davom ettirishingiz yoki to'xtatishingiz kerak:",
+          {
+            parse_mode: "HTML",
+            ...kb,
+          },
+        );
+      }
     }
     const isMock = ctx.callbackQuery.data.startsWith("mock_");
     let subjectKey, testId, testData;
@@ -311,15 +333,24 @@ async function cbPostStart(ctx) {
 
   try {
     const existing = await sessionService.getActiveTest(chatId);
-    if (existing)
-      return ctx
-        .answerCbQuery(
-          "⚠️ Hozirda faol test mavjud. Avval uni yakunlang yoki /stop buyrug'i bilan to'xtating.",
-          {
-            show_alert: true,
-          },
-        )
-        .catch(() => { });
+    if (existing) {
+      if (existing.status === 'preparing') {
+        await sessionService.deleteActiveTest(chatId);
+      } else {
+        const kb = existing.status === 'paused'
+          ? Markup.inlineKeyboard([
+              [Markup.button.callback("▶️ Davom etish", "resume_test")],
+              [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
+            ])
+          : Markup.inlineKeyboard([
+              [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
+            ]);
+        return ctx.reply(
+          "⚠️ Sizda hozirda faol test mavjud. Avval uni yakunlang yoki to'xtating.",
+          { parse_mode: "HTML", ...kb },
+        );
+      }
+    }
 
     const memDb = require("../core/bot").memoryDb || {};
     const testData = (memDb[subjectKey] || {})[testId];
@@ -467,10 +498,24 @@ async function startUgcTest(ctx, testDb) {
   const unlock = await mutex.lock(`start_test:${chatId}`);
   try {
     const existing = await sessionService.getActiveTest(chatId);
-    if (existing)
-      return ctx.reply(
-        "⚠️ Sizda hozirda faol test mavjud. Avval uni yakunlang yoki /stop bilan to'xtating.",
-      );
+    if (existing) {
+      if (existing.status === 'preparing') {
+        await sessionService.deleteActiveTest(chatId);
+      } else {
+        const kb = existing.status === 'paused'
+          ? Markup.inlineKeyboard([
+              [Markup.button.callback("▶️ Davom etish", "resume_test")],
+              [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
+            ])
+          : Markup.inlineKeyboard([
+              [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
+            ]);
+        return ctx.reply(
+          "⚠️ Sizda hozirda faol test mavjud. Avval uni yakunlang yoki to'xtating.",
+          { parse_mode: "HTML", ...kb },
+        );
+      }
+    }
 
     if (ctx.chat?.type !== "private") {
       const initiatorName = ctx.from.first_name || "Muallif";
@@ -1007,7 +1052,7 @@ async function sendNextInlineMistake(ctx) {
       backAction = state.subjectId ? `ugc_subj_${state.subjectId}` : "my_tests";
     } else {
       const subjKey = state.subjectKey || "main";
-      backAction = subjKey !== "main" ? `post_subj_${subjKey}` : "back_to_main";
+      backAction = (subjKey !== "main" && SUBJECTS[subjKey]) ? `post_subj_${subjKey}` : "back_to_main";
     }
 
     // 🏆 G'alaba ekrani
@@ -1020,7 +1065,7 @@ async function sendNextInlineMistake(ctx) {
         {
           parse_mode: "HTML",
           ...Markup.inlineKeyboard([
-            [Markup.button.callback("🔙 Fan menyusiga qaytish", backAction)],
+            [Markup.button.callback("🔙 Fan menyusiga qaytish", safeCallbackData(backAction, 64))],
           ]),
         },
       );
@@ -1383,10 +1428,24 @@ async function resumeTestFromShelf(ctx, savedTest) {
   const unlock = await mutex.lock(`start_test:${chatId}`);
   try {
     const existing = await sessionService.getActiveTest(chatId);
-    if (existing)
-      return ctx.reply(
-        "⚠️ Sizda hozirda faol test mavjud. Avval uni yakunlang yoki /stop bilan to'xtating.",
-      );
+    if (existing) {
+      if (existing.status === 'preparing') {
+        await sessionService.deleteActiveTest(chatId);
+      } else {
+        const kb = existing.status === 'paused'
+          ? Markup.inlineKeyboard([
+              [Markup.button.callback("▶️ Davom etish", "resume_test")],
+              [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
+            ])
+          : Markup.inlineKeyboard([
+              [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
+            ]);
+        return ctx.reply(
+          "⚠️ Sizda hozirda faol test mavjud. Avval uni yakunlang yoki to'xtating.",
+          { parse_mode: "HTML", ...kb },
+        );
+      }
+    }
 
     await safeDelete(ctx);
     const prog = savedTest.progress || {
@@ -1410,7 +1469,7 @@ async function resumeTestFromShelf(ctx, savedTest) {
       isUgc: Boolean(savedTest.isUgc) || String(savedTest.testId).startsWith("ugc_") || Boolean(savedTest.subjectId),
       shelfFolder: savedTest.folderName || null,
       blockName: savedTest.testName,
-      sessionQuestions: savedTest.questions,
+      sessionQuestions: isCompleted ? prepareShuffledQuestions(savedTest.questions) : savedTest.questions,
       qIdx: currentIdx,
       startTime: Date.now(),
       pollId: null,
@@ -1528,6 +1587,8 @@ function register(bot) {
   bot.action("room_ready", cbRoomReady);
   bot.action("room_start", cbRoomStart);
   bot.action("room_cancel", cbRoomCancel);
+  const groupQuizLogic = require("./groupQuizLogic");
+  bot.action("room_toggle_auto", groupQuizLogic.cbRoomToggleAuto);
   bot.action("user_ready_start", cbUserReadyStart);
   bot.action("resume_test", cbResumeTest);
 
@@ -1579,4 +1640,5 @@ module.exports = {
   cbWmAns,
   cbWmNext,
   cbWmStop,
+  clearWmTimer,
 };

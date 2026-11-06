@@ -70,15 +70,25 @@ async function cbAdaptiveRun(ctx) {
   try {
     const existing = await sessionService.getActiveTest(chatId);
     if (existing) {
-      return ctx.reply(
-        "⚠️ <b>Sizda tugallanmagan test bor.</b>\n\nYangi adaptiv test boshlashdan oldin uni to'xtatishingiz kerak:",
-        {
-          parse_mode: "HTML",
-          ...Markup.inlineKeyboard([
-            [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
-          ]),
-        }
-      );
+      if (existing.status === 'preparing') {
+        await sessionService.deleteActiveTest(chatId);
+      } else {
+        const kb = existing.status === 'paused'
+          ? Markup.inlineKeyboard([
+              [Markup.button.callback("▶️ Davom etish", "resume_test")],
+              [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
+            ])
+          : Markup.inlineKeyboard([
+              [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
+            ]);
+        return ctx.reply(
+          "⚠️ <b>Sizda tugallanmagan test bor.</b>\n\nYangi adaptiv test boshlashdan oldin uni davom ettirishingiz yoki to'xtatishingiz kerak:",
+          {
+            parse_mode: "HTML",
+            ...kb,
+          }
+        );
+      }
     }
 
     const stats    = await dbService.getUserStats(ctx.from.id);

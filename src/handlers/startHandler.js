@@ -68,8 +68,14 @@ async function cmdStart(ctx) {
       await quizTimerQueue.getJob(`timeout:${chatId}:${session?.qIdx}`).then(j => j && j.remove()).catch(() => {});
     } catch {}
     
-    // Testni o'chirish o'rniga javonga saqlaymiz
-    if (session.sessionQuestions && session.sessionQuestions.length > 0 && session.qIdx < session.sessionQuestions.length) {
+    // Testni o'chirish o'rniga javonga saqlaymiz (faqat boshlangan va preparing bo'lmagan testlar)
+    if (
+      session.status !== 'preparing' &&
+      (session.qIdx > 0 || (session.correct || 0) > 0 || (session.wrong || 0) > 0) &&
+      session.sessionQuestions &&
+      session.sessionQuestions.length > 0 &&
+      session.qIdx < session.sessionQuestions.length
+    ) {
       let folderName = session.subjectKey || "Boshqalar";
       if (folderName.length > 20) folderName = folderName.slice(0, 20);
       let shelfTestId = session.testId || Date.now();
@@ -80,6 +86,9 @@ async function cmdStart(ctx) {
         testId: shelfTestId,
         testName: session.blockName || session.testData?.block_name || "Tugallanmagan test",
         subject: session.subjectKey || "Noma'lum",
+        subjectId: session.subjectId || null,
+        creatorId: session.creatorId || null,
+        isUgc: Boolean(session.isUgc),
         questions: session.sessionQuestions,
         progress: {
           current_index: session.qIdx || 0,

@@ -282,13 +282,45 @@ async function sendNextQuestion(chatId, telegram) {
       text = truncateText(text, 4000);
       const splitOpts = { parse_mode: "HTML" };
       if (session.messageThreadId) splitOpts.message_thread_id = session.messageThreadId;
-      await telegram.sendMessage(chatId, text, splitOpts).catch(() => {});
+
+      // Retry sendMessage on rate limit (429) or transient network error (BUG-13 fix)
+      let sendMsgAttempts = 0;
+      while (sendMsgAttempts < 3) {
+        sendMsgAttempts++;
+        try {
+          await telegram.sendMessage(chatId, text, splitOpts);
+          break;
+        } catch (sErr) {
+          const sMsg = String(sErr?.message || '');
+          if (sMsg.includes('429') || sErr?.parameters?.retry_after) {
+            const wait = Math.min((sErr?.parameters?.retry_after || 1) * 1000, 5000);
+            await new Promise((r) => setTimeout(r, wait));
+          } else if (/ETIMEDOUT|ECONNRESET|502|503/.test(sMsg)) {
+            await new Promise((r) => setTimeout(r, 1000));
+          } else {
+            break;
+          }
+        }
+      }
+
       pollQ = `${progress} To'g'ri variantni belgilang:`.slice(0, 300);
       pollOpts = options.map((_, i) => `${labels[i] || i + 1} varianti`);
     } else {
       pollQ = qFull.slice(0, 300);
       pollOpts = options.map((o) => (String(o).trim() || "Variant").slice(0, 100));
     }
+
+    // Unikal variantlar tekshiruvi (BUG-05 fix)
+    const seenOpts = new Set();
+    pollOpts = pollOpts.map((opt, idx) => {
+      let candidate = String(opt).trim() || "Variant";
+      if (seenOpts.has(candidate.toLowerCase())) {
+        const suffix = ` (${idx + 1})`;
+        candidate = candidate.slice(0, 100 - suffix.length) + suffix;
+      }
+      seenOpts.add(candidate.toLowerCase());
+      return candidate.slice(0, 100);
+    });
     let msg;
     let sendAttempts = 0;
     const maxSendAttempts = 3;
@@ -424,6 +456,8 @@ async function sendNextQuestion(chatId, telegram) {
         correct_index: q.correct_index,
         qData: q,
         expectedParticipantsCount: session.expectedParticipantsCount || 0,
+        readyUserIds: session.readyUserIds || [],
+        autoAdvance: session.autoAdvance !== false,
       });
       if (!(await groupTestCache.get(chatId))) {
         await groupTestCache.set(chatId, { scores: session.groupScores || {} });
@@ -520,6 +554,11 @@ async function finishTest(chatId, telegram) {
 
   await cancelSessionTimer(session, chatId);
 
+  // BUG-07: Agar ochiq poll qolgan bo'lsa (masalan /stop bosilganda), uni yopamiz
+  if (session.msgId) {
+    await telegram.stopPoll(chatId, session.msgId).catch(() => {});
+  }
+
   await activePollsCache.delete(session.pollId);
   if (session.chatType !== "private") {
     const groupEntry = await groupTestCache.get(chatId);
@@ -585,6 +624,7 @@ async function finishTest(chatId, telegram) {
           subject: session.subjectKey,
           subjectId: session.subjectId || null,
           creatorId: session.creatorId || null,
+          isUgc: Boolean(session.isUgc),
           questions: session.sessionQuestions,
           progress: {
             current_index: totalQuestions,
@@ -749,6 +789,16 @@ async function finishTest(chatId, telegram) {
         if (session.messageThreadId) interOpts.message_thread_id = session.messageThreadId;
         await telegram.sendMessage(chatId, text, interOpts);
 
+        // 5 daqiqalik marafon avto-finish taymeri (BUG-07 fix)
+        try {
+          const { quizTimerQueue } = require("../jobs/queues");
+          await quizTimerQueue.add(
+            "timeout",
+            { chatId, qIdx: -1, isMarathonWait: true },
+            { jobId: `marathon_wait:${chatId}:${session.currentBlockIdx}`, delay: 5 * 60 * 1000, removeOnComplete: true }
+          );
+        } catch {}
+
         isMarathonContinuing = true;
         return; // Sessiyani o'chirmaymiz
       } else {
@@ -891,11 +941,34 @@ async function handlePollAnswer(pollAnswer, telegram) {
       const voterCount = typeof redisConnection.scard === 'function'
         ? await redisConnection.scard(`poll_voters:${pollId}`).catch(() => 0)
         : 0;
-      const expCount = cachedPoll.expectedParticipantsCount || 0;
-      if (expCount >= 2 && voterCount < expCount) {
-        // Hali hamma ovoz berib bo'lmadi, getActiveTest chaqirish shart emas
+
+      // Agar Kutish zalida "Avto-o'tish" O'CHIRILGAN bo'lsa, 30 soniyalik taymer o'zi yakunlaydi (BUG-06 fix):
+      if (!cachedPoll.autoAdvance) {
         return;
       }
+
+      // Agar "Avto-o'tish" YOQILGAN bo'lsa, ro'yxatdan o'tgan qatnashchilarni sanaymiz:
+      const readySet = Array.isArray(cachedPoll.readyUserIds) && cachedPoll.readyUserIds.length > 0
+        ? new Set(cachedPoll.readyUserIds.map(String))
+        : null;
+
+      let readyVoterCount = 0;
+      if (readySet) {
+        if (readySet.has(String(uId))) {
+          await redisConnection.sadd(`poll_ready_voters:${pollId}`, String(uId)).catch(() => {});
+          redisConnection.expire(`poll_ready_voters:${pollId}`, 600).catch(() => {});
+        }
+        readyVoterCount = typeof redisConnection.scard === 'function'
+          ? await redisConnection.scard(`poll_ready_voters:${pollId}`).catch(() => 0)
+          : 0;
+      } else {
+        readyVoterCount = voterCount;
+      }
+
+      const expCount = readySet ? readySet.size : (cachedPoll.expectedParticipantsCount || 0);
+      if (expCount < 2) return;
+      if (expCount >= 2 && voterCount < expCount) return;
+      if (readySet && readyVoterCount < expCount) return;
       const session = await sessionService.getActiveTest(chatId);
       if (
         session &&
@@ -903,8 +976,8 @@ async function handlePollAnswer(pollAnswer, telegram) {
         !session.finished &&
         !session.isFinished &&
         session.pollId === pollId &&
-        session.expectedParticipantsCount >= 2 &&
-        voterCount >= session.expectedParticipantsCount &&
+        (session.expectedParticipantsCount >= 2 || (readySet && readySet.size >= 2)) &&
+        readyVoterCount >= (readySet ? readySet.size : session.expectedParticipantsCount) &&
         session.transitionLock !== session.qIdx &&
         session.questionState !== "TRANSITIONING"
       ) {

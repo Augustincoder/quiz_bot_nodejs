@@ -35,10 +35,11 @@ function initSocket(httpServer) {
           return socket.emit("room:error", { code: 400, message: "Noto'g'ri xona kodi (Invalid room code)" });
         }
         let room = await roomManager.getRoom(roomCode);
-        if (!room) {
-          room = await roomManager.createRoom(roomCode, userId, 'kahoot');
-          console.log(`[room:create] Kahoot Room ${roomCode} created by ${userId}.`);
+        if (room) {
+          return socket.emit("room:error", { code: 409, message: "Bu xona kodi allaqachon mavjud" });
         }
+        room = await roomManager.createRoom(roomCode, userId, 'kahoot');
+        console.log(`[room:create] Kahoot Room ${roomCode} created by ${userId}.`);
         socket.emit("room:created", {
           roomCode,
           mode: room?.mode || 'kahoot',
@@ -161,6 +162,7 @@ function initSocket(httpServer) {
         // Synchronous lookup from in-memory Map (Bug 39 fix: zero async tick delay)
         const room = roomManager.rooms?.get(roomCode);
         if (!room || room.status !== 'action') return;
+        if (!room.players.has(userId)) return;
 
         // Atomic synchronous guard against double-submit (Bug 39 fix)
         if (room.kahootAnswers.has(userId)) return;
@@ -171,8 +173,9 @@ function initSocket(httpServer) {
             if (player) player.score += 10;
         }
 
-        // If all players answered, cancel active timer and show leaderboard (Bug 38 fix)
-        if (room.kahootAnswers.size >= room.players.size) {
+        // If all active (connected) players answered, cancel active timer and show leaderboard (Bug 38 fix)
+        const activeCount = Array.from(room.players.values()).filter(p => !p.disconnected).length;
+        if (room.kahootAnswers.size >= Math.max(1, activeCount)) {
             showLeaderboard(roomCode, room);
         }
     });
