@@ -13,3 +13,88 @@ assert(
   'FAIL: config must export SECOND_BOT property'
 );
 console.log('  ✅ Passed: SECOND_BOT is exported from src/config/config.js');
+
+
+// --- TASK 2: Core Error Reporter Service ---
+console.log('\n--- Task 2: Testing errorReporterService ---');
+const errorReporter = require('../src/services/errorReporterService');
+
+assert(typeof errorReporter.report === 'function', 'FAIL: errorReporter must have report()');
+assert(typeof errorReporter.formatErrorMessage === 'function', 'FAIL: errorReporter must have formatErrorMessage()');
+assert(typeof errorReporter.isBenignError === 'function', 'FAIL: errorReporter must have isBenignError()');
+assert(typeof errorReporter.clearDedupCache === 'function', 'FAIL: errorReporter must have clearDedupCache()');
+
+// 2.1 Test Benign Error Filtering
+console.log('2.1 Testing benign error filtering:');
+assert(errorReporter.isBenignError('bot was blocked by the user') === true, 'bot was blocked should be benign');
+assert(errorReporter.isBenignError('query is too old') === true, 'query is too old should be benign');
+assert(errorReporter.isBenignError('message is not modified') === true, 'message is not modified should be benign');
+assert(errorReporter.isBenignError('TypeError: Cannot read properties of undefined') === false, 'TypeError is NOT benign');
+assert(errorReporter.isBenignError('PostgreSQL connection timeout') === false, 'DB error is NOT benign');
+console.log('  ✅ Passed: Benign errors correctly filtered');
+
+// 2.2 Test HTML Escaping and Truncation in formatErrorMessage
+console.log('2.2 Testing HTML escaping & length clamp:');
+const rawHtmlError = new Error('Syntax error <script>alert("hack")</script> & query failed');
+const formatted = errorReporter.formatErrorMessage(rawHtmlError, { contextTag: '<test>' });
+
+assert(!formatted.includes('<script>'), 'Unescaped script tags must not exist');
+assert(formatted.includes('&lt;script&gt;'), 'Script tag must be HTML-escaped');
+assert(formatted.includes('&amp;'), 'Ampersand must be HTML-escaped');
+assert(formatted.includes('&lt;test&gt;'), 'Context tags must be HTML-escaped');
+
+// Test 10,000 character giant stack trace truncation
+const hugeStack = 'A'.repeat(10000);
+const hugeError = new Error('Huge Error');
+hugeError.stack = hugeStack;
+const formattedHuge = errorReporter.formatErrorMessage(hugeError);
+assert(formattedHuge.length <= 4096, `Formatted message length ${formattedHuge.length} must be <= 4096 chars`);
+assert(formattedHuge.includes('... (qisqartirildi)'), 'Truncation notice must be present in truncated message');
+console.log('  ✅ Passed: HTML escaping and 4096-char ceiling safe clamp verified');
+
+// 2.3 Test Deduplication Logic
+console.log('2.3 Testing anti-flood deduplication logic:');
+errorReporter.clearDedupCache();
+
+// Mock dispatch to verify report() calls without hitting external Telegram API
+let dispatchedMessages = [];
+errorReporter._setMockDispatcher((text) => {
+  dispatchedMessages.push(text);
+  return Promise.resolve(true);
+});
+
+async function runAsyncTests() {
+  const err1 = new Error('Database connection pool exhausted');
+  const res1 = await errorReporter.report(err1, { source: 'unit-test' });
+  assert(res1 === true, 'First error report must dispatch');
+  assert(dispatchedMessages.length === 1, 'Exactly 1 message should be dispatched for initial error');
+
+  // Immediately report identical error
+  const err2 = new Error('Database connection pool exhausted');
+  const res2 = await errorReporter.report(err2, { source: 'unit-test' });
+  assert(res2 === false, 'Duplicate error within window must be suppressed/deduplicated');
+  assert(dispatchedMessages.length === 1, 'No additional message should be dispatched for duplicate');
+
+  // Different error should dispatch immediately
+  const errDiff = new Error('Redis connection refused');
+  const resDiff = await errorReporter.report(errDiff, { source: 'unit-test' });
+  assert(resDiff === true, 'Different error must dispatch');
+  assert(dispatchedMessages.length === 2, 'Total 2 messages dispatched');
+
+  // Benign error should not dispatch
+  const benignErr = new Error('bot was blocked by the user');
+  const resBenign = await errorReporter.report(benignErr);
+  assert(resBenign === false, 'Benign error should be ignored');
+  assert(dispatchedMessages.length === 2, 'Dispatched count must remain 2');
+
+  // Clean mock
+  errorReporter._setMockDispatcher(null);
+  console.log('  ✅ Passed: Deduplication and suppression logic verified');
+
+  console.log('\n🎉 ALL TASK 1 & TASK 2 TESTS PASSED!');
+}
+
+runAsyncTests().catch((err) => {
+  console.error('❌ Async test failed:', err);
+  process.exit(1);
+});
