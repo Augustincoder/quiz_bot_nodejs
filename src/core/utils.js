@@ -498,15 +498,15 @@ function parseTextQuestions(text, mode = 'hash') {
       correctIdx = explicitCorrectIdx;
     }
 
-    // Variantlarni unikal qilish (BUG-05 fix) va 100 belgidan oshmasligini ta'minlash
+    // Variantlarni unikal qilish (BUG-05 fix)
     const seenOpts = new Set();
     const uniqueOpts = [];
     opts.forEach((opt, idx) => {
-      let candidate = String(opt || '').trim().slice(0, 100);
+      let candidate = String(opt || '').trim();
       if (!candidate) candidate = `Variant ${idx + 1}`;
       if (seenOpts.has(candidate.toLowerCase())) {
         const suffix = ` (${idx + 1})`;
-        candidate = candidate.slice(0, 100 - suffix.length) + suffix;
+        candidate = candidate + suffix;
       }
       seenOpts.add(candidate.toLowerCase());
       uniqueOpts.push(candidate);
