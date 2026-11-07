@@ -1076,7 +1076,7 @@ async function updateUserClass(telegramId, className) {
   if (isPostgresAvailable()) {
     try {
       await pgQuery('UPDATE users SET class_name = $1 WHERE telegram_id = $2', [canonical, uid]);
-      await pgQuery('UPDATE user_schedule_settings SET group_name = $1 WHERE telegram_id = $2', [canonical, uid]);
+      await pgQuery('UPDATE user_schedule_settings SET group_name = $1 WHERE telegram_id = $2::bigint', [canonical, uid]);
       invalidateSubscribersCache();
       clearDbError();
     } catch (pgErr) {
@@ -2022,7 +2022,7 @@ async function getAllActiveScheduleSubscribers(forceRefresh = false) {
           s.building_change_alert,
           s.quiet_hours_enabled
         FROM users u
-        LEFT JOIN user_schedule_settings s ON u.telegram_id = s.telegram_id
+        LEFT JOIN user_schedule_settings s ON u.telegram_id = s.telegram_id::text
         WHERE u.class_name IS NOT NULL
           AND (u.is_banned IS NULL OR u.is_banned = FALSE);
       `;
