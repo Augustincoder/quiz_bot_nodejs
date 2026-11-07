@@ -114,7 +114,31 @@ async function runAsyncTests() {
 
   errorReporter._setMockDispatcher(null);
 
-  console.log('\n🎉 ALL TASK 1, TASK 2 & TASK 3 TESTS PASSED!');
+  // --- TASK 4: Global Handlers & Console.error Hook ---
+  console.log('\n--- Task 4: Testing Global Handlers & Console.error ---');
+  let consoleDispatches = [];
+  errorReporter._setMockDispatcher((text) => {
+    consoleDispatches.push(text);
+    return Promise.resolve(true);
+  });
+
+  errorReporter.clearDedupCache();
+
+  // Test console.error interception helper
+  const { initGlobalErrorHooks } = require('../src/services/errorReporterService');
+  assert(typeof initGlobalErrorHooks === 'function', 'FAIL: errorReporterService must export initGlobalErrorHooks()');
+  initGlobalErrorHooks();
+
+  console.error('Test direct console.error triggered', { customCode: 999 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert(consoleDispatches.length === 1, `console.error must trigger 1 error report dispatch, got: ${consoleDispatches.length}`);
+  assert(consoleDispatches[0].includes('Test direct console.error triggered'), 'Message must be present in dispatch');
+  console.log('  ✅ Passed: console.error interception correctly captured');
+
+  errorReporter._setMockDispatcher(null);
+
+  console.log('\n🎉 ALL TASK 1, TASK 2, TASK 3 & TASK 4 TESTS PASSED!');
 }
 
 runAsyncTests().catch((err) => {

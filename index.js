@@ -46,15 +46,24 @@ if (process.env.SENTRY_DSN) {
   });
 }
 
+const errorReporter = require("./src/services/errorReporterService");
+errorReporter.initGlobalErrorHooks();
+
 // ─── Unhandled Error Safety Net ──────────────────────────────
 process.on("unhandledRejection", async (reason) => {
   logger.error("Unhandled Rejection:", reason);
+  try {
+    await errorReporter.report(reason, { source: "unhandledRejection" });
+  } catch {}
   Sentry.captureException(reason);
   await Sentry.flush(2000);
 });
 
 process.on("uncaughtException", async (err) => {
   logger.error("Uncaught Exception:", err);
+  try {
+    await errorReporter.report(err, { source: "uncaughtException" });
+  } catch {}
   Sentry.captureException(err);
   await Sentry.flush(2000);
   process.exit(1);
@@ -219,7 +228,14 @@ bot.catch((err, ctx) => {
     });
   }
 
-  logger.error(`Bot error [${ctx?.updateType}]: ${errMsg}`, { stack: err?.stack });
+  logger.error(`Bot error [${ctx?.updateType}]: ${errMsg}`, {
+    stack: err?.stack,
+    updateType: ctx?.updateType,
+    fromId: ctx?.from?.id,
+    fromUsername: ctx?.from?.username,
+    chatId: ctx?.chat?.id,
+    callbackData: ctx?.callbackQuery?.data,
+  });
 
   // Prevent UI freeze
   if (ctx?.callbackQuery) {

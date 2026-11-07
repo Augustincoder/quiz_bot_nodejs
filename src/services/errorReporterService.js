@@ -30,6 +30,11 @@ class ErrorReporterService {
       maxSockets: 10,
       timeout: 10000,
     });
+    this.report = this.report.bind(this);
+    this.formatErrorMessage = this.formatErrorMessage.bind(this);
+    this.isBenignError = this.isBenignError.bind(this);
+    this.clearDedupCache = this.clearDedupCache.bind(this);
+    this.initGlobalErrorHooks = this.initGlobalErrorHooks.bind(this);
   }
 
   /**
@@ -286,6 +291,48 @@ class ErrorReporterService {
       if (entry.timeout) clearTimeout(entry.timeout);
     }
     this._dedupCache.clear();
+  }
+
+  /**
+   * Hook console.error safely to capture any direct console.error calls across libraries
+   */
+  initGlobalErrorHooks() {
+    if (this._hooksInitialized) return;
+    this._hooksInitialized = true;
+
+    const origConsoleError = console.error.bind(console);
+    console.error = (...args) => {
+      origConsoleError(...args);
+      if (this._isReporting) return;
+      try {
+        const firstArg = args[0];
+        let errMsg = '';
+        let stack = '';
+        if (firstArg instanceof Error) {
+          errMsg = firstArg.message;
+          stack = firstArg.stack;
+        } else {
+          errMsg = args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+        }
+
+        // Avoid capturing winston console output or reporter internal logs
+        if (typeof errMsg === 'string' && (errMsg.includes('[QIZIL LOG') || errMsg.includes('errorReporterService'))) {
+          return;
+        }
+
+        const context = { source: 'console.error' };
+        if (args.length > 1) {
+          context.extraArgs = args.slice(1);
+        }
+        if (stack) {
+          context.stack = stack;
+        }
+
+        this.report(firstArg instanceof Error ? firstArg : errMsg, context).catch(() => {});
+      } catch {
+        // Safe silence
+      }
+    };
   }
 
   /**
