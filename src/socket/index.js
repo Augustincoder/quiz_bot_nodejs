@@ -118,7 +118,7 @@ function initSocket(httpServer) {
 
         if (isPostgresAvailable()) {
           try {
-            const pgRes = await pgQuery('SELECT * FROM kahoot_questions LIMIT 30');
+            const pgRes = await pgQuery('SELECT * FROM kahoot_questions ORDER BY RANDOM() LIMIT 30');
             questions = pgRes.rows || [];
           } catch (pgErr) {
             logger.warn('kahoot_questions Postgres query error:', { error: pgErr.message });
@@ -131,10 +131,21 @@ function initSocket(httpServer) {
         }
         
         const flatQuestions = questions.flatMap(row => {
-          if (Array.isArray(row.questions)) {
-            return row.questions.map(q => ({ ...q, topic: row.topic }));
+          let opts = row.options;
+          if (typeof opts === 'string') {
+            try { opts = JSON.parse(opts); } catch { opts = []; }
           }
-          return [row];
+          if (Array.isArray(row.questions)) {
+            return row.questions.map(q => ({ ...q, topic: row.title || row.topic || 'Umumiy' }));
+          }
+          return [{
+            ...row,
+            title: row.title || row.question || '',
+            question: row.title || row.question || '',
+            options: opts || [],
+            correct_index: row.correct_index ?? 0,
+            time_limit: row.time_limit || 30
+          }];
         });
 
         if (!flatQuestions.length) {

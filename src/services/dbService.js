@@ -105,6 +105,12 @@ async function getUserStats(userId) {
         clearDbError();
         if (res.rows.length > 0) {
           const data = res.rows[0];
+          if (typeof data.history === 'string') {
+            try { data.history = JSON.parse(data.history); } catch { data.history = []; }
+          }
+          if (typeof data.shelf === 'string') {
+            try { data.shelf = JSON.parse(data.shelf); } catch { data.shelf = {}; }
+          }
           if (!data.history) data.history = [];
           if (!data.shelf) data.shelf = {};
           await redis.set(cacheKey, JSON.stringify(data), 'EX', 86400).catch(() => {});
@@ -162,12 +168,16 @@ async function getUsersStatsSummaryByIds(userIds) {
       );
       clearDbError();
       for (const row of res.rows) {
+        let history = row.history;
+        if (typeof history === 'string') {
+          try { history = JSON.parse(history); } catch { history = []; }
+        }
         resultMap.set(String(row.user_id), {
           user_id: String(row.user_id),
           tests_completed: row.tests_completed || 0,
           total_correct: row.total_correct || 0,
           total_wrong: row.total_wrong || 0,
-          history: Array.isArray(row.history) ? row.history : [],
+          history: Array.isArray(history) ? history : [],
         });
         if (redis) {
           redis.set(`cache:user_stats_summary:${row.user_id}`, JSON.stringify(row), 'EX', 300).catch(() => {});
@@ -279,11 +289,12 @@ async function getUserRank(userId, knownTotalCorrect = null) {
       const stats = await getUserStats(uid);
       correct = stats?.total_correct ?? 0;
     }
-    if (correct <= 0) return 'N/A';
+    const numCorrect = parseInt(correct, 10);
+    if (isNaN(numCorrect) || numCorrect <= 0) return 'N/A';
 
     if (isPostgresAvailable()) {
       try {
-        const res = await pgQuery('SELECT COUNT(*) as count FROM user_stats WHERE total_correct > $1', [correct]);
+        const res = await pgQuery('SELECT COUNT(*) as count FROM user_stats WHERE total_correct > $1', [numCorrect]);
         clearDbError();
         return parseInt(res.rows[0].count, 10) + 1;
       } catch (pgErr) {
@@ -300,11 +311,12 @@ async function getUserRank(userId, knownTotalCorrect = null) {
 
 async function getTopUsers(limit = 10) {
   try {
+    const numLimit = Math.max(1, parseInt(limit, 10) || 10);
     if (isPostgresAvailable()) {
       try {
         const res = await pgQuery(
           'SELECT user_id, total_correct, tests_completed FROM user_stats WHERE total_correct > 0 ORDER BY total_correct DESC LIMIT $1',
-          [limit]
+          [numLimit]
         );
         clearDbError();
         return res.rows.map(s => ({
@@ -766,7 +778,13 @@ async function getSubjectBlocks(subjectId) {
           [sid]
         );
         clearDbError();
-        const sorted = naturalSortBlocks(res.rows);
+        const rows = (res.rows || []).map(row => {
+          if (typeof row.questions === 'string') {
+            try { row.questions = JSON.parse(row.questions); } catch { row.questions = []; }
+          }
+          return row;
+        });
+        const sorted = naturalSortBlocks(rows);
         if (redis) {
           await redis.set(cacheKey, JSON.stringify(sorted), 'EX', 3600).catch(() => {});
         }
@@ -929,6 +947,9 @@ async function getUserTest(testId) {
         clearDbError();
         const data = res.rows[0] || null;
         if (data) {
+          if (typeof data.questions === 'string') {
+            try { data.questions = JSON.parse(data.questions); } catch { data.questions = []; }
+          }
           if (redis) await redis.set(cacheKey, JSON.stringify(data), 'EX', 3600).catch(() => {});
           userTestL1Cache.set(tid, { data, expiresAt: now + 300000 });
           return data;
@@ -983,7 +1004,12 @@ async function getUserCreatedTests(creatorId, includeQuestions = true) {
           [String(creatorId)]
         );
         clearDbError();
-        const data = res.rows;
+        const data = (res.rows || []).map(row => {
+          if (typeof row.questions === 'string') {
+            try { row.questions = JSON.parse(row.questions); } catch { row.questions = []; }
+          }
+          return row;
+        });
         if (data && redis) {
           await redis.set(cacheKey, JSON.stringify(data), 'EX', 3600).catch(() => {});
         }
@@ -2077,9 +2103,12 @@ async function getAllActiveScheduleSubscribers(forceRefresh = false) {
  */
 async function createCourseNote(payload) {
   if (!payload) return null;
+  const cId = Number(payload.creator_id);
+  if (!cId || isNaN(cId)) return null;
+
   try {
     const record = {
-      creator_id: Number(payload.creator_id),
+      creator_id: cId,
       group_name: payload.group_name,
       is_group_shared: Boolean(payload.is_group_shared ?? payload.is_group_note ?? false),
       subject_name: payload.subject_name,
@@ -2158,13 +2187,15 @@ async function getDueNotesForLesson(telegramId, groupName, dateStr) {
       const params = [dateStr];
 
       if (telegramId && groupName) {
-        params.push(Number(telegramId), String(groupName).trim());
+        const tid = Number(telegramId);
+        params.push(isNaN(tid) ? 0 : tid, String(groupName).trim());
         sql += ' AND (creator_id = $2 OR (is_group_shared = TRUE AND group_name = $3))';
       } else if (groupName) {
         params.push(String(groupName).trim());
         sql += ' AND group_name = $2';
       } else if (telegramId) {
-        params.push(Number(telegramId));
+        const tid = Number(telegramId);
+        params.push(isNaN(tid) ? 0 : tid);
         sql += ' AND creator_id = $2';
       }
 
@@ -2219,6 +2250,7 @@ async function getNoteById(noteId) {
 async function updateNoteStatus(noteId, telegramId, newStatus, newTargetDate = null, newTargetPeriod = null, newStartTime = null, extraFields = null) {
   if (!noteId) return false;
   const id = Number(noteId);
+  if (!id || isNaN(id)) return false;
 
   if (isPostgresAvailable()) {
     try {
@@ -2263,8 +2295,11 @@ async function updateNoteStatus(noteId, telegramId, newStatus, newTargetDate = n
       params.push(id);
       let whereClause = `WHERE id = $${pIdx++}`;
       if (telegramId) {
-        params.push(Number(telegramId));
-        whereClause += ` AND creator_id = $${pIdx++}`;
+        const tid = Number(telegramId);
+        if (!isNaN(tid)) {
+          params.push(tid);
+          whereClause += ` AND creator_id = $${pIdx++}`;
+        }
       }
 
       const sql = `UPDATE course_notes SET ${sets.join(', ')} ${whereClause}`;
@@ -2287,6 +2322,7 @@ async function updateNoteStatus(noteId, telegramId, newStatus, newTargetDate = n
 async function getUserActiveNotes(telegramId, groupName = null) {
   if (!telegramId) return [];
   const uid = Number(telegramId);
+  if (!uid || isNaN(uid)) return [];
   const edupageService = require('./edupageService');
   const nowTz = edupageService.getTashkentNow();
   const todayIso = `${nowTz.getFullYear()}-${String(nowTz.getMonth() + 1).padStart(2, '0')}-${String(nowTz.getDate()).padStart(2, '0')}`;
