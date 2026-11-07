@@ -91,7 +91,30 @@ async function runAsyncTests() {
   errorReporter._setMockDispatcher(null);
   console.log('  ✅ Passed: Deduplication and suppression logic verified');
 
-  console.log('\n🎉 ALL TASK 1 & TASK 2 TESTS PASSED!');
+  // --- TASK 3: Winston Logger Integration ---
+  console.log('\n--- Task 3: Testing Winston Logger Transport Integration ---');
+  const logger = require('../src/core/logger');
+
+  let winstonDispatches = [];
+  errorReporter._setMockDispatcher((text) => {
+    winstonDispatches.push(text);
+    return Promise.resolve(true);
+  });
+
+  errorReporter.clearDedupCache();
+  logger.error('Test Winston Error message', { serviceTag: 'test-winston-tag' });
+
+  // Give Winston event loop tick to invoke transport
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert(winstonDispatches.length === 1, `Winston error must trigger exactly 1 error report dispatch, got: ${winstonDispatches.length}`);
+  assert(winstonDispatches[0].includes('Test Winston Error message'), 'Dispatched message must include winston message');
+  assert(winstonDispatches[0].includes('test-winston-tag'), 'Dispatched message must include winston metadata');
+  console.log('  ✅ Passed: logger.error automatically routes to errorReporterService');
+
+  errorReporter._setMockDispatcher(null);
+
+  console.log('\n🎉 ALL TASK 1, TASK 2 & TASK 3 TESTS PASSED!');
 }
 
 runAsyncTests().catch((err) => {

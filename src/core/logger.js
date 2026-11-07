@@ -1,5 +1,32 @@
 'use strict';
 const winston = require('winston');
+const errorReporter = require('../services/errorReporterService');
+
+class TelegramErrorTransport extends winston.Transport {
+  constructor(opts) {
+    super(opts);
+    this.level = 'error';
+  }
+
+  log(info, callback) {
+    setImmediate(() => {
+      this.emit('logged', info);
+    });
+
+    if (info.level === 'error') {
+      try {
+        const errMsg = info.message || info;
+        errorReporter.report(errMsg, info).catch(() => {});
+      } catch {
+        // Safe silence to prevent transport crashes
+      }
+    }
+
+    if (typeof callback === 'function') {
+      callback();
+    }
+  }
+}
 
 const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
@@ -24,7 +51,8 @@ const logger = winston.createLogger({
       maxsize: 10 * 1024 * 1024, // 10 MB per file
       maxFiles: 5,
       tailable: true,
-    })
+    }),
+    new TelegramErrorTransport()
   ],
 });
 
