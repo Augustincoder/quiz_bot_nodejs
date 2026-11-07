@@ -145,17 +145,21 @@ async function cmdStart(ctx) {
         return showUgcSubjectBlocks(ctx, testData.creator_id, testData.subject, loadingMsg?.message_id);
       }
 
-      const notFoundText = '❌ Bu fan topilmadi yoki o\'chirilgan.';
+      const isDbDown = dbService.isRecentDbError();
+      const notFoundText = isDbDown
+        ? '⚠️ <b>Ma\'lumotlar bazasida vaqtinchalik uzilish yuz berdi.</b>\n\nIltimos, 1-2 daqiqadan so\'ng qayta urinib ko\'ring.'
+        : '❌ Bu fan topilmadi yoki o\'chirilgan.';
+      const notFoundOpts = { parse_mode: 'HTML', ...backToMainKb() };
       if (loadingMsg) {
         return ctx.telegram.editMessageText(
           chatId,
           loadingMsg.message_id,
           undefined,
           notFoundText,
-          backToMainKb()
-        ).catch(() => ctx.reply(notFoundText, backToMainKb()));
+          notFoundOpts
+        ).catch(() => ctx.reply(notFoundText, notFoundOpts));
       }
-      return ctx.reply(notFoundText, backToMainKb());
+      return ctx.reply(notFoundText, notFoundOpts);
     }
     if (resolved.type === 't') {
       if (resolved.isInvalid || !resolved.id) {
@@ -166,7 +170,11 @@ async function cmdStart(ctx) {
         const { startUgcTest } = require('./quizGame');
         return startUgcTest(ctx, testData);
       }
-      return ctx.reply('❌ Bu blok topilmadi yoki o\'chirilgan.', backToMainKb());
+      const isDbDown = dbService.isRecentDbError();
+      const testErrText = isDbDown
+        ? '⚠️ <b>Ma\'lumotlar bazasida vaqtinchalik uzilish yuz berdi.</b>\n\nIltimos, 1-2 daqiqadan so\'ng qayta urinib ko\'ring.'
+        : '❌ Bu blok topilmadi yoki o\'chirilgan.';
+      return ctx.reply(testErrText, { parse_mode: 'HTML', ...backToMainKb() });
     }
     if (param.startsWith('offt_')) {
       const parts = param.split('_');

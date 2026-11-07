@@ -72,6 +72,30 @@ async function saveOfficialTest(subject, testId, questions) {
   }
 }
 
+// In-memory L1 cache for fast responses & resilient fallback during outages
+const subjectL1Cache = new Map(); // sid -> { data, expiresAt }
+const userTestL1Cache = new Map(); // tid -> { data, expiresAt }
+const userSubjectsL1Cache = new Map(); // uid -> { data, expiresAt }
+const subjectBlocksL1Cache = new Map(); // sid -> { data, expiresAt }
+
+let _lastDbError = null;
+
+function recordDbError(err) {
+  _lastDbError = {
+    message: String(err?.message || 'Database error'),
+    timestamp: Date.now(),
+  };
+}
+
+function isRecentDbError() {
+  if (!_lastDbError) return false;
+  return (Date.now() - _lastDbError.timestamp) < 20000;
+}
+
+function clearDbError() {
+  _lastDbError = null;
+}
+
 async function getUserStats(userId) {
   const uid = String(userId);
   const cacheKey = `cache:user_stats:${uid}`;
@@ -89,13 +113,14 @@ async function getUserStats(userId) {
       if (error) throw error;
       if (data) {
         if (!data.history) data.history = [];
-        await redis.set(cacheKey, JSON.stringify(data), 'EX', 300).catch(() => {});
+        await redis.set(cacheKey, JSON.stringify(data), 'EX', 86400).catch(() => {});
         return data;
       }
     }
     return { user_id: uid, tests_completed: 0, total_correct: 0, total_wrong: 0, history: [] };
   } catch (err) {
     logger.error('getUserStats error:', { userId: uid, error: err.message });
+    recordDbError(err);
     return { user_id: uid, tests_completed: 0, total_correct: 0, total_wrong: 0, history: [], _fetchFailed: true };
   }
 }
@@ -685,11 +710,25 @@ async function getSubjectById(subjectId) {
   const sid = parseInt(subjectId, 10);
   if (isNaN(sid)) return null;
 
+  const now = Date.now();
+  const l1 = subjectL1Cache.get(sid);
+  if (l1 && l1.expiresAt > now) {
+    return l1.data;
+  }
+
   try {
     const cacheKey = `cache:subject:${sid}`;
     if (redis) {
       const cached = await redis.get(cacheKey).catch(() => null);
-      if (cached) return JSON.parse(cached);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed._notFound) {
+          subjectL1Cache.set(sid, { data: null, expiresAt: now + 300000 });
+          return null;
+        }
+        subjectL1Cache.set(sid, { data: parsed, expiresAt: now + 300000 });
+        return parsed;
+      }
     }
 
     if (!supabase) return null;
@@ -701,12 +740,24 @@ async function getSubjectById(subjectId) {
       .maybeSingle();
 
     if (error) throw error;
-    if (data && redis) {
-      await redis.set(cacheKey, JSON.stringify(data), 'EX', 3600).catch(() => {});
+    if (data) {
+      if (redis) {
+        await redis.set(cacheKey, JSON.stringify(data), 'EX', 3600).catch(() => {});
+      }
+      subjectL1Cache.set(sid, { data, expiresAt: now + 300000 });
+      return data;
+    } else {
+      // Negative caching: subject does not exist in DB (avoids repeated DB hammering)
+      if (redis) {
+        await redis.set(cacheKey, JSON.stringify({ _notFound: true }), 'EX', 600).catch(() => {});
+      }
+      subjectL1Cache.set(sid, { data: null, expiresAt: now + 300000 });
+      return null;
     }
-    return data || null;
   } catch (err) {
     logger.error('getSubjectById error:', { subjectId: sid, error: err.message });
+    recordDbError(err);
+    if (l1 && l1.data) return l1.data;
     return null;
   }
 }
@@ -715,10 +766,20 @@ async function getUserSubjects(creatorId) {
   const uid = String(creatorId);
   const cacheKey = `cache:user_subjects:${uid}`;
 
+  const now = Date.now();
+  const l1 = userSubjectsL1Cache.get(uid);
+  if (l1 && l1.expiresAt > now) {
+    return l1.data;
+  }
+
   try {
     if (redis) {
       const cached = await redis.get(cacheKey).catch(() => null);
-      if (cached) return JSON.parse(cached);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        userSubjectsL1Cache.set(uid, { data: parsed, expiresAt: now + 120000 });
+        return parsed;
+      }
     }
 
     if (!supabase) return [];
@@ -774,11 +835,14 @@ async function getUserSubjects(creatorId) {
     }
 
     if (redis) {
-      await redis.set(cacheKey, JSON.stringify(result), 'EX', 300).catch(() => {});
+      await redis.set(cacheKey, JSON.stringify(result), 'EX', 3600).catch(() => {});
     }
+    userSubjectsL1Cache.set(uid, { data: result, expiresAt: now + 120000 });
     return result;
   } catch (err) {
     logger.error('getUserSubjects error:', { creatorId: uid, error: err.message });
+    recordDbError(err);
+    if (l1 && l1.data) return l1.data;
     return [];
   }
 }
@@ -787,11 +851,21 @@ async function getSubjectBlocks(subjectId) {
   const sid = parseInt(subjectId, 10);
   if (isNaN(sid)) return [];
 
+  const now = Date.now();
+  const l1 = subjectBlocksL1Cache.get(sid);
+  if (l1 && l1.expiresAt > now) {
+    return l1.data;
+  }
+
   const cacheKey = `cache:subject_blocks:${sid}`;
   try {
     if (redis) {
       const cached = await redis.get(cacheKey).catch(() => null);
-      if (cached) return JSON.parse(cached);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        subjectBlocksL1Cache.set(sid, { data: parsed, expiresAt: now + 300000 });
+        return parsed;
+      }
     }
 
     if (!supabase) return [];
@@ -808,20 +882,33 @@ async function getSubjectBlocks(subjectId) {
     if (redis) {
       await redis.set(cacheKey, JSON.stringify(sorted), 'EX', 3600).catch(() => {});
     }
+    subjectBlocksL1Cache.set(sid, { data: sorted, expiresAt: now + 300000 });
     return sorted;
   } catch (err) {
     logger.error('getSubjectBlocks error:', { subjectId: sid, error: err.message });
+    recordDbError(err);
+    if (l1 && l1.data) return l1.data;
     return [];
   }
 }
 
 async function invalidateSubjectCache(subjectId, creatorId) {
   try {
+    if (subjectId) {
+      const sid = parseInt(subjectId, 10);
+      subjectL1Cache.delete(sid);
+      userTestL1Cache.delete(sid);
+      subjectBlocksL1Cache.delete(sid);
+    }
+    if (creatorId) {
+      userSubjectsL1Cache.delete(String(creatorId));
+    }
     if (!redis) return;
     const promises = [];
     if (subjectId) {
       promises.push(redis.del(`cache:subject:${subjectId}`).catch(() => {}));
       promises.push(redis.del(`cache:subject_blocks:${subjectId}`).catch(() => {}));
+      promises.push(redis.del(`cache:user_test:${subjectId}`).catch(() => {}));
     }
     if (creatorId) {
       promises.push(redis.del(`cache:user_subjects:${creatorId}`).catch(() => {}));
@@ -905,11 +992,25 @@ async function getUserTest(testId) {
   const tid = parseInt(testId, 10);
   if (isNaN(tid)) return null;
 
+  const now = Date.now();
+  const l1 = userTestL1Cache.get(tid);
+  if (l1 && l1.expiresAt > now) {
+    return l1.data;
+  }
+
   try {
     const cacheKey = `cache:user_test:${tid}`;
     if (redis) {
       const cached = await redis.get(cacheKey).catch(() => null);
-      if (cached) return JSON.parse(cached);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed._notFound) {
+          userTestL1Cache.set(tid, { data: null, expiresAt: now + 300000 });
+          return null;
+        }
+        userTestL1Cache.set(tid, { data: parsed, expiresAt: now + 300000 });
+        return parsed;
+      }
     }
 
     if (!supabase) return null;
@@ -921,12 +1022,24 @@ async function getUserTest(testId) {
       .maybeSingle();
 
     if (error) throw error;
-    if (data && redis) {
-      await redis.set(cacheKey, JSON.stringify(data), 'EX', 3600).catch(() => {});
+    if (data) {
+      if (redis) {
+        await redis.set(cacheKey, JSON.stringify(data), 'EX', 3600).catch(() => {});
+      }
+      userTestL1Cache.set(tid, { data, expiresAt: now + 300000 });
+      return data;
+    } else {
+      // Negative caching: test does not exist in DB (avoids repeated DB hammering)
+      if (redis) {
+        await redis.set(cacheKey, JSON.stringify({ _notFound: true }), 'EX', 600).catch(() => {});
+      }
+      userTestL1Cache.set(tid, { data: null, expiresAt: now + 300000 });
+      return null;
     }
-    return data || null;
   } catch (err) {
     logger.error('getUserTest error:', { testId: tid, error: err.message });
+    recordDbError(err);
+    if (l1 && l1.data) return l1.data;
     return null;
   }
 }
@@ -961,11 +1074,12 @@ async function getUserCreatedTests(creatorId, includeQuestions = true) {
       .order('id', { ascending: false });
     if (error) throw error;
     if (data && redis) {
-      await redis.set(cacheKey, JSON.stringify(data), 'EX', 300).catch(() => {});
+      await redis.set(cacheKey, JSON.stringify(data), 'EX', 3600).catch(() => {});
     }
     return data || [];
   } catch (err) {
     logger.error('getUserCreatedTests error:', { creatorId, error: err.message });
+    recordDbError(err);
     return [];
   }
 }
@@ -2396,5 +2510,8 @@ module.exports = {
   invalidateSubscribersCache,
   invalidateDueNotesCache,
   cleanupDueNotesCache,
+  recordDbError,
+  isRecentDbError,
+  clearDbError,
 };
 

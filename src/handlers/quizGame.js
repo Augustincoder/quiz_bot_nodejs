@@ -438,17 +438,21 @@ async function showUgcSubjectBlocks(ctx, subjectIdOrCreator, subjectName = null,
     }
 
     if (!subjTests.length) {
-      const emptyText = "❌ Bu fanda bloklar topilmadi.";
+      const isDbDown = dbService.isRecentDbError();
+      const emptyText = isDbDown
+        ? "⚠️ <b>Ma'lumotlar bazasida vaqtinchalik uzilish yuz berdi.</b>\n\nIltimos, birozdan so'ng qayta urinib ko'ring."
+        : "❌ Bu fanda bloklar topilmadi.";
+      const errOpts = { parse_mode: "HTML", ...backToMainKb() };
       if (loadingMsgId && chatId) {
         return ctx.telegram.editMessageText(
           chatId,
           loadingMsgId,
           undefined,
           emptyText,
-          backToMainKb()
-        ).catch(() => ctx.reply(emptyText, backToMainKb()));
+          errOpts
+        ).catch(() => ctx.reply(emptyText, errOpts));
       }
-      return ctx.reply(emptyText, backToMainKb());
+      return ctx.reply(emptyText, errOpts);
     }
 
     const buttons = subjTests.map((t) => [
@@ -556,8 +560,13 @@ async function cbUgcStart(ctx) {
   const testId = parseSuffix(ctx.callbackQuery.data, "ugc_start_");
   try {
     const testDb = await dbService.getUserTest(testId);
-    if (!testDb)
-      return ctx.reply("❌ Test topilmadi yoki o'chirilgan.", backToMainKb());
+    if (!testDb) {
+      const isDbDown = dbService.isRecentDbError();
+      const notFoundMsg = isDbDown
+        ? "⚠️ <b>Ma'lumotlar bazasida vaqtinchalik uzilish yuz berdi.</b>\n\nIltimos, birozdan so'ng qayta urinib ko'ring."
+        : "❌ Test topilmadi yoki o'chirilgan.";
+      return ctx.reply(notFoundMsg, { parse_mode: "HTML", ...backToMainKb() });
+    }
     await safeDelete(ctx);
     await startUgcTest(ctx, testDb);
   } catch (e) {

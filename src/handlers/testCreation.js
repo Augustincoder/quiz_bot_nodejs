@@ -1795,9 +1795,13 @@ async function cbMyTests(ctx) {
 
   const userSubjects = await dbService.getUserSubjects(ctx.from.id);
   if (!userSubjects || userSubjects.length === 0) {
+    const isDbDown = dbService.isRecentDbError();
+    const emptyMsg = isDbDown
+      ? "⚠️ <b>Ma'lumotlar bazasida vaqtinchalik uzilish yuz berdi.</b>\n\nIltimos, birozdan so'ng qayta urinib ko'ring."
+      : "📭 <b>Siz hali hech qanday test yaratmagansiz.</b>\n\nBu bo'limda siz AI yordamida yoki o'zingiz qo'lda yaratgan shaxsiy testlaringiz saqlanadi.";
     return safeEdit(
       ctx,
-      "📭 <b>Siz hali hech qanday test yaratmagansiz.</b>\n\nBu bo'limda siz AI yordamida yoki o'zingiz qo'lda yaratgan shaxsiy testlaringiz saqlanadi.",
+      emptyMsg,
       {
         parse_mode: "HTML",
         ...Markup.inlineKeyboard([

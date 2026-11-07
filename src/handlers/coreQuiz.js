@@ -347,9 +347,24 @@ async function sendNextQuestion(chatId, telegram) {
         msg = await telegram.sendPoll(chatId, pollQ, pollOpts, pollExtra);
         break;
       } catch (e) {
+        const errMsg = String(e?.message || '');
+        const isTransientNetwork =
+          errMsg.includes('ETIMEDOUT') ||
+          errMsg.includes('ECONNRESET') ||
+          errMsg.includes('ECONNREFUSED') ||
+          errMsg.includes('502') ||
+          errMsg.includes('503') ||
+          errMsg.includes('504');
+
+        // Transient network error -> wait 1s and retry without logging to error stream
+        if (isTransientNetwork && sendAttempts < maxSendAttempts) {
+          console.warn(`[coreQuiz] Transient network error on sendPoll for ${chatId} (attempt ${sendAttempts}/${maxSendAttempts}): ${errMsg}. Retrying after 1s...`);
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+
         console.error(`sendPoll error [${chatId}] attempt ${sendAttempts}:`, e.message);
 
-        const errMsg = String(e?.message || '');
         const migrateTo = e?.parameters?.migrate_to_chat_id || e?.response?.parameters?.migrate_to_chat_id;
         const isFatalChatError =
           errMsg.includes('bot was kicked') ||
@@ -387,19 +402,7 @@ async function sendNextQuestion(chatId, telegram) {
           continue;
         }
 
-        // 3. Transient network error -> wait 1s and retry
-        const isTransientNetwork =
-          errMsg.includes('ETIMEDOUT') ||
-          errMsg.includes('ECONNRESET') ||
-          errMsg.includes('ECONNREFUSED') ||
-          errMsg.includes('502') ||
-          errMsg.includes('503') ||
-          errMsg.includes('504');
-        if (isTransientNetwork && sendAttempts < maxSendAttempts) {
-          console.warn(`[coreQuiz] Transient network error on sendPoll for ${chatId}: ${errMsg}. Retrying after 1s...`);
-          await new Promise(r => setTimeout(r, 1000));
-          continue;
-        }
+
 
         session.sendErrors = (session.sendErrors || 0) + 1;
         const errSendOpts = { parse_mode: "HTML" };

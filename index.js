@@ -61,7 +61,16 @@ process.on("uncaughtException", async (err) => {
 });
 
 // ─── Bot & Workers Setup ─────────────────────────────────────
-const bot = new Telegraf(BOT_TOKEN);
+const https = require("https");
+const telegramAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 10000,
+  maxSockets: 50,
+  timeout: 30000,
+});
+const bot = new Telegraf(BOT_TOKEN, {
+  telegram: { agent: telegramAgent },
+});
 scheduleWatcher.setBotInstance(bot);
 let _workers = null;
 let _cronJobs = [];

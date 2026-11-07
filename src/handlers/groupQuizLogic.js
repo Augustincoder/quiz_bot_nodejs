@@ -85,7 +85,15 @@ async function createLobby(ctx, param) {
   if (resolved.type === 't') {
     if (resolved.isInvalid || !resolved.id) return ctx.reply("❌ Test topilmadi yoki havola yaroqsiz.");
     testData = await dbService.getUserTest(resolved.id);
-    if (!testData) return ctx.reply("❌ Test topilmadi yoki o'chirilgan.");
+    if (!testData) {
+      const isDbDown = dbService.isRecentDbError();
+      return ctx.reply(
+        isDbDown
+          ? "⚠️ <b>Ma'lumotlar bazasida vaqtinchalik uzilish yuz berdi.</b>\n\nIltimos, birozdan so'ng qayta urinib ko'ring."
+          : "❌ Test topilmadi yoki o'chirilgan.",
+        { parse_mode: 'HTML' }
+      );
+    }
     mode = 'block';
   } else if (resolved.type === 's') {
     if (resolved.isInvalid || !resolved.id) return ctx.reply("❌ Fan topilmadi yoki havola yaroqsiz.");
@@ -101,7 +109,15 @@ async function createLobby(ctx, param) {
       };
     } else {
       testData = await dbService.getUserTest(rawId);
-      if (!testData) return ctx.reply("❌ Fan topilmadi.");
+      if (!testData) {
+        const isDbDown = dbService.isRecentDbError();
+        return ctx.reply(
+          isDbDown
+            ? "⚠️ <b>Ma'lumotlar bazasida vaqtinchalik uzilish yuz berdi.</b>\n\nIltimos, birozdan so'ng qayta urinib ko'ring."
+            : "❌ Fan topilmadi yoki o'chirilgan.",
+          { parse_mode: 'HTML' }
+        );
+      }
       if (testData.subject_id) {
         const s = await dbService.getSubjectById(testData.subject_id);
         if (s) testData.subject = s.name;
