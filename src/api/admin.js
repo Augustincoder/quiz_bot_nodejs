@@ -3,7 +3,7 @@
 const express = require('express');
 const { URLSearchParams } = require('url');
 const { z } = require('zod');
-const { supabase } = require('../lib/supabase');
+const { isPostgresAvailable, query: pgQuery, withTransaction } = require('../lib/postgres');
 const { isAdmin, TTLMap } = require('../core/utils');
 const { validateTelegramInitData } = require('../socket/auth');
 const crypto = require('crypto');
@@ -142,8 +142,8 @@ const UploadPayloadSchema = z.discriminatedUnion('mode', [
 ]);
 
 router.post('/upload-questions', async (req, res) => {
-  if (!supabase) {
-    return res.status(503).json({ error: 'Supabase client not initialized or unavailable' });
+  if (!isPostgresAvailable()) {
+    return res.status(503).json({ error: 'Database unavailable' });
   }
 
   const parsed = UploadPayloadSchema.safeParse(req.body);
@@ -157,47 +157,54 @@ router.post('/upload-questions', async (req, res) => {
   const { mode, data } = parsed.data;
 
   try {
-    let result;
     switch (mode) {
-      case 'brain-ring':
-        result = await supabase.from('brain_ring_questions').insert(data);
+      case 'brain-ring': {
+        await withTransaction(async (client) => {
+          for (const item of data) {
+            await client.query(
+              'INSERT INTO brain_ring_questions (question, options, answer, points, time_limit) VALUES ($1, $2, $3, $4, $5)',
+              [item.question, JSON.stringify(item.options || []), item.answer, item.points || 1, item.time_limit || 60]
+            );
+          }
+        });
         break;
+      }
 
-      case 'zakovat':
-        result = await supabase.from('zakovat_questions').insert(data);
+      case 'zakovat': {
+        await withTransaction(async (client) => {
+          for (const item of data) {
+            await client.query(
+              'INSERT INTO zakovat_questions (question, answer, explanation, points, time_limit) VALUES ($1, $2, $3, $4, $5)',
+              [item.question, item.answer, item.explanation || null, item.points || 1, item.time_limit || 60]
+            );
+          }
+        });
         break;
+      }
 
       case 'kahoot': {
-        const kahootRows = data.map(item => {
-          if (item.questions) {
-            return {
-              topic: item.topic || 'Umumiy',
-              questions: item.questions,
-            };
+        await withTransaction(async (client) => {
+          for (const item of data) {
+            const topic = item.topic || 'Umumiy';
+            const questions = item.questions || [item];
+            await client.query(
+              'INSERT INTO kahoot_questions (title, questions) VALUES ($1, $2)',
+              [topic, JSON.stringify(questions)]
+            );
           }
-          return {
-            topic: item.topic || 'Umumiy',
-            questions: [item],
-          };
         });
-        result = await supabase.from('kahoot_questions').insert(kahootRows);
         break;
       }
 
       case 'erudit': {
-        const eruditRows = data.map(item => {
-          if (item.questions) {
-            return {
-              topic: item.topic || 'Umumiy',
-              questions: item.questions,
-            };
+        await withTransaction(async (client) => {
+          for (const item of data) {
+            await client.query(
+              'INSERT INTO erudit_questions (question, answer, points) VALUES ($1, $2, $3)',
+              [item.question, item.answer, item.points || 1]
+            );
           }
-          return {
-            topic: item.topic || 'Umumiy',
-            questions: [item],
-          };
         });
-        result = await supabase.from('erudit_questions').insert(eruditRows);
         break;
       }
 
@@ -205,7 +212,6 @@ router.post('/upload-questions', async (req, res) => {
         return res.status(400).json({ error: 'Noto\'g\'ri rejim (Invalid mode)' });
     }
 
-    if (result && result.error) throw result.error;
     res.json({ success: true, count: data.length });
   } catch (err) {
     logger.error('Upload Questions API Error:', { error: err.message, mode });
@@ -214,7 +220,7 @@ router.post('/upload-questions', async (req, res) => {
 });
 
 /**
- * Bug 46 Fix: Paginated User Retrieval without Supabase 1000 row hard limit
+ * Paginated User Retrieval without 1000 row limit
  */
 router.get('/users', async (req, res) => {
   try {

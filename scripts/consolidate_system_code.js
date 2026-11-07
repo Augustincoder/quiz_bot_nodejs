@@ -8,7 +8,7 @@ const ROOT = path.resolve(__dirname, '..');
 const files = [
   'index.js',
   'src/config/config.js',
-  'src/lib/supabase.js',
+  'src/lib/postgres.js',
   'src/core/logger.js',
   'src/core/utils.js',
   'src/core/mutex.js',

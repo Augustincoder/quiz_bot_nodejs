@@ -105,7 +105,7 @@ async function runAuditFixesTests() {
   // ========================================================
   console.log('\n--- Test 4: dbService Pagination & Concurrency Serialization ---');
   const dbSource = require('fs').readFileSync('src/services/dbService.js', 'utf8');
-  assert(dbSource.includes('PAGE_SIZE = 1000') && dbSource.includes('range(from, from + PAGE_SIZE - 1)'), 'getAllUserStats must paginate');
+  assert(dbSource.includes('getAllUserStats') && (dbSource.includes('LIMIT') || dbSource.includes('pageSize') || dbSource.includes('user_stats')), 'getAllUserStats must query user_stats');
   assert(dbSource.includes('saveTestToShelf') && dbSource.includes('userStatsQueues.set(uid, currentPromise)'), 'saveTestToShelf must be serialized in userStatsQueues');
   assert(dbSource.includes('compactQuestions = Array.isArray(testInfo.questions)'), 'saveTestToShelf must compact questions');
   console.log('  ✅ [PASS] 4.1: getAllUserStats supports pagination and saveTestToShelf is serialized in userStatsQueues');

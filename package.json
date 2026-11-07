@@ -15,7 +15,6 @@
     "@google/generative-ai": "^0.24.1",
     "@sentry/node": "^10.48.0",
     "@sentry/profiling-node": "^10.48.0",
-    "@supabase/supabase-js": "^2.39.7",
     "bullmq": "^5.73.5",
     "cors": "^2.8.6",
     "dotenv": "^17.4.1",

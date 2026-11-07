@@ -486,7 +486,7 @@ async function cbAiTestsSave(ctx) {
     const success = await dbService.saveOfficialTest(subject, testId, questions);
     
     if (!success) {
-      return ctx.answerCbQuery("❌ Supabase'ga saqlashda xatolik.", { show_alert: true }).catch(() => {});
+      return ctx.answerCbQuery("❌ Bazaga saqlashda xatolik.", { show_alert: true }).catch(() => {});
     }
     
     const stats = getAdminAIStats(ctx.from.id);

@@ -1,6 +1,5 @@
 'use strict';
 
-const { supabase } = require('../lib/supabase');
 const { pool, query: pgQuery, withTransaction, isPostgresAvailable } = require('../lib/postgres');
 const { TTLMap, naturalSortBlocks } = require('../core/utils');
 const redis = require('./redisService');
@@ -8,6 +7,30 @@ const logger = require('../core/logger');
 
 // In-memory fallback cache for timetable CDN metadata (bounded to 1000 items)
 const fallbackTimetableCache = new TTLMap(24 * 60 * 60 * 1000, 1000);
+
+// In-memory L1 cache for fast responses & resilient fallback during outages
+const subjectL1Cache = new Map(); // sid -> { data, expiresAt }
+const userTestL1Cache = new Map(); // tid -> { data, expiresAt }
+const userSubjectsL1Cache = new Map(); // uid -> { data, expiresAt }
+const subjectBlocksL1Cache = new Map(); // sid -> { data, expiresAt }
+
+let _lastDbError = null;
+
+function recordDbError(err) {
+  _lastDbError = {
+    message: String(err?.message || 'Database error'),
+    timestamp: Date.now(),
+  };
+}
+
+function isRecentDbError() {
+  if (!_lastDbError) return false;
+  return (Date.now() - _lastDbError.timestamp) < 20000;
+}
+
+function clearDbError() {
+  _lastDbError = null;
+}
 
 async function loadAllOfficialTests() {
   if (isPostgresAvailable()) {
@@ -23,39 +46,11 @@ async function loadAllOfficialTests() {
       }
       return db;
     } catch (e) {
-      
+      logger.error('Rasmiy testlarni yuklashda xato (PostgreSQL):', { error: e.message });
+      return {};
     }
   }
-
-  if (!supabase) return {};
-  try {
-    const pageSize = 1000;
-    let from = 0;
-    const allRows = [];
-    while (true) {
-      const { data, error } = await supabase
-        .from('official_tests')
-        .select('*')
-        .range(from, from + pageSize - 1);
-      if (error) throw error;
-      if (!data || data.length === 0) break;
-      allRows.push(...data);
-      if (data.length < pageSize) break;
-      from += pageSize;
-    }
-
-    const db = {};
-    for (const row of allRows) {
-      const subj = row.subject;
-      const tId  = parseInt(row.test_id, 10);
-      if (!db[subj]) db[subj] = {};
-      db[subj][tId] = { test_id: tId, range: `1-${row.questions?.length || 0}`, questions: row.questions || [] };
-    }
-    return db;
-  } catch (e) {
-    logger.error('Rasmiy testlarni yuklashda xato:', { error: e.message });
-    return {};
-  }
+  return {};
 }
 
 async function saveOfficialTest(subject, testId, questions) {
@@ -87,63 +82,11 @@ async function saveOfficialTest(subject, testId, questions) {
 
       return true;
     } catch (e) {
-      
+      logger.error('saveOfficialTest error (PostgreSQL):', { error: e.message });
+      return false;
     }
   }
-
-  if (!supabase) return false;
-  try {
-    const { error } = await supabase.from('official_tests').upsert(
-      { subject, test_id: testId, questions },
-      { onConflict: 'subject,test_id' }
-    );
-    if (error) throw error;
-
-    // Hot-reload memoryDb and invalidate blocks pagination cache
-    try {
-      const botModule = require('../core/bot');
-      if (!botModule.memoryDb) botModule.memoryDb = {};
-      if (!botModule.memoryDb[subject]) botModule.memoryDb[subject] = {};
-      botModule.memoryDb[subject][testId] = {
-        test_id: testId,
-        range: `1-${questions?.length || 0}`,
-        questions: questions || []
-      };
-      const { invalidateBlocksCache } = require('../keyboards/keyboards');
-      invalidateBlocksCache(subject);
-    } catch (memErr) {
-      logger.warn('Failed to hot-update memoryDb on saveOfficialTest:', { error: memErr.message });
-    }
-
-    return true;
-  } catch (e) {
-    logger.error('saveOfficialTest error:', { error: e.message });
-    return false;
-  }
-}
-
-// In-memory L1 cache for fast responses & resilient fallback during outages
-const subjectL1Cache = new Map(); // sid -> { data, expiresAt }
-const userTestL1Cache = new Map(); // tid -> { data, expiresAt }
-const userSubjectsL1Cache = new Map(); // uid -> { data, expiresAt }
-const subjectBlocksL1Cache = new Map(); // sid -> { data, expiresAt }
-
-let _lastDbError = null;
-
-function recordDbError(err) {
-  _lastDbError = {
-    message: String(err?.message || 'Database error'),
-    timestamp: Date.now(),
-  };
-}
-
-function isRecentDbError() {
-  if (!_lastDbError) return false;
-  return (Date.now() - _lastDbError.timestamp) < 20000;
-}
-
-function clearDbError() {
-  _lastDbError = null;
+  return false;
 }
 
 async function getUserStats(userId) {
@@ -166,24 +109,12 @@ async function getUserStats(userId) {
         }
         return { user_id: uid, tests_completed: 0, total_correct: 0, total_wrong: 0, history: [], shelf: {} };
       } catch (pgErr) {
-        
+        logger.error('getUserStats pg error:', { userId: uid, error: pgErr.message });
+        recordDbError(pgErr);
+        return { user_id: uid, tests_completed: 0, total_correct: 0, total_wrong: 0, history: [], _fetchFailed: true };
       }
     }
 
-    if (supabase) {
-      const { data, error } = await supabase
-        .from('user_stats')
-        .select('*')
-        .eq('user_id', uid)
-        .maybeSingle();
-
-      if (error) throw error;
-      if (data) {
-        if (!data.history) data.history = [];
-        await redis.set(cacheKey, JSON.stringify(data), 'EX', 86400).catch(() => {});
-        return data;
-      }
-    }
     return { user_id: uid, tests_completed: 0, total_correct: 0, total_wrong: 0, history: [] };
   } catch (err) {
     logger.error('getUserStats error:', { userId: uid, error: err.message });
@@ -220,58 +151,27 @@ async function getUsersStatsSummaryByIds(userIds) {
     })
   );
 
-  if (missingIds.length > 0) {
-    let pgHandled = false;
-    if (isPostgresAvailable()) {
-      try {
-        const res = await pgQuery(
-          'SELECT user_id, tests_completed, total_correct, total_wrong, history FROM user_stats WHERE user_id = ANY($1)',
-          [missingIds]
-        );
-        clearDbError();
-        for (const row of res.rows) {
-          resultMap.set(String(row.user_id), {
-            user_id: String(row.user_id),
-            tests_completed: row.tests_completed || 0,
-            total_correct: row.total_correct || 0,
-            total_wrong: row.total_wrong || 0,
-            history: Array.isArray(row.history) ? row.history : [],
-          });
-          if (redis) {
-            redis.set(`cache:user_stats_summary:${row.user_id}`, JSON.stringify(row), 'EX', 300).catch(() => {});
-          }
+  if (missingIds.length > 0 && isPostgresAvailable()) {
+    try {
+      const res = await pgQuery(
+        'SELECT user_id, tests_completed, total_correct, total_wrong, history FROM user_stats WHERE user_id = ANY($1)',
+        [missingIds]
+      );
+      clearDbError();
+      for (const row of res.rows) {
+        resultMap.set(String(row.user_id), {
+          user_id: String(row.user_id),
+          tests_completed: row.tests_completed || 0,
+          total_correct: row.total_correct || 0,
+          total_wrong: row.total_wrong || 0,
+          history: Array.isArray(row.history) ? row.history : [],
+        });
+        if (redis) {
+          redis.set(`cache:user_stats_summary:${row.user_id}`, JSON.stringify(row), 'EX', 300).catch(() => {});
         }
-        pgHandled = true;
-      } catch (pgErr) {
-        
       }
-    }
-
-    if (!pgHandled && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('user_stats')
-          .select('user_id, tests_completed, total_correct, total_wrong, history')
-          .in('user_id', missingIds);
-
-        if (error) throw error;
-        if (Array.isArray(data)) {
-          for (const row of data) {
-            resultMap.set(String(row.user_id), {
-              user_id: String(row.user_id),
-              tests_completed: row.tests_completed || 0,
-              total_correct: row.total_correct || 0,
-              total_wrong: row.total_wrong || 0,
-              history: Array.isArray(row.history) ? row.history : [],
-            });
-            if (redis) {
-              redis.set(`cache:user_stats_summary:${row.user_id}`, JSON.stringify(row), 'EX', 300).catch(() => {});
-            }
-          }
-        }
-      } catch (err) {
-        logger.error('getUsersStatsSummaryByIds error:', { error: err.message, missingIds });
-      }
+    } catch (pgErr) {
+      logger.error('getUsersStatsSummaryByIds pg error:', { error: pgErr.message, missingIds });
     }
   }
 
@@ -330,7 +230,6 @@ async function updateUserStats(userId, correct, wrong, subjectKey, testId, mista
     try {
       delete stats._fetchFailed;
       stats.user_id = uid;
-      let pgUpdated = false;
 
       if (isPostgresAvailable()) {
         try {
@@ -345,23 +244,9 @@ async function updateUserStats(userId, correct, wrong, subjectKey, testId, mista
               history = EXCLUDED.history;
           `, [uid, stats.tests_completed, stats.total_correct, stats.total_wrong, JSON.stringify(stats.history)]);
           clearDbError();
-          pgUpdated = true;
         } catch (pgErr) {
-          
+          logger.error('updateUserStats pg error:', { userId: uid, error: pgErr.message });
         }
-      }
-
-      if (!pgUpdated && supabase) {
-        // Exclude heavy 'shelf' column to prevent transferring massive JSONB on each test finish
-        const updatePayload = {
-          user_id: uid,
-          tests_completed: stats.tests_completed,
-          total_correct: stats.total_correct,
-          total_wrong: stats.total_wrong,
-          history: stats.history,
-        };
-        const { error } = await supabase.from('user_stats').upsert(updatePayload, { onConflict: 'user_id' });
-        if (error) throw error;
       }
 
       await redis.set(`cache:user_stats:${uid}`, JSON.stringify(stats), 'EX', 300).catch(() => {});
@@ -399,17 +284,11 @@ async function getUserRank(userId, knownTotalCorrect = null) {
         clearDbError();
         return parseInt(res.rows[0].count, 10) + 1;
       } catch (pgErr) {
-        
+        logger.error('getUserRank pg error:', { error: pgErr.message });
+        recordDbError(pgErr);
       }
     }
-
-    const { count, error } = await supabase
-      .from('user_stats')
-      .select('user_id', { count: 'exact', head: true })
-      .gt('total_correct', correct);
-
-    if (error) throw error;
-    return (count ?? 0) + 1;
+    return 'N/A';
   } catch (err) {
     logger.error('getUserRank error:', { userId, error: err.message });
     return 'N/A';
@@ -431,23 +310,11 @@ async function getTopUsers(limit = 10) {
           completed: s.tests_completed,
         }));
       } catch (pgErr) {
-        
+        logger.error('getTopUsers pg error:', { error: pgErr.message });
+        recordDbError(pgErr);
       }
     }
-
-    const { data, error } = await supabase
-      .from('user_stats')
-      .select('user_id, total_correct, tests_completed')
-      .gt('total_correct', 0)
-      .order('total_correct', { ascending: false })
-      .limit(limit);
-
-    if (error || !data) return [];
-    return data.map(s => ({
-      user_id: s.user_id,
-      correct: s.total_correct,
-      completed: s.tests_completed,
-    }));
+    return [];
   } catch (e) {
     logger.error('getTopUsers error:', { error: e.message });
     return [];
@@ -466,34 +333,11 @@ async function getAllUserStats(options = {}) {
       clearDbError();
       return res.rows;
     } catch (pgErr) {
-      
+      logger.error('getAllUserStats pg error:', { error: pgErr.message });
+      recordDbError(pgErr);
     }
   }
-
-  if (!supabase) return [];
-
-  const PAGE_SIZE = 1000;
-  let from = 0;
-  const allRows = [];
-
-  try {
-    while (true) {
-      const { data, error } = await supabase
-        .from('user_stats')
-        .select(selectFields)
-        .range(from, from + PAGE_SIZE - 1);
-
-      if (error) throw error;
-      if (!data || data.length === 0) break;
-      allRows.push(...data);
-      if (data.length < PAGE_SIZE) break;
-      from += PAGE_SIZE;
-    }
-    return allRows;
-  } catch (err) {
-    logger.error('getAllUserStats error:', { error: err.message });
-    return allRows.length > 0 ? allRows : [];
-  }
+  return [];
 }
 
 async function registerUser(userId, fullName, username) {
@@ -514,20 +358,7 @@ async function registerUser(userId, fullName, username) {
         await redis.set(seenKey, '1', 'EX', 86400 * 7).catch(() => {});
         return;
       } catch (pgErr) {
-        
-      }
-    }
-
-    if (supabase) {
-      const { error } = await supabase.from('users').upsert({
-        telegram_id: uid,
-        full_name: fullName || 'Ismsiz',
-        username: username || "yo'q",
-        joined_at: new Date().toISOString().slice(0, 16).replace('T', ' '),
-      }, { onConflict: 'telegram_id', ignoreDuplicates: true });
-
-      if (!error) {
-        await redis.set(seenKey, '1', 'EX', 86400 * 7).catch(() => {});
+        logger.error('registerUser pg error:', { error: pgErr.message });
       }
     }
   } catch (err) {
@@ -542,27 +373,15 @@ async function getUserCount() {
       clearDbError();
       return parseInt(res.rows[0].count, 10);
     } catch (pgErr) {
-      
+      logger.error('getUserCount pg error:', { error: pgErr.message });
     }
   }
 
-  if (!supabase) {
-    try {
-      const storage = require('../core/storage');
-      const stats = await storage.getUsersStats();
-      return Object.keys(stats || {}).length;
-    } catch {
-      return 0;
-    }
-  }
   try {
-    const { count, error } = await supabase
-      .from('users')
-      .select('*', { count: 'exact', head: true });
-    if (error) throw error;
-    return count ?? 0;
-  } catch (err) {
-    logger.error('getUserCount error:', { error: err.message });
+    const storage = require('../core/storage');
+    const stats = await storage.getUsersStats();
+    return Object.keys(stats || {}).length;
+  } catch {
     return 0;
   }
 }
@@ -575,22 +394,10 @@ async function getUserByTelegramId(userId) {
       clearDbError();
       return res.rows[0] || null;
     } catch (pgErr) {
-      
+      logger.error('getUserByTelegramId pg error:', { userId, error: pgErr.message });
     }
   }
-
-  try {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('telegram_id', uid)
-      .maybeSingle();
-    if (error) throw error;
-    return data || null;
-  } catch (err) {
-    logger.error('getUserByTelegramId error:', { userId, error: err.message });
-    return null;
-  }
+  return null;
 }
 
 async function getUsersByIds(userIds) {
@@ -606,21 +413,10 @@ async function getUsersByIds(userIds) {
       clearDbError();
       return res.rows;
     } catch (pgErr) {
-      
+      logger.error('getUsersByIds pg error:', { error: pgErr.message });
     }
   }
-
-  try {
-    const { data, error } = await supabase
-      .from('users')
-      .select('telegram_id, full_name, username, class_name')
-      .in('telegram_id', stringIds);
-    if (error) throw error;
-    return data || [];
-  } catch (err) {
-    logger.error('getUsersByIds error:', { error: err.message });
-    return [];
-  }
+  return [];
 }
 
 async function getUsersPaginated(page = 0, limit = 10) {
@@ -637,60 +433,24 @@ async function getUsersPaginated(page = 0, limit = 10) {
       const total = parseInt(countRes.rows[0].count, 10);
       return { users: dataRes.rows, total };
     } catch (pgErr) {
-      
-    }
-  }
-
-  if (!supabase) {
-    try {
-      const storage = require('../core/storage');
-      const stats = await storage.getUsersStats();
-      const userIds = Object.keys(stats || {});
-      const total = userIds.length;
-      const pagedIds = userIds.slice(from, to + 1);
-      const users = pagedIds.map(uid => ({
-        telegram_id: uid,
-        full_name: stats[uid]?.name || stats[uid]?.full_name || 'Foydalanuvchi',
-        username: stats[uid]?.username || "yo'q",
-        joined_at: stats[uid]?.joined_at || new Date().toISOString(),
-      }));
-      return { users, total };
-    } catch {
-      return { users: [], total: 0 };
+      logger.error('getUsersPaginated pg error:', { error: pgErr.message });
     }
   }
 
   try {
-    // 1. Primary order: created_at (standard PostgreSQL timestamp)
-    let { data, error, count } = await supabase
-      .from('users')
-      .select('*', { count: 'exact' })
-      .order('created_at', { ascending: false, nullsFirst: false })
-      .range(from, to);
-
-    if (error) {
-      // 2. Secondary order: joined_at (recorded on registration)
-      const fallbackJoined = await supabase
-        .from('users')
-        .select('*', { count: 'exact' })
-        .order('joined_at', { ascending: false, nullsFirst: false })
-        .range(from, to);
-
-      if (fallbackJoined.error) {
-        // 3. Fallback: unconstrained range
-        const unconstrained = await supabase
-          .from('users')
-          .select('*', { count: 'exact' })
-          .range(from, to);
-        if (unconstrained.error) throw unconstrained.error;
-        return { users: unconstrained.data || [], total: unconstrained.count ?? 0 };
-      }
-      return { users: fallbackJoined.data || [], total: fallbackJoined.count ?? 0 };
-    }
-
-    return { users: data || [], total: count ?? 0 };
-  } catch (err) {
-    logger.error('getUsersPaginated error:', { page, limit, error: err.message });
+    const storage = require('../core/storage');
+    const stats = await storage.getUsersStats();
+    const userIds = Object.keys(stats || {});
+    const total = userIds.length;
+    const pagedIds = userIds.slice(from, to + 1);
+    const users = pagedIds.map(uid => ({
+      telegram_id: uid,
+      full_name: stats[uid]?.name || stats[uid]?.full_name || 'Foydalanuvchi',
+      username: stats[uid]?.username || "yo'q",
+      joined_at: stats[uid]?.joined_at || new Date().toISOString(),
+    }));
+    return { users, total };
+  } catch {
     return { users: [], total: 0 };
   }
 }
@@ -716,33 +476,10 @@ async function searchUsers(query, limit = 20) {
       clearDbError();
       return res.rows;
     } catch (pgErr) {
-      
+      logger.error('searchUsers pg error:', { error: pgErr.message });
     }
   }
-
-  try {
-    const isNumeric = /^\d+$/.test(cleanQuery);
-    if (isNumeric) {
-      const { data: exactUser } = await supabase
-        .from('users')
-        .select('*')
-        .eq('telegram_id', cleanQuery)
-        .maybeSingle();
-      if (exactUser) return [exactUser];
-    }
-
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .or(`username.ilike.%${cleanQuery}%,full_name.ilike.%${cleanQuery}%`)
-      .limit(limit);
-
-    if (error) throw error;
-    return data || [];
-  } catch (err) {
-    logger.error('searchUsers error:', { query: cleanQuery, error: err.message });
-    return [];
-  }
+  return [];
 }
 
 async function getBroadcastRecipients() {
@@ -752,33 +489,10 @@ async function getBroadcastRecipients() {
       clearDbError();
       return res.rows.map(r => r.telegram_id);
     } catch (pgErr) {
-      
+      logger.error('getBroadcastRecipients pg error:', { error: pgErr.message });
     }
   }
-
-  if (!supabase) return [];
-  try {
-    const pageSize = 1000;
-    let from = 0;
-    const allIds = [];
-    while (true) {
-      const { data, error } = await supabase
-        .from('users')
-        .select('telegram_id, is_banned')
-        .or('is_banned.is.null,is_banned.eq.false')
-        .range(from, from + pageSize - 1);
-      if (error) throw error;
-      if (!data || data.length === 0) break;
-      const valid = data.filter(u => !u.is_banned);
-      allIds.push(...valid.map(u => u.telegram_id));
-      if (data.length < pageSize) break;
-      from += pageSize;
-    }
-    return allIds;
-  } catch (err) {
-    logger.error('getBroadcastRecipients error:', { error: err.message });
-    return [];
-  }
+  return [];
 }
 
 async function getAllUserNames() {
@@ -788,31 +502,10 @@ async function getAllUserNames() {
       clearDbError();
       return res.rows;
     } catch (pgErr) {
-      
+      logger.error('getAllUserNames pg error:', { error: pgErr.message });
     }
   }
-
-  if (!supabase) return [];
-  try {
-    const pageSize = 1000;
-    let from = 0;
-    const allNames = [];
-    while (true) {
-      const { data, error } = await supabase
-        .from('users')
-        .select('telegram_id, full_name')
-        .range(from, from + pageSize - 1);
-      if (error) throw error;
-      if (!data || data.length === 0) break;
-      allNames.push(...data);
-      if (data.length < pageSize) break;
-      from += pageSize;
-    }
-    return allNames;
-  } catch (err) {
-    logger.error('getAllUserNames error:', { error: err.message });
-    return [];
-  }
+  return [];
 }
 
 async function getAllUsers() {
@@ -822,31 +515,10 @@ async function getAllUsers() {
       clearDbError();
       return res.rows;
     } catch (pgErr) {
-      
+      logger.error('getAllUsers pg error:', { error: pgErr.message });
     }
   }
-
-  if (!supabase) return [];
-  try {
-    const pageSize = 1000;
-    let from = 0;
-    const allUsers = [];
-    while (true) {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .range(from, from + pageSize - 1);
-      if (error) throw error;
-      if (!data || data.length === 0) break;
-      allUsers.push(...data);
-      if (data.length < pageSize) break;
-      from += pageSize;
-    }
-    return allUsers;
-  } catch (err) {
-    logger.error('getAllUsers error:', { error: err.message });
-    return [];
-  }
+  return [];
 }
 
 async function getUsersByClassName(className) {
@@ -858,36 +530,10 @@ async function getUsersByClassName(className) {
       clearDbError();
       return res.rows.map(u => ({ ...u, name: u.full_name || '' }));
     } catch (pgErr) {
-      
+      logger.error('getUsersByClassName pg error:', { error: pgErr.message });
     }
   }
-
-  if (!supabase) return [];
-  try {
-    const pageSize = 1000;
-    let from = 0;
-    const allUsers = [];
-    while (true) {
-      const { data, error } = await supabase
-        .from('users')
-        .select('telegram_id, full_name, class_name')
-        .ilike('class_name', className)
-        .range(from, from + pageSize - 1);
-      if (error) throw error;
-      if (!data || data.length === 0) break;
-      const mapped = data.map(u => ({
-        ...u,
-        name: u.full_name || ''
-      }));
-      allUsers.push(...mapped);
-      if (data.length < pageSize) break;
-      from += pageSize;
-    }
-    return allUsers;
-  } catch (err) {
-    logger.error('getUsersByClassName error:', { className, error: err.message });
-    return [];
-  }
+  return [];
 }
 
 // ─── SUBJECTS & USER TESTS RELATIONAL MANAGEMENT ─────────────────
@@ -940,85 +586,11 @@ async function getOrCreateSubject(creatorId, subjectName) {
         }
         return created;
       } catch (pgErr) {
-        
+        logger.error('getOrCreateSubject pg error:', { error: pgErr.message });
       }
     }
 
-    if (!supabase) {
-      return { id: 1, name: rawName, creator_id: uid };
-    }
-
-    // 1. Check if subject already exists for this creator
-    const { data: existing, error: findErr } = await supabase
-      .from('subjects')
-      .select('*')
-      .eq('creator_id', uid)
-      .ilike('name', rawName)
-      .limit(1)
-      .maybeSingle();
-
-    if (findErr) throw findErr;
-    if (existing) {
-      if (redis) {
-        await redis.set(cacheKey, JSON.stringify(existing), 'EX', 3600).catch(() => {});
-        await redis.set(`cache:subject:${existing.id}`, JSON.stringify(existing), 'EX', 3600).catch(() => {});
-      }
-      return existing;
-    }
-
-    // 2. Ensure creator exists in users table (prevent FK violation)
-    try {
-      const { error: userErr } = await supabase.from('users').upsert(
-        { telegram_id: uid, full_name: 'Foydalanuvchi' },
-        { onConflict: 'telegram_id', ignoreDuplicates: true }
-      );
-      if (userErr) {
-        logger.warn('Failed to ensure user in users table before subject creation:', { creatorId: uid, error: userErr.message });
-      }
-    } catch (e) {
-      logger.warn('Exception ensuring user in users table:', { creatorId: uid, error: e.message });
-    }
-
-    // 3. Upsert subject atomically using UNIQUE (name, creator_id) constraint
-    const { data: created, error: insertErr } = await supabase
-      .from('subjects')
-      .upsert(
-        {
-          name: rawName,
-          creator_id: uid,
-          created_at: new Date().toISOString(),
-        },
-        { onConflict: 'name,creator_id' }
-      )
-      .select('*')
-      .single();
-
-    if (insertErr) {
-      // Fallback: check if it was inserted concurrently
-      const { data: fallbackExisting } = await supabase
-        .from('subjects')
-        .select('*')
-        .eq('creator_id', uid)
-        .ilike('name', rawName)
-        .limit(1)
-        .maybeSingle();
-      if (fallbackExisting) {
-        if (redis) {
-          await redis.set(cacheKey, JSON.stringify(fallbackExisting), 'EX', 3600).catch(() => {});
-          await redis.set(`cache:subject:${fallbackExisting.id}`, JSON.stringify(fallbackExisting), 'EX', 3600).catch(() => {});
-        }
-        return fallbackExisting;
-      }
-      throw insertErr;
-    }
-
-    if (created && redis) {
-      await redis.set(cacheKey, JSON.stringify(created), 'EX', 3600).catch(() => {});
-      await redis.set(`cache:subject:${created.id}`, JSON.stringify(created), 'EX', 3600).catch(() => {});
-      await redis.del(`cache:user_subjects:${uid}`).catch(() => {});
-    }
-
-    return created;
+    return { id: 1, name: rawName, creator_id: uid };
   } catch (err) {
     logger.error('getOrCreateSubject error:', { creatorId: uid, subjectName: rawName, error: err.message });
     return { id: null, name: rawName, creator_id: uid };
@@ -1065,33 +637,12 @@ async function getSubjectById(subjectId) {
           return null;
         }
       } catch (pgErr) {
-        
+        logger.error('getSubjectById pg error:', { error: pgErr.message });
       }
     }
 
-    if (!supabase) return null;
-
-    const { data, error } = await supabase
-      .from('subjects')
-      .select('*')
-      .eq('id', sid)
-      .maybeSingle();
-
-    if (error) throw error;
-    if (data) {
-      if (redis) {
-        await redis.set(cacheKey, JSON.stringify(data), 'EX', 3600).catch(() => {});
-      }
-      subjectL1Cache.set(sid, { data, expiresAt: now + 300000 });
-      return data;
-    } else {
-      // Negative caching: subject does not exist in DB (avoids repeated DB hammering)
-      if (redis) {
-        await redis.set(cacheKey, JSON.stringify({ _notFound: true }), 'EX', 600).catch(() => {});
-      }
-      subjectL1Cache.set(sid, { data: null, expiresAt: now + 300000 });
-      return null;
-    }
+    if (l1 && l1.data) return l1.data;
+    return null;
   } catch (err) {
     logger.error('getSubjectById error:', { subjectId: sid, error: err.message });
     recordDbError(err);
@@ -1170,67 +721,12 @@ async function getUserSubjects(creatorId) {
         userSubjectsL1Cache.set(uid, { data: result, expiresAt: now + 120000 });
         return result;
       } catch (pgErr) {
-        
+        logger.error('getUserSubjects pg error:', { error: pgErr.message });
       }
     }
 
-    if (!supabase) return [];
-
-    const { data: subjects, error: subjErr } = await supabase
-      .from('subjects')
-      .select('*')
-      .eq('creator_id', uid)
-      .order('id', { ascending: false });
-
-    if (subjErr) throw subjErr;
-
-    const { data: tests, error: testErr } = await supabase
-      .from('user_tests')
-      .select('id, subject_id, subject, block_name')
-      .eq('creator_id', uid);
-
-    if (testErr) throw testErr;
-
-    const blockCounts = new Map();
-    const legacyMap = new Map();
-    for (const t of tests || []) {
-      if (t.subject_id) {
-        const sid = String(t.subject_id);
-        blockCounts.set(sid, (blockCounts.get(sid) || 0) + 1);
-      } else if (t.subject) {
-        const norm = t.subject.trim().toLowerCase();
-        legacyMap.set(norm, (legacyMap.get(norm) || 0) + 1);
-      }
-    }
-
-    const result = (subjects || []).map((s) => ({
-      ...s,
-      block_count: blockCounts.get(String(s.id)) || legacyMap.get(String(s.name || '').trim().toLowerCase()) || 0,
-    }));
-
-    // Self-healing: agar user_tests ichida subjects jadvaliga kirmay qolgan eski fanlar bo'lsa, ularni ham ko'rsatish
-    const existingNames = new Set((subjects || []).map(s => String(s.name || '').trim().toLowerCase()));
-    for (const t of tests || []) {
-      if (t.subject && !t.subject_id) {
-        const norm = String(t.subject).trim().toLowerCase();
-        if (!existingNames.has(norm)) {
-          existingNames.add(norm);
-          result.push({
-            id: t.id,
-            name: String(t.subject).trim(),
-            creator_id: uid,
-            block_count: legacyMap.get(norm) || 1,
-            is_legacy: true,
-          });
-        }
-      }
-    }
-
-    if (redis) {
-      await redis.set(cacheKey, JSON.stringify(result), 'EX', 3600).catch(() => {});
-    }
-    userSubjectsL1Cache.set(uid, { data: result, expiresAt: now + 120000 });
-    return result;
+    if (l1 && l1.data) return l1.data;
+    return [];
   } catch (err) {
     logger.error('getUserSubjects error:', { creatorId: uid, error: err.message });
     recordDbError(err);
@@ -1274,26 +770,12 @@ async function getSubjectBlocks(subjectId) {
         subjectBlocksL1Cache.set(sid, { data: sorted, expiresAt: now + 300000 });
         return sorted;
       } catch (pgErr) {
-        
+        logger.error('getSubjectBlocks pg error:', { error: pgErr.message });
       }
     }
 
-    if (!supabase) return [];
-
-    const { data, error } = await supabase
-      .from('user_tests')
-      .select('id, creator_id, subject, subject_id, block_name, questions, created_at')
-      .eq('subject_id', sid)
-      .order('id', { ascending: true });
-
-    if (error) throw error;
-
-    const sorted = naturalSortBlocks(data || []);
-    if (redis) {
-      await redis.set(cacheKey, JSON.stringify(sorted), 'EX', 3600).catch(() => {});
-    }
-    subjectBlocksL1Cache.set(sid, { data: sorted, expiresAt: now + 300000 });
-    return sorted;
+    if (l1 && l1.data) return l1.data;
+    return [];
   } catch (err) {
     logger.error('getSubjectBlocks error:', { subjectId: sid, error: err.message });
     recordDbError(err);
@@ -1355,21 +837,11 @@ async function saveUserTest(creatorId, subject, blockName, questions, subjectId 
         await invalidateSubjectCache(resolvedSubjectId, creatorId);
         return res.rows[0].id;
       } catch (pgErr) {
-        
+        logger.error('saveUserTest pg error:', { error: pgErr.message });
       }
     }
 
-    const { data, error } = await supabase.from('user_tests').insert({
-      creator_id: String(creatorId),
-      subject: resolvedSubjectName,
-      subject_id: resolvedSubjectId,
-      block_name: blockName,
-      questions,
-      created_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
-    }).select('id, subject_id');
-    if (error) throw error;
-    await invalidateSubjectCache(resolvedSubjectId, creatorId);
-    return data[0].id;
+    return null;
   } catch (e) {
     logger.error('saveUserTest error:', { creatorId, error: e.message });
     return null;
@@ -1412,23 +884,11 @@ async function saveUserTestsBatch(creatorId, subject, blocks, subjectId = null) 
         await invalidateSubjectCache(resolvedSubjectId, creatorId);
         return insertedIds;
       } catch (pgErr) {
-        
+        logger.error('saveUserTestsBatch pg error:', { error: pgErr.message });
       }
     }
 
-    const now = Date.now();
-    const rows = blocks.map((b, i) => ({
-      creator_id: String(creatorId),
-      subject: resolvedSubjectName,
-      subject_id: resolvedSubjectId,
-      block_name: b.blockName,
-      questions: b.questions,
-      created_at: new Date(now + i * 1000).toISOString().slice(0, 19).replace('T', ' '),
-    }));
-    const { data, error } = await supabase.from('user_tests').insert(rows).select('id');
-    if (error) throw error;
-    await invalidateSubjectCache(resolvedSubjectId, creatorId);
-    return (data || []).map((r) => r.id);
+    return [];
   } catch (e) {
     logger.error('saveUserTestsBatch error:', { creatorId, error: e.message });
     return [];
@@ -1475,33 +935,12 @@ async function getUserTest(testId) {
           return null;
         }
       } catch (pgErr) {
-        
+        logger.error('getUserTest pg error:', { error: pgErr.message });
       }
     }
 
-    if (!supabase) return null;
-
-    const { data, error } = await supabase
-      .from('user_tests')
-      .select('*')
-      .eq('id', tid)
-      .maybeSingle();
-
-    if (error) throw error;
-    if (data) {
-      if (redis) {
-        await redis.set(cacheKey, JSON.stringify(data), 'EX', 3600).catch(() => {});
-      }
-      userTestL1Cache.set(tid, { data, expiresAt: now + 300000 });
-      return data;
-    } else {
-      // Negative caching: test does not exist in DB (avoids repeated DB hammering)
-      if (redis) {
-        await redis.set(cacheKey, JSON.stringify({ _notFound: true }), 'EX', 600).catch(() => {});
-      }
-      userTestL1Cache.set(tid, { data: null, expiresAt: now + 300000 });
-      return null;
-    }
+    if (l1 && l1.data) return l1.data;
+    return null;
   } catch (err) {
     logger.error('getUserTest error:', { testId: tid, error: err.message });
     recordDbError(err);
@@ -1547,20 +986,11 @@ async function getUserCreatedTests(creatorId, includeQuestions = true) {
         }
         return data || [];
       } catch (pgErr) {
-        
+        logger.error('getUserCreatedTests pg error:', { error: pgErr.message });
       }
     }
 
-    const { data, error } = await supabase
-      .from('user_tests')
-      .select(selectFields)
-      .eq('creator_id', String(creatorId))
-      .order('id', { ascending: false });
-    if (error) throw error;
-    if (data && redis) {
-      await redis.set(cacheKey, JSON.stringify(data), 'EX', 3600).catch(() => {});
-    }
-    return data || [];
+    return [];
   } catch (err) {
     logger.error('getUserCreatedTests error:', { creatorId, error: err.message });
     recordDbError(err);
@@ -1585,23 +1015,10 @@ async function deleteUserTest(testId, creatorId) {
         }
         return true;
       } catch (pgErr) {
-        
+        logger.error('deleteUserTest pg error:', { error: pgErr.message });
       }
     }
-
-    const { error } = await supabase
-      .from('user_tests')
-      .delete()
-      .eq('id', tid)
-      .eq('creator_id', String(creatorId));
-    if (error) throw error;
-    await redis.del(`cache:user_test:${tid}`).catch(() => {});
-    if (existing?.subject_id) {
-      await invalidateSubjectCache(existing.subject_id, creatorId);
-    } else {
-      await invalidateUserCreatedTestsCache(creatorId);
-    }
-    return true;
+    return false;
   } catch (err) {
     logger.error('deleteUserTest error:', { testId: tid, error: err.message });
     return false;
@@ -1625,23 +1042,10 @@ async function updateUserTestQuestions(testId, creatorId, newQuestions) {
         }
         return true;
       } catch (pgErr) {
-        
+        logger.error('updateUserTestQuestions pg error:', { error: pgErr.message });
       }
     }
-
-    const { error } = await supabase
-      .from('user_tests')
-      .update({ questions: newQuestions })
-      .eq('id', tid)
-      .eq('creator_id', String(creatorId));
-    if (error) throw error;
-    await redis.del(`cache:user_test:${tid}`).catch(() => {});
-    if (existing?.subject_id) {
-      await invalidateSubjectCache(existing.subject_id, creatorId);
-    } else {
-      await invalidateUserCreatedTestsCache(creatorId);
-    }
-    return true;
+    return false;
   } catch (e) {
     logger.error('updateUserTestQuestions error:', { testId: tid, error: e.message });
     return false;
@@ -1676,20 +1080,7 @@ async function updateUserClass(telegramId, className) {
       invalidateSubscribersCache();
       clearDbError();
     } catch (pgErr) {
-      
-    }
-  }
-
-  if (supabase) {
-    try {
-      const { error } = await supabase.from('users').update({ class_name: canonical }).eq('telegram_id', uid);
-      if (error) {
-        logger.warn('Supabase updateUserClass returned error', { error: error.message, uid });
-      }
-      await supabase.from('user_schedule_settings').update({ group_name: canonical }).eq('telegram_id', uid);
-      invalidateSubscribersCache();
-    } catch (e) {
-      logger.error('updateUserClass error:', { telegramId: uid, error: e.message });
+      logger.error('updateUserClass pg error:', { error: pgErr.message });
     }
   }
 
@@ -1734,29 +1125,7 @@ async function getUserClass(telegramId) {
         return canonical;
       }
     } catch (pgErr) {
-      
-    }
-  }
-
-  // 4. Check Supabase database
-  if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('class_name')
-        .eq('telegram_id', uid)
-        .maybeSingle();
-
-      if (!error && data?.class_name) {
-        const canonical = edupageService.getCanonicalGroupName(data.class_name) || data.class_name;
-        localUserClasses.set(uid, canonical);
-        if (redis) {
-          redis.set(`user_class:${uid}`, canonical, 'EX', 86400 * 30).catch(() => {});
-        }
-        return canonical;
-      }
-    } catch (e) {
-      logger.error('getUserClass error:', { telegramId: uid, error: e.message });
+      logger.error('getUserClass pg error:', { error: pgErr.message });
     }
   }
 
@@ -1826,17 +1195,10 @@ async function updateUserShelf(userId, shelf) {
         await redis.del(`cache:user_stats:${uid}`).catch(() => {});
         return true;
       } catch (pgErr) {
-        
+        logger.error('updateUserShelf pg error:', { error: pgErr.message });
       }
     }
-
-    const { data: updateData, error } = await supabase.from('user_stats').update({ shelf }).eq('user_id', uid).select('user_id');
-    if (error || !updateData || updateData.length === 0) {
-      await supabase.from('user_stats').upsert({ user_id: uid, shelf }, { onConflict: 'user_id' });
-    }
-    if (error) throw error;
-    await redis.del(`cache:user_stats:${uid}`).catch(() => {});
-    return true;
+    return false;
   } catch (e) {
     logger.error('Javonni yangilashda xato:', { userId: uid, error: e.message });
     return false;
@@ -1866,14 +1228,6 @@ async function saveTestToShelf(userId, folderName, testInfo) {
             const res = await pgQuery('SELECT shelf FROM user_stats WHERE user_id = $1 LIMIT 1', [uid]);
             if (res.rows.length && res.rows[0].shelf) {
               stats.shelf = res.rows[0].shelf;
-            }
-          } catch {}
-        }
-        if (!stats.shelf && supabase) {
-          try {
-            const { data: dbRow } = await supabase.from('user_stats').select('shelf').eq('user_id', uid).maybeSingle();
-            if (dbRow && dbRow.shelf) {
-              stats.shelf = dbRow.shelf;
             }
           } catch {}
         }
@@ -1919,7 +1273,6 @@ async function saveTestToShelf(userId, folderName, testInfo) {
         });
       }
 
-      let shelfSaved = false;
       if (isPostgresAvailable()) {
         try {
           await pgQuery(`
@@ -1929,19 +1282,8 @@ async function saveTestToShelf(userId, folderName, testInfo) {
             DO UPDATE SET shelf = EXCLUDED.shelf
           `, [uid, JSON.stringify(shelf)]);
           clearDbError();
-          shelfSaved = true;
         } catch (pgErr) {
-          
-        }
-      }
-
-      if (!shelfSaved && supabase) {
-        const { data: updateData, error } = await supabase.from('user_stats').update({ shelf }).eq('user_id', uid).select('user_id');
-        if (error || !updateData || updateData.length === 0) {
-          stats.shelf = shelf;
-          delete stats._fetchFailed;
-          const { error: upsertErr } = await supabase.from('user_stats').upsert(stats, { onConflict: 'user_id' });
-          if (upsertErr) throw upsertErr;
+          logger.error('saveTestToShelf pg error:', { error: pgErr.message });
         }
       }
 
@@ -1994,10 +1336,6 @@ async function banUser(userId) {
         logger.error('PostgreSQL banUser error:', { error: pgErr.message });
       }
     }
-    if (supabase) {
-      const { error } = await supabase.from('users').update({ is_banned: true }).eq('telegram_id', uid);
-      if (error) throw error;
-    }
     if (redis) {
       await redis.set(`user_banned:${uid}`, '1', 'EX', 300).catch(() => {});
     }
@@ -2020,10 +1358,6 @@ async function unbanUser(userId) {
       } catch (pgErr) {
         logger.error('PostgreSQL unbanUser error:', { error: pgErr.message });
       }
-    }
-    if (supabase) {
-      const { error } = await supabase.from('users').update({ is_banned: false }).eq('telegram_id', uid);
-      if (error) throw error;
     }
     if (redis) {
       await redis.del(`user_banned:${uid}`).catch(() => {});
@@ -2068,30 +1402,11 @@ async function isUserBanned(userId, forceRefresh = false) {
         }
         return isBanned;
       } catch (pgErr) {
-        logger.error('PostgreSQL isUserBanned error, falling back:', { error: pgErr.message });
+        logger.error('PostgreSQL isUserBanned error:', { error: pgErr.message });
       }
     }
 
-    if (!supabase) return false;
-
-    const { data, error } = await supabase
-      .from('users')
-      .select('is_banned')
-      .eq('telegram_id', uid)
-      .maybeSingle();
-
-    if (error) throw error;
-    const isBanned = data?.is_banned === true;
-    userBannedL1Cache.set(uid, isBanned);
-    if (redis) {
-      if (isBanned) {
-        await redis.set(`user_banned:${uid}`, '1', 'EX', 300).catch(() => {});
-      } else {
-        await redis.del(`user_banned:${uid}`).catch(() => {});
-        await redis.del(`user_blocked:${uid}`).catch(() => {});
-      }
-    }
-    return isBanned;
+    return false;
   } catch {
     return false;
   }
@@ -2118,9 +1433,6 @@ async function markUserBlocked(userId, isBlocked = true) {
     }
     if (isPostgresAvailable()) {
       await pgQuery('UPDATE users SET is_banned = $1 WHERE telegram_id = $2', [isBlocked, uid]).catch(() => {});
-    }
-    if (supabase) {
-      await supabase.from('users').update({ is_banned: isBlocked }).eq('telegram_id', uid);
     }
     invalidateSubscribersCache();
     logger.debug('Updated user blocked status', { userId: uid, isBlocked });
@@ -2151,20 +1463,7 @@ async function isUserBlocked(userId) {
       } catch {}
     }
 
-    if (!supabase) return false;
-
-    const { data, error } = await supabase
-      .from('users')
-      .select('is_banned')
-      .eq('telegram_id', uid)
-      .maybeSingle();
-
-    if (error) throw error;
-    const isBlocked = data?.is_banned === true;
-    if (redis) {
-      await redis.set(`user_blocked:${uid}`, isBlocked ? '1' : '0', 'EX', 3600).catch(() => {});
-    }
-    return isBlocked;
+    return localBlockedUsers.has(uid);
   } catch {
     return localBlockedUsers.has(uid);
   }
@@ -2185,38 +1484,14 @@ async function getScheduleBroadcastUsers() {
       clearDbError();
       return res.rows;
     } catch (pgErr) {
-      
+      logger.error('getScheduleBroadcastUsers pg error:', { error: pgErr.message });
     }
   }
-
-  if (!supabase) return [];
-  try {
-    const pageSize = 1000;
-    let from = 0;
-    const allUsers = [];
-    while (true) {
-      const { data, error } = await supabase
-        .from('users')
-        .select('telegram_id, class_name, is_banned')
-        .not('class_name', 'is', null)
-        .or('is_banned.is.null,is_banned.eq.false')
-        .range(from, from + pageSize - 1);
-
-      if (error) throw error;
-      if (!data || data.length === 0) break;
-      allUsers.push(...data);
-      if (data.length < pageSize) break;
-      from += pageSize;
-    }
-    return allUsers.filter(u => u.class_name && u.class_name.trim() && !u.is_banned);
-  } catch (err) {
-    logger.error('getScheduleBroadcastUsers error:', { error: err.message });
-    return [];
-  }
+  return [];
 }
 
 // ==========================================
-// 📅 TIMETABLE CDN CACHE (Telegram CDN + Supabase/PostgreSQL)
+// 📅 TIMETABLE CDN CACHE (PostgreSQL + Redis + L1 Map)
 // ==========================================
 
 async function getTimetableCache(groupInput, theme) {
@@ -2268,56 +1543,11 @@ async function getTimetableCache(groupInput, theme) {
         return data;
       }
     } catch (pgErr) {
-      
+      logger.error('getTimetableCache pg error:', { error: pgErr.message });
     }
   }
 
-  if (!supabase) return null;
-
-  try {
-    // 2. Direct query by primaryNorm
-    let { data } = await supabase
-      .from('timetable_cache')
-      .select('id, group_name, group_normalized, theme, file_id, channel_message_id, schedule_hash, updated_at')
-      .eq('group_normalized', primaryNorm)
-      .eq('theme', validTheme)
-      .maybeSingle();
-
-    // 3. Fallback: if primaryNorm was derived from canonical, also check raw normalized if different
-    const rawNorm = edupageService.normalizeGroupName(groupInput);
-    if (!data && rawNorm && rawNorm !== primaryNorm) {
-      const res = await supabase
-        .from('timetable_cache')
-        .select('id, group_name, group_normalized, theme, file_id, channel_message_id, schedule_hash, updated_at')
-        .eq('group_normalized', rawNorm)
-        .eq('theme', validTheme)
-        .maybeSingle();
-      if (res?.data) data = res.data;
-    }
-
-    // 4. Fallback: match by group_name directly
-    if (!data && canonical) {
-      const res = await supabase
-        .from('timetable_cache')
-        .select('id, group_name, group_normalized, theme, file_id, channel_message_id, schedule_hash, updated_at')
-        .ilike('group_name', canonical)
-        .eq('theme', validTheme)
-        .maybeSingle();
-      if (res?.data) data = res.data;
-    }
-
-    if (data) {
-      fallbackTimetableCache.set(cacheKey, data);
-      if (redis) {
-        await redis.set(cacheKey, JSON.stringify(data), 'EX', 86400 * 7).catch(() => {});
-      }
-      return data;
-    }
-    return null;
-  } catch (err) {
-    logger.error('getTimetableCache error:', { error: err.message, group: primaryNorm, theme: validTheme });
-    return null;
-  }
+  return null;
 }
 
 async function upsertTimetableCache({ groupName, groupNormalized, theme, fileId, channelMessageId, scheduleHash }) {
@@ -2338,7 +1568,7 @@ async function upsertTimetableCache({ groupName, groupNormalized, theme, fileId,
 
   const cacheKey = `cache:timetable_cdn:${norm}:${validTheme}`;
 
-  // Check in-memory fallback cache first to eliminate no-op Supabase writes
+  // Check in-memory fallback cache first to eliminate redundant writes
   const existing = fallbackTimetableCache.get(cacheKey);
   const isNoOp = existing &&
     existing.file_id === row.file_id &&
@@ -2368,38 +1598,27 @@ async function upsertTimetableCache({ groupName, groupNormalized, theme, fileId,
 
   if (isPostgresAvailable()) {
     try {
-      await pgQuery(`
-        INSERT INTO timetable_cache (group_name, group_normalized, theme, file_id, channel_message_id, schedule_hash, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, NOW())
-        ON CONFLICT (id) DO UPDATE SET
-          group_name = EXCLUDED.group_name,
-          group_normalized = EXCLUDED.group_normalized,
-          theme = EXCLUDED.theme,
-          file_id = EXCLUDED.file_id,
-          channel_message_id = EXCLUDED.channel_message_id,
-          schedule_hash = EXCLUDED.schedule_hash,
-          updated_at = NOW();
+      const updateRes = await pgQuery(`
+        UPDATE timetable_cache
+        SET group_name = $1, file_id = $4, channel_message_id = $5, schedule_hash = $6, updated_at = NOW()
+        WHERE group_normalized = $2 AND theme = $3
       `, [row.group_name, row.group_normalized, row.theme, row.file_id, row.channel_message_id, row.schedule_hash]);
+
+      if (updateRes.rowCount === 0) {
+        await pgQuery(`
+          INSERT INTO timetable_cache (group_name, group_normalized, theme, file_id, channel_message_id, schedule_hash, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        `, [row.group_name, row.group_normalized, row.theme, row.file_id, row.channel_message_id, row.schedule_hash]);
+      }
       clearDbError();
       return true;
     } catch (pgErr) {
-      
+      logger.error('upsertTimetableCache pg error:', { error: pgErr.message, group: norm, theme: validTheme });
+      return false;
     }
   }
 
-  if (!supabase) return true;
-
-  try {
-    const { error } = await supabase
-      .from('timetable_cache')
-      .upsert(row, { onConflict: 'group_normalized,theme' });
-
-    if (error) throw error;
-    return true;
-  } catch (err) {
-    logger.error('upsertTimetableCache error:', { error: err.message, group: norm, theme: validTheme });
-    return false;
-  }
+  return true;
 }
 
 async function deleteTimetableCache(groupInput, theme = null) {
@@ -2451,29 +1670,6 @@ async function deleteTimetableCache(groupInput, theme = null) {
       logger.error('PostgreSQL deleteTimetableCache error:', { error: pgErr.message });
     }
   }
-
-  if (supabase) {
-    try {
-      for (const n of keysToDelete) {
-        let q = supabase.from('timetable_cache').delete().eq('group_normalized', n);
-        if (theme) {
-          const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
-          q = q.eq('theme', validTheme);
-        }
-        await q;
-      }
-      if (canonical) {
-        let q = supabase.from('timetable_cache').delete().ilike('group_name', canonical);
-        if (theme) {
-          const validTheme = ['dark', 'light', 'vibrant'].includes(theme) ? theme : 'dark';
-          q = q.eq('theme', validTheme);
-        }
-        await q;
-      }
-    } catch (err) {
-      logger.warn('deleteTimetableCache supabase error:', { error: err.message });
-    }
-  }
 }
 
 async function getAllCachedTimetables() {
@@ -2490,21 +1686,11 @@ async function getAllCachedTimetables() {
       clearDbError();
       return res.rows.length > 0 ? res.rows : fallbackList;
     } catch (pgErr) {
-      
+      logger.error('getAllCachedTimetables pg error:', { error: pgErr.message });
     }
   }
 
-  if (!supabase) return fallbackList;
-  try {
-    const { data, error } = await supabase
-      .from('timetable_cache')
-      .select('group_name, group_normalized, theme, file_id, schedule_hash, channel_message_id, updated_at');
-    if (error) throw error;
-    return data && data.length > 0 ? data : fallbackList;
-  } catch (err) {
-    logger.error('getAllCachedTimetables error:', { error: err.message });
-    return fallbackList;
-  }
+  return fallbackList;
 }
 
 async function clearAllTimetableCache() {
@@ -2549,16 +1735,6 @@ async function clearAllTimetableCache() {
       logger.info('Cleared PostgreSQL timetable_cache table.');
     } catch (pgErr) {
       logger.error('Error clearing PostgreSQL timetable cache:', { error: pgErr.message });
-    }
-  }
-
-  if (supabase) {
-    try {
-      const { error } = await supabase.from('timetable_cache').delete().neq('group_normalized', '__NONE__');
-      if (error) throw error;
-      logger.info('Cleared Supabase timetable_cache table.');
-    } catch (e) {
-      logger.error('Error clearing Supabase timetable cache:', { error: e.message });
     }
   }
 }
@@ -2661,41 +1837,11 @@ async function getUserScheduleSettings(telegramId) {
           };
         }
       } catch (pgErr) {
-        logger.warn('getUserScheduleSettings Postgres error, falling back:', { error: pgErr.message });
+        logger.warn('getUserScheduleSettings Postgres error:', { error: pgErr.message });
       }
     }
 
-    // 1. First attempt to fetch from user_schedule_settings table
-    if (supabase) {
-      const { data, error } = await supabase
-        .from('user_schedule_settings')
-        .select('*')
-        .eq('telegram_id', uid)
-        .maybeSingle();
-
-      if (!error && data) {
-        // Also verify student_group / class_name from users if group_name is missing
-        let groupName = data.group_name;
-        if (!groupName) {
-          const userRow = await getUserByTelegramId(uid);
-          groupName = userRow?.student_group || userRow?.class_name || null;
-        }
-        return {
-          telegram_id: uid,
-          group_name: groupName,
-          notify_mode: data.notify_mode || 'shift_aware',
-          offset_minutes: Number(data.offset_minutes) || 60,
-          custom_morning_time: data.custom_morning_time || '07:00',
-          custom_evening_time: data.custom_evening_time || '20:00',
-          pre_class_5min_bell: data.pre_class_5min_bell !== false,
-          building_change_alert: data.building_change_alert !== false,
-          quiet_hours_enabled: data.quiet_hours_enabled !== false,
-          schedule_notifications: data.notify_mode !== 'disabled',
-        };
-      }
-    }
-
-    // 2. Fallback to existing public.users table fields
+    // Fallback to existing public.users table fields
     const userRow = await getUserByTelegramId(uid);
     if (userRow) {
       const groupName = userRow.student_group || userRow.class_name || null;
@@ -2720,7 +1866,7 @@ async function getUserScheduleSettings(telegramId) {
 }
 
 /**
- * Upserts user schedule preferences into Supabase with backwards compatibility.
+ * Upserts user schedule preferences into PostgreSQL with backwards compatibility.
  * @param {number|string} telegramId
  * @param {object} patch
  */
@@ -2801,51 +1947,8 @@ async function upsertUserScheduleSettings(telegramId, patch) {
         invalidateSubscribersCache();
         return true;
       } catch (pgErr) {
-        logger.warn('upsertUserScheduleSettings Postgres error, falling back:', { error: pgErr.message });
+        logger.warn('upsertUserScheduleSettings Postgres error:', { error: pgErr.message });
       }
-    }
-
-    if (supabase) {
-      const payload = {
-        telegram_id: uid,
-        ...patch,
-        updated_at: new Date().toISOString(),
-      };
-      if (groupName) {
-        payload.group_name = groupName;
-      }
-
-      const { error } = await supabase
-        .from('user_schedule_settings')
-        .upsert(payload, { onConflict: 'telegram_id' });
-
-      if (error) {
-        logger.warn('upsertUserScheduleSettings Supabase error:', { error: error.message });
-      }
-
-      // Also mirror to users table for backwards-compatibility if columns exist
-      const userUpdates = {};
-      if (patch.notify_mode !== undefined) userUpdates.notif_mode = patch.notify_mode;
-      if (patch.offset_minutes !== undefined) userUpdates.notif_offset_min = patch.offset_minutes;
-      if (patch.custom_morning_time !== undefined) userUpdates.notif_custom_time = patch.custom_morning_time;
-      if (patch.pre_class_5min_bell !== undefined) userUpdates.notif_next_bell = patch.pre_class_5min_bell;
-      if (groupName !== undefined) {
-        userUpdates.class_name = groupName;
-      }
-
-      if (Object.keys(userUpdates).length > 0) {
-        try {
-          await supabase
-            .from('users')
-            .update(userUpdates)
-            .eq('telegram_id', uid);
-        } catch {
-          // ignore
-        }
-      }
-
-      invalidateSubscribersCache();
-      return !error;
     }
   } catch (err) {
     logger.error('upsertUserScheduleSettings exception:', { telegramId: uid, error: err.message });
@@ -2892,7 +1995,7 @@ function cleanupDueNotesCache(now = Date.now()) {
 /**
  * Paginated fetch of all active schedule subscribers (>1000 users safe).
  * Merges public.users and public.user_schedule_settings by telegram_id.
- * Caches in memory for 3 minutes to avoid hammering Supabase on every 60-second cron tick.
+ * Caches in memory for 3 minutes.
  * @param {boolean} forceRefresh
  */
 async function getAllActiveScheduleSubscribers(forceRefresh = false) {
@@ -2902,7 +2005,6 @@ async function getAllActiveScheduleSubscribers(forceRefresh = false) {
   }
 
   const subscriberMap = new Map();
-  let hasError = false;
 
   if (isPostgresAvailable()) {
     try {
@@ -2950,121 +2052,17 @@ async function getAllActiveScheduleSubscribers(forceRefresh = false) {
       activeSubscribersCacheExpiresAt = Date.now() + SUBSCRIBERS_CACHE_TTL_MS;
       return activeSubscribersCache;
     } catch (pgErr) {
-      logger.warn('getAllActiveScheduleSubscribers Postgres error, falling back:', { error: pgErr.message });
-      hasError = true;
+      logger.warn('getAllActiveScheduleSubscribers Postgres error:', { error: pgErr.message });
+      if (activeSubscribersCache && activeSubscribersCache.length > 0) {
+        activeSubscribersCacheExpiresAt = Date.now() + 30000;
+        return activeSubscribersCache;
+      }
     }
   }
 
-  if (!supabase) {
-    if (!activeSubscribersCache || forceRefresh) activeSubscribersCache = [];
-    return activeSubscribersCache;
-  }
-
-  try {
-    // 1. Fetch base users from public.users with pagination
-    let from = 0;
-    while (true) {
-      const { data, error } = await supabase
-        .from('users')
-        .select('telegram_id, class_name, is_banned')
-        .not('class_name', 'is', null)
-        .or('is_banned.is.null,is_banned.eq.false')
-        .range(from, from + PAGE_SIZE - 1);
-
-      if (error) {
-        logger.warn('getAllActiveScheduleSubscribers users error:', { error: error.message });
-        hasError = true;
-        break;
-      }
-      if (!data || data.length === 0) break;
-
-      for (const u of data) {
-        const group = u.class_name;
-        if (!group) continue;
-
-        const uid = Number(u.telegram_id);
-        if (localBlockedUsers.has(String(uid))) continue;
-
-        subscriberMap.set(uid, {
-          telegram_id: uid,
-          group_name: group,
-          notify_mode: 'shift_aware',
-          offset_minutes: 60,
-          custom_morning_time: '07:00',
-          custom_evening_time: '20:00',
-          pre_class_5min_bell: true,
-          building_change_alert: true,
-          quiet_hours_enabled: true,
-          schedule_notifications: true,
-        });
-      }
-      if (data.length < PAGE_SIZE) break;
-      from += PAGE_SIZE;
-    }
-
-    // 2. Fetch custom settings from user_schedule_settings with pagination
-    from = 0;
-    while (true) {
-      const { data, error } = await supabase
-        .from('user_schedule_settings')
-        .select('*')
-        .range(from, from + PAGE_SIZE - 1);
-
-      if (error) {
-        logger.warn('getAllActiveScheduleSubscribers settings error:', { error: error.message });
-        hasError = true;
-        break;
-      }
-      if (!data || data.length === 0) break;
-
-      for (const s of data) {
-        const uid = Number(s.telegram_id);
-        if (s.notify_mode === 'disabled' || s.schedule_notifications === false) {
-          subscriberMap.delete(uid);
-          continue;
-        }
-
-        const existing = subscriberMap.get(uid);
-        const resolvedGroup = s.group_name || existing?.group_name;
-        if (!resolvedGroup) {
-          continue;
-        }
-
-        subscriberMap.set(uid, {
-          telegram_id: uid,
-          group_name: resolvedGroup,
-          notify_mode: s.notify_mode || existing?.notify_mode || 'shift_aware',
-          offset_minutes: s.offset_minutes !== undefined ? Number(s.offset_minutes) : (existing?.offset_minutes || 60),
-          custom_morning_time: s.custom_morning_time || existing?.custom_morning_time || '07:00',
-          custom_evening_time: s.custom_evening_time || existing?.custom_evening_time || '20:00',
-          pre_class_5min_bell: s.pre_class_5min_bell !== undefined ? s.pre_class_5min_bell : (existing?.pre_class_5min_bell !== false),
-          building_change_alert: s.building_change_alert !== undefined ? s.building_change_alert : (existing?.building_change_alert !== false),
-          quiet_hours_enabled: s.quiet_hours_enabled !== undefined ? s.quiet_hours_enabled : (existing?.quiet_hours_enabled !== false),
-          schedule_notifications: true,
-        });
-      }
-
-      if (data.length < PAGE_SIZE) break;
-      from += PAGE_SIZE;
-    }
-
-    if (hasError && activeSubscribersCache && activeSubscribersCache.length > 0) {
-      logger.warn(`getAllActiveScheduleSubscribers encountered upstream error; serving stale cache (${activeSubscribersCache.length} subscribers)`);
-      activeSubscribersCacheExpiresAt = Date.now() + 30000;
-      return activeSubscribersCache;
-    }
-
-    activeSubscribersCache = Array.from(subscriberMap.values());
-    activeSubscribersCacheExpiresAt = Date.now() + SUBSCRIBERS_CACHE_TTL_MS;
-    return activeSubscribersCache;
-  } catch (err) {
-    logger.error('getAllActiveScheduleSubscribers exception:', { error: err.message });
-    if (activeSubscribersCache && activeSubscribersCache.length > 0) {
-      activeSubscribersCacheExpiresAt = Date.now() + 30000;
-      return activeSubscribersCache;
-    }
-    return Array.from(subscriberMap.values());
-  }
+  activeSubscribersCache = Array.from(subscriberMap.values());
+  activeSubscribersCacheExpiresAt = Date.now() + SUBSCRIBERS_CACHE_TTL_MS;
+  return activeSubscribersCache;
 }
 
 /**
@@ -3113,46 +2111,11 @@ async function createCourseNote(payload) {
         invalidateDueNotesCache();
         return res.rows[0] || null;
       } catch (pgErr) {
-        logger.warn('createCourseNote Postgres error, falling back:', { error: pgErr.message });
+        logger.warn('createCourseNote Postgres error:', { error: pgErr.message });
       }
     }
 
-    if (!supabase) return null;
-
-    // Try primary table course_notes
-    let { data, error } = await supabase
-      .from('course_notes')
-      .insert([record])
-      .select('*')
-      .single();
-
-    if (error && error.message?.includes('relation "public.course_notes" does not exist')) {
-      // Fallback to class_notes if migration used class_notes name
-      const fallbackRecord = {
-        creator_id: record.creator_id,
-        group_name: record.group_name,
-        is_group_note: record.is_group_shared,
-        subject_name: record.subject_name,
-        target_lesson_type: record.target_lesson_type.toUpperCase(),
-        target_date: record.target_date,
-        target_period: record.target_period,
-        target_start_time: record.target_start_time || '08:00',
-        note_text: record.note_text,
-        media_type: record.media_type,
-        media_file_id: record.media_file_id,
-        status: record.status,
-      };
-      const res = await supabase.from('class_notes').insert([fallbackRecord]).select('*').single();
-      data = res.data;
-      error = res.error;
-    }
-
-    if (error) {
-      logger.error('createCourseNote error:', { error: error.message });
-      return null;
-    }
-    invalidateDueNotesCache();
-    return data;
+    return null;
   } catch (err) {
     logger.error('createCourseNote exception:', { error: err.message });
     return null;
@@ -3206,55 +2169,14 @@ async function getDueNotesForLesson(telegramId, groupName, dateStr) {
       }
       return resData;
     } catch (pgErr) {
-      logger.warn('getDueNotesForLesson Postgres error, falling back:', { error: pgErr.message });
+      logger.warn('getDueNotesForLesson Postgres error:', { error: pgErr.message });
     }
   }
 
-  if (!supabase) return [];
-
-  try {
-    let query = supabase
-      .from('course_notes')
-      .select('*')
-      .in('status', ['pending', 'notified_evening', 'snoozed'])
-      .eq('target_date', dateStr);
-
-    if (telegramId && groupName) {
-      const safeGroup = String(groupName).replace(/"/g, '').trim();
-      query = query.or(`creator_id.eq.${Number(telegramId)},and(is_group_shared.eq.true,group_name.eq."${safeGroup}")`);
-    } else if (groupName) {
-      query = query.eq('group_name', groupName);
-    } else if (telegramId) {
-      query = query.eq('creator_id', Number(telegramId));
-    }
-
-    const { data, error } = await query;
-    if (error) {
-      // Try class_notes fallback
-      const { data: altData } = await supabase
-        .from('class_notes')
-        .select('*')
-        .in('status', ['pending', 'snoozed'])
-        .eq('target_date', dateStr);
-      const resData = altData || [];
-      if (isGlobalDateQuery) {
-        setDueNotesCache(dateStr, resData, now + DUE_NOTES_CACHE_TTL_MS);
-      }
-      return resData;
-    }
-
-    const resData = data || [];
-    if (isGlobalDateQuery) {
-      setDueNotesCache(dateStr, resData, now + DUE_NOTES_CACHE_TTL_MS);
-    }
-    return resData;
-  } catch (err) {
-    logger.error('getDueNotesForLesson exception:', { error: err.message });
-    if (isGlobalDateQuery && dueNotesCache.has(dateStr)) {
-      return dueNotesCache.get(dateStr).data;
-    }
-    return [];
+  if (isGlobalDateQuery && dueNotesCache.has(dateStr)) {
+    return dueNotesCache.get(dateStr).data;
   }
+  return [];
 }
 
 /**
@@ -3273,27 +2195,11 @@ async function getNoteById(noteId) {
       if (altRes.rows.length > 0) return altRes.rows[0];
       return null;
     } catch (pgErr) {
-      logger.warn('getNoteById Postgres error, falling back:', { error: pgErr.message });
+      logger.warn('getNoteById Postgres error:', { error: pgErr.message });
     }
   }
 
-  if (!supabase) return null;
-  try {
-    let { data, error } = await supabase
-      .from('course_notes')
-      .select('*')
-      .eq('id', id)
-      .maybeSingle();
-
-    if (error || !data) {
-      const alt = await supabase.from('class_notes').select('*').eq('id', id).maybeSingle();
-      data = alt.data;
-    }
-    return data || null;
-  } catch (err) {
-    logger.error('getNoteById error:', { noteId, error: err.message });
-    return null;
-  }
+  return null;
 }
 
 /**
@@ -3360,56 +2266,11 @@ async function updateNoteStatus(noteId, telegramId, newStatus, newTargetDate = n
       invalidateDueNotesCache();
       return (res.rowCount || 0) > 0;
     } catch (pgErr) {
-      logger.warn('updateNoteStatus Postgres error, falling back:', { error: pgErr.message });
+      logger.warn('updateNoteStatus Postgres error:', { error: pgErr.message });
     }
   }
 
-  if (!supabase) return false;
-  try {
-    const updates = {
-      updated_at: new Date().toISOString(),
-    };
-
-    if (newStatus === 'notified_before_class') {
-      updates.notified_before_class_at = new Date().toISOString();
-    } else if (newStatus) {
-      updates.status = newStatus;
-      if (newStatus === 'notified_evening') {
-        updates.notified_evening_at = new Date().toISOString();
-      }
-    }
-
-    if (newStatus === 'snoozed' || newTargetDate) {
-      updates.notified_before_class_at = null;
-      updates.notified_evening_at = null;
-    }
-
-    if (newTargetDate) updates.target_date = newTargetDate;
-    if (newTargetPeriod) updates.target_period = Number(newTargetPeriod);
-    if (newStartTime) updates.target_start_time = newStartTime;
-
-    if (extraFields && typeof extraFields === 'object') {
-      Object.assign(updates, extraFields);
-    }
-
-    let query = supabase.from('course_notes').update(updates).eq('id', id);
-    if (telegramId) {
-      query = query.eq('creator_id', Number(telegramId));
-    }
-    let { error } = await query;
-
-    if (error && error.message?.includes('course_notes')) {
-      const altQuery = supabase.from('class_notes').update(updates).eq('id', id);
-      const res = await altQuery;
-      error = res.error;
-    }
-
-    invalidateDueNotesCache();
-    return !error;
-  } catch (err) {
-    logger.error('updateNoteStatus exception:', { noteId, error: err.message });
-    return false;
-  }
+  return false;
 }
 
 /**
@@ -3446,50 +2307,11 @@ async function getUserActiveNotes(telegramId, groupName = null) {
       const res = await pgQuery(sql, params);
       return res.rows || [];
     } catch (pgErr) {
-      logger.warn('getUserActiveNotes Postgres error, falling back:', { error: pgErr.message });
+      logger.warn('getUserActiveNotes Postgres error:', { error: pgErr.message });
     }
   }
 
-  if (!supabase) return [];
-  try {
-    let query = supabase
-      .from('course_notes')
-      .select('*')
-      .in('status', ['pending', 'notified_evening', 'snoozed'])
-      .gte('target_date', todayIso)
-      .order('target_date', { ascending: true })
-      .order('target_period', { ascending: true });
-
-    if (groupName) {
-      const safeGroup = String(groupName).replace(/"/g, '').trim();
-      query = query.or(`creator_id.eq.${uid},and(is_group_shared.eq.true,group_name.eq."${safeGroup}")`);
-    } else {
-      query = query.eq('creator_id', uid);
-    }
-
-    const { data, error } = await query;
-    if (error) {
-      // Fallback to class_notes
-      const altQuery = supabase
-        .from('class_notes')
-        .select('*')
-        .in('status', ['pending', 'snoozed'])
-        .gte('target_date', todayIso)
-        .order('target_date', { ascending: true });
-      if (groupName) {
-        const safeGroup = String(groupName).replace(/"/g, '').trim();
-        altQuery.or(`creator_id.eq.${uid},and(is_group_note.eq.true,group_name.eq."${safeGroup}")`);
-      } else {
-        altQuery.eq('creator_id', uid);
-      }
-      const altRes = await altQuery;
-      return altRes.data || [];
-    }
-    return data || [];
-  } catch (err) {
-    logger.error('getUserActiveNotes exception:', { telegramId, error: err.message });
-    return [];
-  }
+  return [];
 }
 
 module.exports = {
@@ -3568,4 +2390,3 @@ module.exports = {
   isRecentDbError,
   clearDbError,
 };
-

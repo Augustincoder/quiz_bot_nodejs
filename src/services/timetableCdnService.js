@@ -106,7 +106,7 @@ async function uploadPhotoToChannel(telegram, imageBuffer, caption) {
 /**
  * Primary runtime function:
  * Resolves weekly schedule photo with multi-tier CDN caching:
- * 1. Redis / Supabase lookup (instant <100ms return if file_id exists)
+ * 1. Redis / PostgreSQL lookup (instant <100ms return if file_id exists)
  * 2. Just-In-Time (JIT) generation if cache miss -> uploads to channel -> saves to DB -> returns file_id
  *
  * @param {object} telegram Telegraf telegram client (ctx.telegram or bot.telegram)
@@ -129,7 +129,7 @@ async function getOrGenerateTimetablePhoto(telegram, rawClassName, theme = 'dark
   }
   const currentScheduleHash = computeScheduleHash(rawSchedule);
 
-  // 2. Fast Cache Hit check in Supabase / Redis with strict schedule_hash verification
+  // 2. Fast Cache Hit check in PostgreSQL / Redis with strict schedule_hash verification
   const cached = await dbService.getTimetableCache(className, validTheme);
   const cachedFileId = cached?.file_id || cached?.fileId;
   const cachedHash = cached?.schedule_hash || cached?.scheduleHash;
@@ -432,7 +432,7 @@ async function prewarmAllTimetables(telegram, options = {}) {
           workerState.processed++;
 
           try {
-            // Check if already in Supabase/Redis cache with valid file_id
+            // Check if already in PostgreSQL/Redis cache with valid file_id
             const existing = await dbService.getTimetableCache(norm, theme);
 
             // If already cached and schedule hasn't changed -> SKIP! (0ms cost, theme already present)

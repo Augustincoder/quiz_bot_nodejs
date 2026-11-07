@@ -11,7 +11,7 @@ const { userNameCache } = require('./utils');
 const logger = require('./logger');
 
 /**
- * Initializes memory storage and loads all tests from Supabase and Local JSON.
+ * Initializes memory storage and loads all tests from PostgreSQL and Local JSON.
  */
 async function loadAllTests() {
   console.log("📦 Testlar yuklanmoqda...");
@@ -19,16 +19,16 @@ async function loadAllTests() {
   // Initialize storage
   botModule.memoryDb = storage.initStorage();
 
-  // 1. Load official tests from Supabase
+  // 1. Load official tests from PostgreSQL
   try {
     const dbTests = await dbService.loadAllOfficialTests();
     for (const [subj, tests] of Object.entries(dbTests)) {
       if (!botModule.memoryDb[subj]) botModule.memoryDb[subj] = {};
       Object.assign(botModule.memoryDb[subj], tests);
     }
-    console.log("✅ Supabase rasmiy testlari yuklandi.");
+    console.log("✅ PostgreSQL rasmiy testlari yuklandi.");
   } catch (e) {
-    console.warn("⚠️ Supabase testlari yuklanmadi:", e.message);
+    console.warn("⚠️ PostgreSQL testlari yuklanmadi:", e.message);
   }
 
   // 2. Load Local JSON tests

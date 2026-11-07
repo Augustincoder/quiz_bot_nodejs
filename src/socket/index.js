@@ -3,7 +3,6 @@
 const { Server } = require("socket.io");
 const { socketAuthMiddleware } = require("./auth");
 const roomManager = require("./roomManager");
-const { supabase } = require("../lib/supabase");
 const { isPostgresAvailable, query: pgQuery } = require("../lib/postgres");
 const { advanceQuestion, showLeaderboard } = require('./gameLoop');
 
@@ -115,35 +114,15 @@ function initSocket(httpServer) {
           room.idleTimer = null;
         }
 
-        let questions = null;
+        let questions = [];
 
         if (isPostgresAvailable()) {
           try {
             const pgRes = await pgQuery('SELECT * FROM kahoot_questions LIMIT 30');
-            if (pgRes.rows && pgRes.rows.length > 0) {
-              questions = pgRes.rows;
-            }
+            questions = pgRes.rows || [];
           } catch (pgErr) {
-            // fall back to supabase
+            logger.warn('kahoot_questions Postgres query error:', { error: pgErr.message });
           }
-        }
-
-        if (!questions && supabase) {
-          const { data, error } = await supabase
-            .from('kahoot_questions')
-            .select('*')
-            .limit(30);
-
-          if (error) {
-            room.status = 'lobby';
-            throw error;
-          }
-          questions = data;
-        }
-
-        if (!questions) {
-          room.status = 'lobby';
-          return socket.emit("room:error", { code: 503, message: "Ma'lumotlar bazasi ulanmagan yoki mavjud emas" });
         }
 
         if (!questions || questions.length === 0) {

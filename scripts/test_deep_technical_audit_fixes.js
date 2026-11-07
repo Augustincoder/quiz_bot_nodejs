@@ -18,8 +18,12 @@ assert(
   'getUsersStatsSummaryByIds must use cache:user_stats_summary: to prevent poisoning full user_stats'
 );
 assert(
-  dbServiceSrc.includes('if (!stats.shelf && supabase)'),
+  dbServiceSrc.includes('if (!stats.shelf)'),
   'saveTestToShelf must self-heal and check shelf from DB if missing from cache'
+);
+assert(
+  dbServiceSrc.includes('SELECT shelf FROM user_stats'),
+  'saveTestToShelf must query shelf from PostgreSQL user_stats table'
 );
 console.log('  ✅ [PASS] BUG-01: Cache isolation and shelf data loss protection verified.\n');
 

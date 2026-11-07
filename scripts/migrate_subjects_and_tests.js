@@ -1,115 +1,76 @@
 'use strict';
 
 /**
- * Migration Script: Migrate existing user_tests to subjects table with zero data loss.
+ * Migration Script: Migrate existing user_tests to subjects table in PostgreSQL.
  * Can be executed via: node scripts/migrate_subjects_and_tests.js
  */
 
-const { supabase } = require('../src/lib/supabase');
+const { isPostgresAvailable, query: pgQuery, withTransaction, pool } = require('../src/lib/postgres');
 const logger = require('../src/core/logger');
 
 async function runMigration() {
-  if (!supabase) {
-    console.error('❌ Supabase client ulanmagan! .env faylida SUPABASE_URL va SUPABASE_KEY mavjudligini tekshiring.');
-    console.log('💡 Agar SQL orqali to\'g\'ridan-to\'g\'ri bajarmoqchi bo\'lsangiz, scripts/migrate_subjects_and_tests.sql faylini Supabase SQL Editor ga nusxalang.');
+  if (!isPostgresAvailable()) {
+    console.error('❌ PostgreSQL ulanmagan! .env faylida DATABASE_URL mavjudligini tekshiring.');
     process.exit(1);
   }
 
-  console.log('🚀 Migratsiya boshlandi: user_tests -> subjects...');
+  console.log('🚀 Migratsiya boshlandi: user_tests -> subjects (PostgreSQL)...');
 
   try {
-    // 1. users jadvalida yo'q creator_idlarni aniqlash va kiritish
-    const { data: testUsers, error: userFetchErr } = await supabase
-      .from('user_tests')
-      .select('creator_id')
-      .not('creator_id', 'is', null);
+    // 1. Ensure creator_ids exist in users table
+    const testUsers = await pgQuery('SELECT DISTINCT creator_id FROM user_tests WHERE creator_id IS NOT NULL');
+    console.log(`📊 user_tests ichida ${testUsers.rows.length} ta noyob creator_id topildi.`);
 
-    if (userFetchErr) throw userFetchErr;
-
-    const uniqueCreatorIds = Array.from(new Set((testUsers || []).map((t) => String(t.creator_id)).filter(Boolean)));
-    console.log(`📊 user_tests ichida ${uniqueCreatorIds.length} ta noyob creator_id topildi.`);
-
-    for (const uid of uniqueCreatorIds) {
-      await supabase
-        .from('users')
-        .upsert(
-          { telegram_id: uid, full_name: 'Foydalanuvchi' },
-          { onConflict: 'telegram_id', ignoreDuplicates: true }
-        );
+    for (const row of testUsers.rows) {
+      await pgQuery(
+        'INSERT INTO users (telegram_id, full_name) VALUES ($1, $2) ON CONFLICT (telegram_id) DO NOTHING',
+        [row.creator_id, 'Foydalanuvchi']
+      );
     }
 
-    // 2. Mavjud fanlar va testlarni olish
-    const { data: allTests, error: testErr } = await supabase
-      .from('user_tests')
-      .select('id, creator_id, subject, subject_id, created_at')
-      .order('id', { ascending: true });
+    // 2. Fetch existing subjects and tests
+    const allTests = await pgQuery('SELECT id, creator_id, subject, subject_id, created_at FROM user_tests ORDER BY id ASC');
+    const existingSubjects = await pgQuery('SELECT * FROM subjects');
 
-    if (testErr) throw testErr;
+    console.log(`📋 Jami testlar: ${allTests.rows.length} ta. Mavjud fanlar: ${existingSubjects.rows.length} ta.`);
 
-    const { data: existingSubjects, error: subjErr } = await supabase
-      .from('subjects')
-      .select('*');
-
-    if (subjErr) throw subjErr;
-
-    console.log(`📋 Jami testlar: ${allTests.length} ta. Mavjud fanlar: ${existingSubjects.length} ta.`);
-
-    // creator_id + normalized_name bo'yicha subject xaritasi
     const subjectMap = new Map();
-    for (const s of existingSubjects) {
-      const key = `${s.creator_id}:${String(s.name || '').trim().toLowerCase()}`;
+    for (const s of existingSubjects.rows) {
+      const key = `${s.creator_id}:${String(s.subject_name || s.name || '').trim().toLowerCase()}`;
       subjectMap.set(key, s);
     }
 
     let createdSubjectsCount = 0;
     let updatedTestsCount = 0;
 
-    // 3. subjects jadvalida yo'q fanlarni kiritish
-    for (const t of allTests) {
+    // 3. Insert missing subjects
+    for (const t of allTests.rows) {
       if (!t.creator_id || !t.subject) continue;
       const normName = String(t.subject).trim();
       if (!normName) continue;
       const key = `${t.creator_id}:${normName.toLowerCase()}`;
 
       if (!subjectMap.has(key)) {
-        const { data: newSubj, error: createErr } = await supabase
-          .from('subjects')
-          .insert({
-            name: normName,
-            creator_id: String(t.creator_id),
-            created_at: t.created_at || new Date().toISOString(),
-          })
-          .select('*')
-          .single();
-
-        if (createErr) {
-          console.error(`⚠️ Fanni yaratishda xato [${normName}]:`, createErr.message);
-          continue;
-        }
-
+        const ins = await pgQuery(
+          'INSERT INTO subjects (creator_id, subject_name, subject_norm, created_at) VALUES ($1, $2, $3, NOW()) RETURNING *',
+          [t.creator_id, normName, normName.toLowerCase()]
+        );
+        const newSubj = ins.rows[0];
         subjectMap.set(key, newSubj);
         createdSubjectsCount++;
       }
     }
 
-    // 4. user_tests.subject_id ni to'ldirish
-    for (const t of allTests) {
+    // 4. Fill user_tests.subject_id
+    for (const t of allTests.rows) {
       if (!t.subject_id && t.creator_id && t.subject) {
         const normName = String(t.subject).trim();
         const key = `${t.creator_id}:${normName.toLowerCase()}`;
         const subj = subjectMap.get(key);
 
         if (subj) {
-          const { error: updateErr } = await supabase
-            .from('user_tests')
-            .update({ subject_id: subj.id })
-            .eq('id', t.id);
-
-          if (updateErr) {
-            console.error(`⚠️ Test ${t.id} ni yangilashda xato:`, updateErr.message);
-          } else {
-            updatedTestsCount++;
-          }
+          await pgQuery('UPDATE user_tests SET subject_id = $1 WHERE id = $2', [subj.id, t.id]);
+          updatedTestsCount++;
         }
       }
     }
@@ -122,6 +83,8 @@ async function runMigration() {
   } catch (err) {
     console.error('❌ Migratsiya jarayonida kutilmagan xato:', err.message);
     process.exit(1);
+  } finally {
+    if (pool) await pool.end().catch(() => {});
   }
 }
 

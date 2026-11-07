@@ -44,15 +44,16 @@ async function runTests() {
   assert.strictEqual(regex.test('reply_12345_67890'), false, 'reply_12345_67890 must NOT match cbReplyStart (reserved for contactAdmin)');
   pass('ARCH-02: adminHandlers regex anchored with $; prevents hijacking contactAdmin callbacks');
 
-  // --- ARCH-03: Supabase client consolidation ---
-  console.log('\n--- Test 3: ARCH-03 Supabase client consolidation ---');
+  // --- ARCH-03: PostgreSQL client consolidation & Supabase elimination ---
+  console.log('\n--- Test 3: ARCH-03 PostgreSQL client consolidation ---');
   const dbServiceSrc = fs.readFileSync(path.join(__dirname, '../src/services/dbService.js'), 'utf8');
   assert(!dbServiceSrc.includes("require('@supabase/supabase-js')"), 'dbService.js should not directly import @supabase/supabase-js');
-  assert(dbServiceSrc.includes("require('../lib/supabase')"), 'dbService.js must import { supabase } from ../lib/supabase');
+  assert(!dbServiceSrc.includes("require('../lib/supabase')"), 'dbService.js must not import legacy supabase');
+  assert(dbServiceSrc.includes("require('../lib/postgres')"), 'dbService.js must import native postgres from ../lib/postgres');
   
   const dbService = require('../src/services/dbService');
   assert(typeof dbService === 'object' && dbService !== null, 'dbService module loaded successfully');
-  pass('ARCH-03: dbService.js imports unified Supabase client from src/lib/supabase');
+  pass('ARCH-03: dbService.js imports unified PostgreSQL client from src/lib/postgres');
 
   // --- ARCH-04: scheduleHandler export & ESLint configuration ---
   console.log('\n--- Test 4: ARCH-04 Duplicate export and ESLint config check ---');

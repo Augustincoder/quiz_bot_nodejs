@@ -251,14 +251,30 @@ async function runTests() {
     }
   };
 
-  // Re-require dbService with mocked supabase to verify run-time execution
-  delete require.cache[require.resolve('../src/lib/supabase')];
+  // Re-require dbService with mocked postgres to verify run-time execution
+  delete require.cache[require.resolve('../src/lib/postgres')];
   delete require.cache[require.resolve('../src/services/dbService')];
-  require.cache[require.resolve('../src/lib/supabase')] = {
-    id: require.resolve('../src/lib/supabase'),
-    filename: require.resolve('../src/lib/supabase'),
+  require.cache[require.resolve('../src/lib/postgres')] = {
+    id: require.resolve('../src/lib/postgres'),
+    filename: require.resolve('../src/lib/postgres'),
     loaded: true,
-    exports: { supabase: mockSupabase }
+    exports: {
+      isPostgresAvailable: () => true,
+      query: async (sql, params) => {
+        if (sql.includes('INSERT INTO users')) {
+          mockUsersUpsertCalled = true;
+          return { rows: [] };
+        }
+        if (sql.includes('SELECT * FROM subjects')) {
+          return { rows: [] };
+        }
+        if (sql.includes('INSERT INTO subjects')) {
+          mockSubjectsUpsertCalled = true;
+          return { rows: [{ id: 888, subject_name: 'Accounting in Business', creator_id: 6109006282 }] };
+        }
+        return { rows: [] };
+      },
+    }
   };
 
   const freshDbService = require('../src/services/dbService');
@@ -267,7 +283,7 @@ async function runTests() {
   assert.strictEqual(subjectRes.id, 888, 'Must return created subject id');
   assert.strictEqual(mockUsersUpsertCalled, true, 'Must have attempted to ensure user existence');
   assert.strictEqual(mockSubjectsUpsertCalled, true, 'Must have upserted the new subject');
-  console.log('✅ Test 6 PASSED: getOrCreateSubject correctly handles PostgrestBuilder thenable without .catch error.');
+  console.log('✅ Test 6 PASSED: getOrCreateSubject correctly executes PostgreSQL parameterized queries.');
 
   console.log('\n🎉 ALL SUBJECT_ID ARCHITECTURE TESTS PASSED!');
 }

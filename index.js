@@ -2,7 +2,7 @@
 process.env.TZ = process.env.TZ || "Asia/Tashkent";
 require("dotenv").config();
 
-// Enforce IPv4-first DNS order across all outbound connections (Telegram, Supabase, EduPage)
+// Enforce IPv4-first DNS order across all outbound connections (Telegram, PostgreSQL, EduPage)
 const dns = require("dns");
 if (typeof dns.setDefaultResultOrder === "function") {
   dns.setDefaultResultOrder("ipv4first");

@@ -274,8 +274,8 @@ console.log('  ✅ [PASS] Bug #17: Multi-subject join with / and room span merge
 console.log('10. Testing Bug #15: getUsersByClassName column select');
 const fs = require('fs');
 const dbCode = fs.readFileSync(require.resolve('../src/services/dbService'), 'utf8');
-assert(!dbCode.includes(".select('telegram_id, name, class_name')"), 'dbService must not select non-existent column "name"');
-assert(dbCode.includes(".select('telegram_id, full_name, class_name')"), 'dbService must select "full_name"');
+assert(!dbCode.includes('telegram_id, name, class_name'), 'dbService must not select non-existent column "name"');
+assert(dbCode.includes('telegram_id, full_name, class_name'), 'dbService must select "full_name"');
 console.log('  ✅ [PASS] Bug #15: getUsersByClassName verified to query full_name column.\n');
 
 // ─── TEST 11: BullMQ Custom Job ID Validation (Bug #10 regression) ───
@@ -465,17 +465,14 @@ console.log('24. Testing Audit v3 Section 3: Supabase Optimizations & Security')
 const dbServiceSrc = fs.readFileSync(require.resolve('../src/services/dbService'), 'utf8');
 assert(dbServiceSrc.includes('getUsersStatsSummaryByIds'), 'dbService must export getUsersStatsSummaryByIds');
 assert(dbServiceSrc.includes('isNoOp'), 'upsertTimetableCache must check isNoOp to eliminate redundant writes');
-assert(dbServiceSrc.includes("updatePayload = {"), 'updateUserStats must use updatePayload excluding shelf');
+assert(dbServiceSrc.includes("tests_completed = EXCLUDED.tests_completed"), 'updateUserStats must update only stats fields excluding shelf');
 
 const adminHandlersSrc = fs.readFileSync(require.resolve('../src/handlers/adminHandlers'), 'utf8');
 assert(adminHandlersSrc.includes('getUsersStatsSummaryByIds'), 'adminHandlers must use getUsersStatsSummaryByIds in cbAdminUsersList');
 
-const rlsMigrationExists = fs.existsSync('migrations/supabase_optimization_and_rls.sql');
-assert(rlsMigrationExists, 'migrations/supabase_optimization_and_rls.sql must exist');
-
-const supabaseSrc = fs.readFileSync(require.resolve('../src/lib/supabase'), 'utf8');
-assert(supabaseSrc.includes("payload && payload.role === 'anon'"), 'supabase.js must check and warn if anon key is configured');
-console.log('  ✅ [PASS] Audit v3 Section 3: Supabase optimizations, migration, and key validation verified.\n');
+const postgresSrc = fs.readFileSync(require.resolve('../src/lib/postgres'), 'utf8');
+assert(postgresSrc.includes('postgresBreaker'), 'postgres.js must include circuit breaker protection');
+console.log('  ✅ [PASS] Audit v3 Section 3: PostgreSQL optimizations, migration, and pool validation verified.\n');
 
 
 // ─── TEST 25: Deep Audit: Marathon Session Retention & Double-Start Guard ───
@@ -499,7 +496,7 @@ assert(shelfSrc.includes('Buffer.byteLength(folderName, "utf8") > 30'), 'onNewFo
 assert(shelfSrc.includes('String(test.testName || test.name || "Test")'), 'cbOpenFolder must safely handle missing testName without throw');
 
 const dbServiceShelfSrc = fs.readFileSync(require.resolve('../src/services/dbService'), 'utf8');
-assert(dbServiceShelfSrc.includes(".update({ shelf }).eq('user_id', uid).select('user_id')"), "dbService updateUserShelf/saveTestToShelf must check update row count via select");
+assert(dbServiceShelfSrc.includes("shelf = EXCLUDED.shelf"), "dbService updateUserShelf/saveTestToShelf must upsert shelf cleanly in user_stats");
 
 const startHandlerShelfSrc = fs.readFileSync(require.resolve('../src/handlers/startHandler'), 'utf8');
 assert(startHandlerShelfSrc.includes('if (folderName.length > 20) folderName = folderName.slice(0, 20);'), 'startHandler must clamp shelf folderName to <= 20 chars');

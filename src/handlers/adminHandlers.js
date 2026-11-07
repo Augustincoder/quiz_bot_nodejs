@@ -360,7 +360,7 @@ async function cbAdminRefreshDashboard(ctx) {
 // ============================================
 
 /**
- * Synchronizes all university group timetables between EduPage and Supabase cache.
+ * Synchronizes all university group timetables between EduPage and PostgreSQL cache.
  * Compares schedules; updates only changed or missing timetables.
  */
 async function cmdRefreshAllTimetable(ctx) {

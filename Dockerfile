@@ -35,7 +35,7 @@ WORKDIR /app
 # 1. System packages:
 #    - dumb-init: PID 1 supervisor (forwards SIGINT/SIGTERM, reaps zombies)
 #    - fontconfig: Enables librsvg/sharp font discovery for timetable images
-#    - ca-certificates: TLS/SSL trust store for Telegram, Supabase, Redis, Gemini
+#    - ca-certificates: TLS/SSL trust store for Telegram, PostgreSQL, Redis, Gemini
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         dumb-init \

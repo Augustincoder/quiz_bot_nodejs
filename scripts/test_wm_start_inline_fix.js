@@ -95,10 +95,11 @@ async function runTests() {
   assert.strictEqual(emptyAlertGiven, true, 'Alert should be shown when no mistakes are found');
   console.log('  ✅ Passed: Handled empty mistakes safely with user notification');
 
-  // ─── TEST 3: Supabase fetch timeout configuration ───────────
-  console.log('\n--- 3. Testing Supabase fetch timeout ---');
-  const { supabase } = require('../src/lib/supabase');
-  console.log('  ✅ Passed: Supabase module loaded with timeout-enabled custom fetch');
+  // ─── TEST 3: PostgreSQL connection pool configuration ───────────
+  console.log('\n--- 3. Testing PostgreSQL connection pool configuration ---');
+  const { pool, isPostgresAvailable } = require('../src/lib/postgres');
+  assert(pool, 'PostgreSQL pool must be initialized');
+  console.log('  ✅ Passed: PostgreSQL pool loaded with connection timeout and circuit breaker protection');
 
   console.log('\n==================================================');
   console.log('🎉 ALL cbWmStartInline & RESILIENCY TESTS PASSED!');

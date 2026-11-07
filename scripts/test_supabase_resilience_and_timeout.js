@@ -7,15 +7,15 @@ const fs = require('fs');
 const path = require('path');
 
 async function runTests() {
-  console.log('🧪 Starting Supabase Resilience, Circuit Breaker & Negative Caching Tests...\n');
+  console.log('🧪 Starting Database Resilience, Circuit Breaker & Negative Caching Tests...\n');
 
-  // ─── 1. Test Supabase Client & Circuit Breaker Exports ───
-  console.log('1. Testing supabase.js Circuit Breaker & isSupabaseAvailable exports');
-  const sbModule = require('../src/lib/supabase');
-  assert(typeof sbModule.isSupabaseAvailable === 'function', 'isSupabaseAvailable must be exported');
-  assert(sbModule.supabaseBreaker, 'supabaseBreaker must be exported');
-  assert.strictEqual(sbModule.supabaseBreaker.getState().state, 'CLOSED', 'Breaker must start CLOSED');
-  console.log('  ✅ Passed: Supabase module exports Circuit Breaker and health check.\n');
+  // ─── 1. Test PostgreSQL Client & Circuit Breaker Exports ───
+  console.log('1. Testing postgres.js Circuit Breaker & isPostgresAvailable exports');
+  const pgModule = require('../src/lib/postgres');
+  assert(typeof pgModule.isPostgresAvailable === 'function', 'isPostgresAvailable must be exported');
+  assert(pgModule.postgresBreaker, 'postgresBreaker must be exported');
+  assert.strictEqual(pgModule.postgresBreaker.getState().state, 'CLOSED', 'Breaker must start CLOSED');
+  console.log('  ✅ Passed: PostgreSQL module exports Circuit Breaker and health check.\n');
 
   // ─── 2. Test Circuit Breaker Tripping on Failures & Fast-Fail ───
   console.log('2. Testing Circuit Breaker trip on consecutive failures and fast-fail');
@@ -110,7 +110,7 @@ async function runTests() {
   console.log('  ✅ Passed: User-facing messages clearly notify users of DB maintenance instead of false deletions.\n');
 
   console.log('================================================================');
-  console.log('🎉 ALL SUPABASE RESILIENCE & TIMEOUT TESTS PASSED SUCCESSFULLY!');
+  console.log('🎉 ALL DATABASE RESILIENCE & TIMEOUT TESTS PASSED SUCCESSFULLY!');
   console.log('================================================================\n');
 }
 

@@ -35,8 +35,6 @@ const QUESTIONS_PER_TEST = 25;
 
 const QUESTIONS_PER_TEST_ENV = envInt('QUESTIONS_PER_TEST', QUESTIONS_PER_TEST);
 
-const SUPABASE_URL = env('SUPABASE_URL', '');
-const SUPABASE_KEY = env('SUPABASE_KEY', '');
 const DATABASE_URL = env('DATABASE_URL', 'postgresql://_24c4d3f3b7552851:_43bd4eabf61d7974c2374fef2c8f3b@primary.quiz-bot-database--hqhlj8nqhyp9.addon.code.run:5432/_62d18dea4e8b?sslmode=require');
 const rawAdminId = env('ADMIN_IDS') || env('ADMIN_ID', '');
 const ADMIN_IDS = rawAdminId
@@ -70,8 +68,6 @@ module.exports = {
   DATA_DIR,
   SUBJECTS,
   QUESTIONS_PER_TEST: QUESTIONS_PER_TEST_ENV,
-  SUPABASE_URL,
-  SUPABASE_KEY,
   DATABASE_URL,
   ADMIN_ID,
   ADMIN_IDS,

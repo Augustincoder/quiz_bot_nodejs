@@ -160,7 +160,7 @@ function fetchWeeklyScheduleImage(className, theme = 'dark') {
 }
 
 /**
- * High-performance weekly schedule photo resolver with Telegram Channel CDN & Supabase cache
+ * High-performance weekly schedule photo resolver with Telegram Channel CDN & PostgreSQL cache
  * @param {string} className Group name
  * @param {string} theme 'dark' | 'light' | 'vibrant'
  * @param {object} telegram Telegraf telegram client instance
