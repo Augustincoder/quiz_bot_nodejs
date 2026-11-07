@@ -6,7 +6,7 @@ const { CircuitBreaker } = require('../core/circuitBreaker');
 const logger = require('../core/logger');
 
 // Northflank internal default URL (port 5432 inside Northflank cluster network)
-const DEFAULT_NF_URL = 'postgresql://_24c4d3f3b7552851:_43bd4eabf61d7974c2374fef2c8f3b@primary.quiz-bot-database--hqhlj8nqhyp9.addon.code.run:5432/_62d18dea4e8b?sslmode=require';
+const DEFAULT_NF_URL = 'postgresql://_24c4d3f3b7552851:_43bd4eabf61d7974c2374fef2c8f3b@primary.quiz-bot-database--hqhlj8nqhyp9.addon.code.run:5432/_62d18dea4e8b?sslmode=require&uselibpqcompat=true';
 const databaseUrl = process.env.DATABASE_URL || DEFAULT_NF_URL;
 
 let pool = null;
@@ -23,12 +23,17 @@ function isPostgresAvailable() {
 }
 
 try {
-  const needsSsl = databaseUrl.includes('sslmode=require') || 
-                   databaseUrl.includes('addon.code.run') || 
-                   databaseUrl.includes('northflank.app');
+  let normalizedUrl = databaseUrl;
+  if (normalizedUrl.includes('sslmode=require') && !normalizedUrl.includes('uselibpqcompat=true')) {
+    normalizedUrl += (normalizedUrl.includes('?') ? '&' : '?') + 'uselibpqcompat=true';
+  }
+
+  const needsSsl = normalizedUrl.includes('sslmode=require') || 
+                   normalizedUrl.includes('addon.code.run') || 
+                   normalizedUrl.includes('northflank.app');
 
   pool = new Pool({
-    connectionString: databaseUrl,
+    connectionString: normalizedUrl,
     ssl: needsSsl ? { rejectUnauthorized: false } : false,
     max: parseInt(process.env.DB_POOL_MAX, 10) || 20,
     idleTimeoutMillis: 30000,
