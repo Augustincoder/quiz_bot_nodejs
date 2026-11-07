@@ -1,7 +1,16 @@
 'use strict';
 
 const https = require('https');
-const { SECOND_BOT, ADMIN_ID } = require('../config/config');
+
+function getCredentials() {
+  const secondBot = process.env.SECOND_BOT || '';
+  const rawAdmin = process.env.ADMIN_ID || process.env.ADMIN_IDS || '';
+  const adminId = rawAdmin ? parseInt(String(rawAdmin).split(',')[0].trim(), 10) : null;
+  return {
+    secondBot,
+    adminId: (!Number.isNaN(adminId) && adminId > 0) ? adminId : null,
+  };
+}
 
 const DEDUP_WINDOW_MS = 60 * 1000; // 60 seconds deduplication window
 const MAX_TELEGRAM_LEN = 3900; // Safe threshold well under Telegram's 4096-char limit
@@ -233,14 +242,15 @@ class ErrorReporterService {
       return await this._mockDispatcher(text);
     }
 
-    if (!SECOND_BOT || !ADMIN_ID) {
+    const { secondBot, adminId } = getCredentials();
+    if (!secondBot || !adminId) {
       return false;
     }
 
     return new Promise((resolve) => {
       try {
         const postData = JSON.stringify({
-          chat_id: ADMIN_ID,
+          chat_id: adminId,
           text: text,
           parse_mode: 'HTML',
           disable_web_page_preview: true,
@@ -249,7 +259,7 @@ class ErrorReporterService {
         const options = {
           hostname: 'api.telegram.org',
           port: 443,
-          path: `/bot${SECOND_BOT}/sendMessage`,
+          path: `/bot${secondBot}/sendMessage`,
           method: 'POST',
           agent: this._httpsAgent,
           headers: {
