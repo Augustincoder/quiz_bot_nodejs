@@ -38,8 +38,11 @@ async function advanceQuestion(roomCode) {
   
   // Prepare Kahoot Question
   const subQ = Array.isArray(q.questions) ? q.questions[0] : q;
-  const text = subQ.question || q.question || "";
-  const options = subQ.options || q.options;
+  const text = subQ.question || q.question || subQ.title || q.title || "";
+  let options = subQ.options || q.options;
+  if (typeof options === 'string') {
+    try { options = JSON.parse(options); } catch {}
+  }
   const rawAns = subQ.correct_index ?? q.correct_index ?? subQ.correct_option ?? q.correct_option ?? q.answer ?? "";
   room.currentAnswer = String(rawAns);
   room.currentExplanation = subQ.explanation || q.explanation;
@@ -50,7 +53,7 @@ async function advanceQuestion(roomCode) {
     text,
     points: room.currentPointValue,
     options,
-    timeLimit: 20
+    timeLimit: subQ.time_limit || q.time_limit || 20
   };
   
   const readTimerMs = Math.min(text.length * 100, 15000);
@@ -112,12 +115,11 @@ async function handleGameEnd(roomCode, room) {
         await Promise.allSettled(finalLeaderboard.map(async (player) => {
             try {
                 await pgQuery(`
-                    INSERT INTO user_profiles (user_id, display_name, kahoot_score)
-                    VALUES ($1, $2, $3)
+                    INSERT INTO user_profiles (user_id, kahoot_score)
+                    VALUES ($1, $2)
                     ON CONFLICT (user_id) DO UPDATE SET
-                        display_name = EXCLUDED.display_name,
                         kahoot_score = COALESCE(user_profiles.kahoot_score, 0) + EXCLUDED.kahoot_score
-                `, [player.userId, player.displayName, player.score]);
+                `, [String(player.userId), Math.max(0, parseInt(player.score, 10) || 0)]);
             } catch (e) {
                 console.error(`Postgres stats persist error for ${player.userId}:`, e);
             }

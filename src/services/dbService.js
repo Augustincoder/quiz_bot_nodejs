@@ -54,6 +54,9 @@ async function loadAllOfficialTests() {
 }
 
 async function saveOfficialTest(subject, testId, questions) {
+  const tId = parseInt(testId, 10);
+  if (isNaN(tId)) return false;
+
   if (isPostgresAvailable()) {
     try {
       await pgQuery(`
@@ -61,7 +64,7 @@ async function saveOfficialTest(subject, testId, questions) {
         VALUES ($1, $2, $3)
         ON CONFLICT (subject, test_id)
         DO UPDATE SET questions = EXCLUDED.questions, created_at = NOW()
-      `, [subject, testId, JSON.stringify(questions)]);
+      `, [subject, tId, JSON.stringify(questions)]);
       clearDbError();
 
       // Hot-reload memoryDb and invalidate blocks pagination cache
@@ -69,8 +72,8 @@ async function saveOfficialTest(subject, testId, questions) {
         const botModule = require('../core/bot');
         if (!botModule.memoryDb) botModule.memoryDb = {};
         if (!botModule.memoryDb[subject]) botModule.memoryDb[subject] = {};
-        botModule.memoryDb[subject][testId] = {
-          test_id: testId,
+        botModule.memoryDb[subject][tId] = {
+          test_id: tId,
           range: `1-${questions?.length || 0}`,
           questions: questions || []
         };
@@ -1076,7 +1079,10 @@ async function updateUserClass(telegramId, className) {
   if (isPostgresAvailable()) {
     try {
       await pgQuery('UPDATE users SET class_name = $1 WHERE telegram_id = $2', [canonical, uid]);
-      await pgQuery('UPDATE user_schedule_settings SET group_name = $1 WHERE telegram_id = $2::bigint', [canonical, uid]);
+      const tidNum = parseInt(uid, 10);
+      if (!isNaN(tidNum)) {
+        await pgQuery('UPDATE user_schedule_settings SET group_name = $1 WHERE telegram_id = $2', [canonical, tidNum]);
+      }
       invalidateSubscribersCache();
       clearDbError();
     } catch (pgErr) {
@@ -1940,7 +1946,7 @@ async function upsertUserScheduleSettings(telegramId, patch) {
           userVals.push(groupName);
         }
         if (userUpdates.length > 0) {
-          userVals.push(uid);
+          userVals.push(String(telegramId));
           await pgQuery(`UPDATE users SET ${userUpdates.join(', ')} WHERE telegram_id = $${uIdx}`, userVals).catch(() => {});
         }
 

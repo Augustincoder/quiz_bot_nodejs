@@ -162,8 +162,8 @@ router.post('/upload-questions', async (req, res) => {
         await withTransaction(async (client) => {
           for (const item of data) {
             await client.query(
-              'INSERT INTO brain_ring_questions (question, options, answer, points, time_limit) VALUES ($1, $2, $3, $4, $5)',
-              [item.question, JSON.stringify(item.options || []), item.answer, item.points || 1, item.time_limit || 60]
+              'INSERT INTO brain_ring_questions (question, answer, category) VALUES ($1, $2, $3)',
+              [item.question, item.answer, item.comment || null]
             );
           }
         });
@@ -174,8 +174,8 @@ router.post('/upload-questions', async (req, res) => {
         await withTransaction(async (client) => {
           for (const item of data) {
             await client.query(
-              'INSERT INTO zakovat_questions (question, answer, explanation, points, time_limit) VALUES ($1, $2, $3, $4, $5)',
-              [item.question, item.answer, item.explanation || null, item.points || 1, item.time_limit || 60]
+              'INSERT INTO zakovat_questions (question, answer, category) VALUES ($1, $2, $3)',
+              [item.question, item.answer, item.comment || item.author || null]
             );
           }
         });
@@ -186,11 +186,17 @@ router.post('/upload-questions', async (req, res) => {
         await withTransaction(async (client) => {
           for (const item of data) {
             const topic = item.topic || 'Umumiy';
-            const questions = item.questions || [item];
-            await client.query(
-              'INSERT INTO kahoot_questions (title, questions) VALUES ($1, $2)',
-              [topic, JSON.stringify(questions)]
-            );
+            const questions = Array.isArray(item.questions) ? item.questions : [item];
+            for (const q of questions) {
+              const qTitle = q.question || topic || 'Savol';
+              const qOptions = JSON.stringify(q.options || []);
+              const qCorrect = q.correct_index ?? 0;
+              const qTime = q.time_limit || 30;
+              await client.query(
+                'INSERT INTO kahoot_questions (title, options, correct_index, time_limit) VALUES ($1, $2, $3, $4)',
+                [qTitle, qOptions, qCorrect, qTime]
+              );
+            }
           }
         });
         break;
@@ -199,10 +205,19 @@ router.post('/upload-questions', async (req, res) => {
       case 'erudit': {
         await withTransaction(async (client) => {
           for (const item of data) {
-            await client.query(
-              'INSERT INTO erudit_questions (question, answer, points) VALUES ($1, $2, $3)',
-              [item.question, item.answer, item.points || 1]
-            );
+            if (Array.isArray(item.questions)) {
+              for (const q of item.questions) {
+                await client.query(
+                  'INSERT INTO erudit_questions (question, answer, category) VALUES ($1, $2, $3)',
+                  [q.question || '', q.answer || '', item.topic || q.category || null]
+                );
+              }
+            } else {
+              await client.query(
+                'INSERT INTO erudit_questions (question, answer, category) VALUES ($1, $2, $3)',
+                [item.question, item.answer, item.topic || null]
+              );
+            }
           }
         });
         break;
