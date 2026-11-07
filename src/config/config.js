@@ -44,6 +44,7 @@ const ADMIN_IDS = rawAdminId
       .filter((id) => !Number.isNaN(id) && id > 0)
   : [];
 const ADMIN_ID = ADMIN_IDS[0] || null;
+const SECOND_BOT = env('SECOND_BOT', '');
 const GEMINI_API_KEY = env('GEMINI_API_KEY', '');
 const TIMETABLE_STORAGE_CHANNEL_ID = env('TIMETABLE_STORAGE_CHANNEL_ID') ||
   env('CHANNEL_ID') ||
@@ -71,6 +72,7 @@ module.exports = {
   DATABASE_URL,
   ADMIN_ID,
   ADMIN_IDS,
+  SECOND_BOT,
   GEMINI_API_KEY,
   TIMETABLE_STORAGE_CHANNEL_ID,
 };
