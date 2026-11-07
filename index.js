@@ -626,6 +626,12 @@ async function gracefulShutdown(signal) {
 
     await Sentry.flush(3000);
     await redisConnection.quit().catch(() => {});
+    try {
+      const { pool } = require('./src/lib/postgres');
+      if (pool) {
+        await pool.end().catch(() => {});
+      }
+    } catch {}
     logger.info('✅ Graceful shutdown completed');
   } catch (err) {
     logger.error('Shutdown error:', { error: err.message });

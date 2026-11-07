@@ -2,6 +2,7 @@
 
 const roomManager = require("./roomManager");
 const { supabase } = require('../lib/supabase');
+const { isPostgresAvailable, query: pgQuery } = require('../lib/postgres');
 
 function getIoInstance() {
   return require("./index").getIo();
@@ -108,7 +109,21 @@ async function handleGameEnd(roomCode, room) {
     room.status = 'ended';
     const finalLeaderboard = Array.from(room.players.values()).sort((a,b) => b.score - a.score);
     
-    if (supabase) {
+    if (isPostgresAvailable()) {
+        await Promise.allSettled(finalLeaderboard.map(async (player) => {
+            try {
+                await pgQuery(`
+                    INSERT INTO user_profiles (user_id, display_name, kahoot_score)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        display_name = EXCLUDED.display_name,
+                        kahoot_score = COALESCE(user_profiles.kahoot_score, 0) + EXCLUDED.kahoot_score
+                `, [player.userId, player.displayName, player.score]);
+            } catch (e) {
+                console.error(`Postgres stats persist error for ${player.userId}:`, e);
+            }
+        }));
+    } else if (supabase) {
         await Promise.allSettled(finalLeaderboard.map(async (player) => {
             try {
                 const { data: profile } = await supabase.from('user_profiles').select('kahoot_score').eq('user_id', player.userId).single();

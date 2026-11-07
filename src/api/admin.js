@@ -226,26 +226,13 @@ router.get('/users', async (req, res) => {
       return res.json({ success: true, count: allUsers.length, users: allUsers });
     }
 
-    if (!supabase) {
-      return res.status(503).json({ error: 'Database unavailable' });
-    }
-
-    const from = page * limit;
-    const to = from + limit - 1;
-
-    const { data, count, error } = await supabase
-      .from('users')
-      .select('*', { count: 'exact' })
-      .order('id', { ascending: false })
-      .range(from, to);
-
-    if (error) throw error;
-    res.json({
+    const { users, total } = await dbService.getUsersPaginated(page, limit);
+    return res.json({
       success: true,
-      total: count,
+      total,
       page,
       limit,
-      users: data || [],
+      users: users || [],
     });
   } catch (err) {
     logger.error('Admin API get users error:', { error: err.message });
