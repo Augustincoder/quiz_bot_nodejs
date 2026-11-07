@@ -37,11 +37,39 @@ if (!process.env.REDIS_URL) {
     }
     return 'OK';
   };
-  dummy.del = async (k) => {
-    clearKeyTimer(k);
-    const has = inMemoryStore.has(k);
-    inMemoryStore.delete(k);
-    return has ? 1 : 0;
+  dummy.del = async (...keys) => {
+    const flat = Array.isArray(keys[0]) ? keys[0] : keys;
+    let count = 0;
+    for (const k of flat) {
+      if (!k) continue;
+      clearKeyTimer(k);
+      if (inMemoryStore.delete(k)) count++;
+    }
+    return count;
+  };
+  dummy.keys = async (pattern = '*') => {
+    const all = Array.from(inMemoryStore.keys());
+    if (pattern === '*' || !pattern) return all;
+    const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
+    return all.filter(k => regex.test(k));
+  };
+  dummy.scanStream = (options = {}) => {
+    const stream = new EventEmitter();
+    const match = options.match || '*';
+    setImmediate(async () => {
+      try {
+        const matched = await dummy.keys(match);
+        if (matched.length > 0) {
+          stream.emit('data', matched);
+        }
+        stream.emit('end');
+      } catch (err) {
+        stream.emit('error', err);
+      }
+    });
+    stream.pause = () => {};
+    stream.resume = () => {};
+    return stream;
   };
   dummy.incr = async (k) => {
     const val = (Number(inMemoryStore.get(k)) || 0) + 1;
