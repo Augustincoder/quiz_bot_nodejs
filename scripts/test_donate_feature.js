@@ -1,5 +1,6 @@
 'use strict';
 process.env.BOT_TOKEN = process.env.BOT_TOKEN || '123456:dummy_test_token';
+process.env.ADMIN_ID = process.env.ADMIN_ID || '11223344';
 const assert = require('assert');
 
 console.log('🧪 Starting Donate Feature Tests...\n');
@@ -40,4 +41,91 @@ assert(formatted1.includes('Avazov Muhammadamin'), 'Cardholder name must be Avaz
 const emptyFormatted = donateHandler.formatCardDisplay('');
 assert(emptyFormatted.includes('sozlanmagan'), 'Empty card should notify that card is not configured');
 console.log('  ✅ Passed: formatCardDisplay behaves correctly for valid and empty cards');
+
+// --- Task 3: Keyboards & Index Integration ---
+console.log('\n--- Task 3: Testing getMainKeyboard includes donate_menu ---');
+const { getMainKeyboard } = require('../src/keyboards/keyboards');
+const kb = getMainKeyboard();
+const flatButtons = kb.reply_markup.inline_keyboard.flat();
+const donateBtn = flatButtons.find((btn) => btn.callback_data === 'donate_menu');
+
+assert(Boolean(donateBtn), 'FAIL: getMainKeyboard must contain a button with callback_data="donate_menu"');
+assert(donateBtn.text.includes('Donat'), `FAIL: donate button text should mention Donat, got: "${donateBtn.text}"`);
+console.log(`  ✅ Passed: donate_menu found in getMainKeyboard with label "${donateBtn.text}"`);
+
+// --- End-to-End Simulation: onDonateScreenshot ---
+console.log('\n--- Task 4: Testing onDonateScreenshot handler simulations ---');
+
+async function testHandlerSimulations() {
+  // 4.1 Test text during state
+  let replyText = '';
+  const textCtx = {
+    message: { text: 'Salom, qayerga tashlay?' },
+    from: { id: 12345, first_name: 'Ali' },
+    chat: { id: 12345, type: 'private' },
+    session: { state: 'donate:screenshot' },
+    reply: (msg) => { replyText = msg; return Promise.resolve(true); },
+  };
+
+  await donateHandler.onDonateScreenshot(textCtx, () => {});
+  assert(replyText.includes('Iltimos, to\'lov chekining skrinshotini (rasm) yuboring'), 'Must prompt for image');
+  console.log('  ✅ Passed: text message during screenshot wait gives polite guidance');
+
+  // 4.2 Test photo receipt submission
+  let adminMessages = [];
+  let userConfirmReply = '';
+  const photoCtx = {
+    message: {
+      photo: [{ file_id: 'photo_small' }, { file_id: 'photo_large' }],
+      caption: '30,000 so\'m tashladim',
+    },
+    from: { id: 998877, first_name: 'Vali', username: 'valibek' },
+    chat: { id: 998877, type: 'private' },
+    session: { state: 'donate:screenshot' },
+    telegram: {
+      sendMessage: (chatId, text, opts) => {
+        adminMessages.push({ chatId, text, opts });
+        return Promise.resolve({ message_id: 112233 });
+      },
+    },
+    copyMessage: (chatId) => {
+      adminMessages.push({ chatId, copied: true });
+      return Promise.resolve({ message_id: 445566 });
+    },
+    reply: (msg) => { userConfirmReply = msg; return Promise.resolve(true); },
+  };
+
+  await donateHandler.onDonateScreenshot(photoCtx, () => {});
+  assert(photoCtx.session.state === null || photoCtx.session.state === undefined, 'State must be cleared after receipt');
+  assert(userConfirmReply.includes('Katta rahmat! To\'lov chekingiz adminga yetkazildi'), 'User must receive thank-you');
+  assert(adminMessages.length >= 2, 'Admin must receive header and copied photo receipt');
+  const header = adminMessages.find(m => m.text && m.text.includes('YANGI DONAT'));
+  assert(Boolean(header), 'Admin message must contain YANGI DONAT header');
+  assert(header.text.includes('Vali'), 'Admin message must include user name');
+  assert(header.text.includes('valibek'), 'Admin message must include username');
+  assert(header.text.includes('30,000 so\'m tashladim'), 'Admin message must include caption');
+  console.log('  ✅ Passed: photo receipt forwarded to admin with full user context and reply button');
+
+  // 4.3 Test menu button cancellation during wait
+  let nextCalled = false;
+  const menuCtx = {
+    message: { text: '🏠 Asosiy Menyu' },
+    from: { id: 12345 },
+    chat: { id: 12345, type: 'private' },
+    session: { state: 'donate:screenshot' },
+  };
+  await donateHandler.onDonateScreenshot(menuCtx, () => { nextCalled = true; });
+  assert(nextCalled === true, 'Menu button must call next()');
+  assert(menuCtx.session.state === null, 'Menu button must clear stale state');
+  console.log('  ✅ Passed: menu button clears stale state and passes to next middleware');
+
+  console.log('\n🎉 ALL DONATE FEATURE TESTS PASSED (100%)!');
+}
+
+testHandlerSimulations().catch((err) => {
+  console.error('❌ Test failed:', err);
+  process.exit(1);
+});
+
+
 

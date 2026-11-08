@@ -98,6 +98,7 @@ const handlers = {
   aiTests: require("./src/handlers/aiTestsHandlers"),
   contact: require("./src/handlers/contactAdmin"),
   notes: require("./src/handlers/noteHandler"),
+  donate: require("./src/handlers/donateHandler"),
 };
 
 
@@ -252,6 +253,7 @@ bot.command("start", (ctx) => (handlers.start.cbStart || handlers.start.cmdStart
 bot.command("profile", (ctx) => handlers.profile.cbProfile(ctx));
 bot.command("schedule", (ctx) => (handlers.schedule.cbSchedule || handlers.schedule.cmdTimetable)(ctx));
 bot.command(["settings", "sozlamalar"], (ctx) => (handlers.schedule.cbNotifySettings || handlers.schedule.cbSettings)(ctx));
+bot.command(["donate", "donat"], (ctx) => handlers.donate.cbDonateMenu(ctx));
 
 bot.command("testcron_bugun", async (ctx) => {
   if (!isAdmin(ctx.from?.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
@@ -484,6 +486,7 @@ bot.on("message", async (ctx, next) => {
 
     // User feedback / contact
     [States.USER_CONTACT]: () => handlers.contact.handleContactMessages ? handlers.contact.handleContactMessages(ctx, next) : handlers.admin.onContactMessage(ctx),
+    [States.DONATE_SCREENSHOT]: () => handlers.donate.onDonateScreenshot(ctx, next),
   };
 
   if (stateMap[state]) return stateMap[state]();

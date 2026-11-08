@@ -11,6 +11,14 @@ const {
 
 const CARD_HOLDER = 'Avazov Muhammadamin';
 
+function getTargetAdmins() {
+  const raw = process.env.ADMIN_IDS || process.env.ADMIN_ID || (ADMIN_IDS && ADMIN_IDS.length ? ADMIN_IDS.join(',') : ADMIN_ID) || '';
+  return String(raw)
+    .split(',')
+    .map((id) => parseInt(id.trim(), 10))
+    .filter((id) => !Number.isNaN(id) && id > 0);
+}
+
 /**
  * Format card number for display and 1-tap copy
  */
@@ -159,9 +167,10 @@ async function onDonateScreenshot(ctx, next) {
       `━━━━━━━━━━━━━━━━━━━━\n\n` +
       `👇 <b>To'lov cheki quyida ilova qilinmoqda:</b>`;
 
-    const targetAdmins = (Array.isArray(ADMIN_IDS) && ADMIN_IDS.length > 0)
-      ? ADMIN_IDS
-      : (ADMIN_ID ? [ADMIN_ID] : []);
+    const targetAdmins = getTargetAdmins();
+    if (targetAdmins.length === 0) {
+      logger.warn('No ADMIN_ID configured to receive donation receipt.');
+    }
 
     for (const adminId of targetAdmins) {
       try {

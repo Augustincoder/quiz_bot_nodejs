@@ -33,8 +33,11 @@ function getMainKeyboard() {
     ],
     // 4-qator: Dars Jadvali
     [Markup.button.callback("📅 Dars Jadvali", "schedule_menu")],
-    // 5-qator: Yordam
-    [Markup.button.callback("📞 Adminga Murojaat / Yordam", "contact_admin")],
+    // 5-qator: Donat va Adminga Murojaat
+    [
+      Markup.button.callback("💖 Donat qilish", "donate_menu"),
+      Markup.button.callback("📞 Adminga Murojaat", "contact_admin"),
+    ],
   ]);
 }
 
