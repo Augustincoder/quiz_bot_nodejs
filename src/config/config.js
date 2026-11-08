@@ -45,6 +45,7 @@ const ADMIN_IDS = rawAdminId
   : [];
 const ADMIN_ID = ADMIN_IDS[0] || null;
 const SECOND_BOT = env('SECOND_BOT', '');
+const CARD_NUMBER = env('CARD_NUMBER', '');
 const GEMINI_API_KEY = env('GEMINI_API_KEY', '');
 const TIMETABLE_STORAGE_CHANNEL_ID = env('TIMETABLE_STORAGE_CHANNEL_ID') ||
   env('CHANNEL_ID') ||
@@ -73,6 +74,7 @@ module.exports = {
   ADMIN_ID,
   ADMIN_IDS,
   SECOND_BOT,
+  CARD_NUMBER,
   GEMINI_API_KEY,
   TIMETABLE_STORAGE_CHANNEL_ID,
 };
