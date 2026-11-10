@@ -44,3 +44,8 @@ __pycache__/
 # Previews
 previews/
 
+# Superpowers and worktrees
+.superpowers/
+.worktrees/
+
+
