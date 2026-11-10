@@ -367,9 +367,10 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
   try {
     const featureFlagService = require('../services/featureFlagService');
     if (!featureFlagService.isFeatureEnabledSync('FEATURE_BLITZ_FLASHCARD', userId)) {
+      const returnTarget = subjectKey !== 'ugc' ? `hub_subj_off_${subjectKey}` : `hub_subj_ugc_${testId}`;
       return safeEdit(ctx, "ℹ️ <b>Flashcard funksiyasi hozircha sozlanmoqda.</b>", {
         reply_markup: {
-          inline_keyboard: [[Markup.button.callback('🔙 Orqaga', 'official_tests')]],
+          inline_keyboard: [[Markup.button.callback('🔙 Orqaga', safeCallbackData(returnTarget))]],
         },
       });
     }
@@ -433,12 +434,20 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
   const viewData = buildFlashcardViewData(deck, subjectName, blockName);
   const fallbackText = formatFlashcardMessage(viewData, false);
 
-  // Generate signed WebApp widget URL if external domain configured
+  // Generate signed WebApp widget URL only if an external domain is explicitly configured
   let webAppUrl = null;
   try {
-    const widgetMsg = buildWidgetMessage('flashcard', viewData, fallbackText, null, { userId });
-    if (widgetMsg?.url && isValidWebAppUrl(widgetMsg.url)) {
-      webAppUrl = widgetMsg.url;
+    const isDomainConfigured = !!(
+      process.env.WEBAPP_URL ||
+      process.env.APP_URL ||
+      process.env.SERVER_URL ||
+      process.env.BASE_URL
+    );
+    if (isDomainConfigured) {
+      const widgetMsg = buildWidgetMessage('flashcard', viewData, fallbackText, null, { userId });
+      if (widgetMsg?.url && isValidWebAppUrl(widgetMsg.url)) {
+        webAppUrl = widgetMsg.url;
+      }
     }
   } catch {}
 
@@ -482,19 +491,19 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
         cardIdx: viewData.cardIdx,
       };
 
-      const widgetRes = await ctx.telegram.callApi('sendWidget', {
+      const widgetPayload = {
         chat_id: chatId,
         html: inlineWidgetHtml,
-        width: 360,
-        height: 380,
         public_data: JSON.stringify(publicData),
         chat_data: JSON.stringify(chatData),
         is_shared: true,
         allow_queries: true,
-        caption: `🎴 <b>3D Blitz-Flashcard</b> • <i>${escapeHtml(subjectName)}</i> (${escapeHtml(blockName)})`,
-        parse_mode: 'HTML',
-        reply_markup: safeFallbackKeyboard.reply_markup,
-      });
+      };
+      if (safeFallbackKeyboard?.reply_markup) {
+        widgetPayload.reply_markup = safeFallbackKeyboard.reply_markup;
+      }
+
+      const widgetRes = await ctx.telegram.callApi('sendWidget', widgetPayload);
 
       if (widgetRes && widgetRes.message_id) {
         widgetSent = true;
@@ -662,13 +671,24 @@ async function cbCramExit(ctx) {
   const userKey = userId ? String(userId) : 'default';
   const session = cramSessions.get(userKey);
   const subjectKey = session?.subjectKey;
+  const testId = session?.testId;
 
   cramSessions.delete(userKey);
 
-  const exitText = "🏁 <b>Flashcard mashg'uloti yakunlandi.</b>\n\nQuyidagi tugma orqali test bloklariga qaytishingiz mumkin:";
+  let returnButton;
+  if (subjectKey === 'ugc' && testId) {
+    const rawId = String(testId).replace('blitz_', '');
+    returnButton = Markup.button.callback('🔙 Fan Hubiga qaytish', safeCallbackData(`hub_subj_ugc_${rawId}`));
+  } else if (subjectKey && subjectKey !== 'ugc') {
+    returnButton = Markup.button.callback('🔙 Fan Hubiga qaytish', safeCallbackData(`hub_subj_off_${subjectKey}`));
+  } else {
+    returnButton = Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main');
+  }
+
+  const exitText = "🏁 <b>Flashcard mashg'uloti yakunlandi.</b>\n\nQuyidagi tugma orqali qaytishingiz mumkin:";
   const exitKeyboard = Markup.inlineKeyboard([
     [
-      Markup.button.callback('📘 Bloklarga qaytish', subjectKey ? `page_${subjectKey}_0` : 'official_tests'),
+      returnButton,
       Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main'),
     ],
   ]);

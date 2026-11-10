@@ -301,6 +301,20 @@ function splitMessage(text, maxLength = 4000) {
   return chunks;
 }
 
+function stripWebAppButtons(extra) {
+  if (!extra || typeof extra !== 'object') return extra;
+  const clone = { ...extra };
+  if (clone.reply_markup && Array.isArray(clone.reply_markup.inline_keyboard)) {
+    clone.reply_markup = {
+      ...clone.reply_markup,
+      inline_keyboard: clone.reply_markup.inline_keyboard
+        .map(row => Array.isArray(row) ? row.filter(btn => !btn || !btn.web_app) : row)
+        .filter(row => Array.isArray(row) && row.length > 0),
+    };
+  }
+  return clone;
+}
+
 const safeEdit = async (ctx, text, extra = {}) => {
   const safeText = truncateText(text, 4000);
   try {
@@ -310,17 +324,37 @@ const safeEdit = async (ctx, text, extra = {}) => {
     if (err?.description?.includes('message is not modified')) {
       return true;
     }
-    try {
-      await ctx.reply(safeText, { parse_mode: 'HTML', ...extra });
-      return true;
-    } catch {
+
+    let cleanExtra = extra;
+    const errStr = ((err?.message || '') + ' ' + (err?.description || '')).toUpperCase();
+    if (errStr.includes('BUTTON_URL_INVALID')) {
+      cleanExtra = stripWebAppButtons(extra);
       try {
-        const plainExtra = { ...extra };
+        await ctx.editMessageText(safeText, { parse_mode: 'HTML', ...cleanExtra });
+        return true;
+      } catch {}
+    }
+
+    try {
+      await ctx.reply(safeText, { parse_mode: 'HTML', ...cleanExtra });
+      return true;
+    } catch (e2) {
+      const e2Str = ((e2?.message || '') + ' ' + (e2?.description || '')).toUpperCase();
+      if (e2Str.includes('BUTTON_URL_INVALID')) {
+        cleanExtra = stripWebAppButtons(cleanExtra);
+      }
+      try {
+        const plainExtra = { ...cleanExtra };
         delete plainExtra.parse_mode;
         await ctx.reply(safeText, plainExtra);
         return true;
       } catch {
-        return false;
+        try {
+          await ctx.reply(safeText);
+          return true;
+        } catch {
+          return false;
+        }
       }
     }
   }
@@ -627,7 +661,7 @@ module.exports = {
   leaderboardCache, LEADERBOARD_TTL, States, STATE_LABELS, TTLMap,
   setState, clearState, resetUserFlows, updateData, getData, getState,
   navKb, backToMainKb, progressBar, safePercent, grade, parseSuffix,
-  safeAnswerCb, safeEdit, safeDelete,
+  safeAnswerCb, safeEdit, safeDelete, stripWebAppButtons,
   getUserName, parseDocxQuestions, parseTextQuestions,
   escapeHtml, sanitizeForTelegram,
   truncateText, splitMessage,

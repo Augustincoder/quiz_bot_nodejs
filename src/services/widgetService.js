@@ -30,7 +30,10 @@ function isValidWebAppUrl(url) {
       host === 't.me' ||
       host.endsWith('.t.me') ||
       host === 'telegram.org' ||
-      host.endsWith('.telegram.org')
+      host.endsWith('.telegram.org') ||
+      host === 'localhost' ||
+      host.endsWith('.local') ||
+      host.endsWith('.test')
     ) {
       return false;
     }
@@ -237,14 +240,15 @@ function buildWidgetMessage(type, payload = {}, fallbackText = '', fallbackKeybo
   const token = createWidgetToken(userId, type, payload, ttlMs);
 
   const rawBaseUrl = options.baseUrl ||
-    process.env.BASE_URL ||
+    process.env.WEBAPP_URL ||
     process.env.APP_URL ||
     process.env.SERVER_URL ||
+    process.env.BASE_URL ||
     process.env.PUBLIC_URL ||
     process.env.NF_PUBLIC_URL ||
     process.env.RENDER_EXTERNAL_URL ||
     process.env.RAILWAY_STATIC_URL ||
-    'https://quiz-bot-app.code.run';
+    'https://quiz-app.railway.app';
   const baseUrl = rawBaseUrl.replace(/\/+$/, '');
   const widgetUrl = `${baseUrl}/widget/${token}`;
   const isUrlValid = isValidWebAppUrl(widgetUrl);

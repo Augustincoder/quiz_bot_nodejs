@@ -26,8 +26,14 @@ try {
   cramReviewHandler = require('./cramReviewHandler');
 } catch {}
 
+let _customMemoryDb = null;
+function setMemoryDb(db) {
+  _customMemoryDb = db;
+}
+
 // In-memory DB getter
 function getMemoryDb() {
+  if (_customMemoryDb) return _customMemoryDb;
   const botCore = require('../core/bot');
   return botCore.memoryDb || {};
 }
@@ -53,11 +59,32 @@ function formatTitle(str) {
  * @returns {Promise<{ isOfficial: boolean, id: string|number, title: string, blocks: Array<object>, totalQuestions: number, authorText: string } | null>}
  */
 async function resolveSubjectData(subjectIdOrKey, isOfficialHint = false) {
+  if (subjectIdOrKey === undefined || subjectIdOrKey === null) return null;
+
+  let lookupKey = String(subjectIdOrKey).trim();
+  let isOfficial = isOfficialHint;
+
+  if (lookupKey.startsWith('offs_')) {
+    lookupKey = lookupKey.replace('offs_', '');
+    isOfficial = true;
+  } else if (lookupKey.startsWith('s_')) {
+    try {
+      const { resolveShareParam } = require('../services/shareService');
+      const resolved = resolveShareParam(lookupKey);
+      if (resolved && resolved.id) {
+        lookupKey = String(resolved.id);
+        if (resolved.type === 'offs') isOfficial = true;
+      }
+    } catch {}
+  } else if (lookupKey.startsWith('blitz_')) {
+    lookupKey = lookupKey.replace('blitz_', '');
+  }
+
   const memDb = getMemoryDb();
 
   // 1. Check if official subject in memoryDb
-  if (isOfficialHint || (typeof subjectIdOrKey === 'string' && memDb[subjectIdOrKey])) {
-    const subjKey = String(subjectIdOrKey).trim();
+  if (isOfficial || (typeof lookupKey === 'string' && memDb[lookupKey])) {
+    const subjKey = String(lookupKey).trim();
     if (memDb[subjKey]) {
       const testsMap = memDb[subjKey] || {};
       const testIds = Object.keys(testsMap).map(Number).sort((a, b) => a - b);
@@ -82,7 +109,7 @@ async function resolveSubjectData(subjectIdOrKey, isOfficialHint = false) {
 
   // 2. Check UGC subject from PostgreSQL
   try {
-    const numericId = parseInt(subjectIdOrKey, 10);
+    const numericId = parseInt(lookupKey, 10);
     if (!isNaN(numericId) && numericId > 0) {
       const subject = await dbService.getSubjectById(numericId);
       if (subject) {
@@ -98,7 +125,7 @@ async function resolveSubjectData(subjectIdOrKey, isOfficialHint = false) {
           isOfficial: false,
           id: subject.id,
           subjectId: subject.id,
-          title: subject.name || formatTitle(subjectIdOrKey),
+          title: subject.name || formatTitle(lookupKey),
           blocks,
           totalQuestions,
           authorText: '👥 Ustoz / Foydalanuvchi',
@@ -133,7 +160,7 @@ async function resolveSubjectData(subjectIdOrKey, isOfficialHint = false) {
       }
     }
   } catch (err) {
-    logger.error('resolveSubjectData error:', { subjectIdOrKey, error: err.message });
+    logger.error('resolveSubjectData error:', { subjectIdOrKey: lookupKey, error: err.message });
   }
 
   return null;
@@ -147,11 +174,31 @@ async function resolveSubjectData(subjectIdOrKey, isOfficialHint = false) {
  * @returns {Promise<{ isOfficial: boolean, id: string|number, subjectKey: string, subjectTitle: string, blockName: string, questions: Array<object>, subjectId: number|null } | null>}
  */
 async function resolveBlockData(testIdOrDescriptor, isOfficialHint = false) {
+  if (testIdOrDescriptor === undefined || testIdOrDescriptor === null) return null;
+
+  let rawStr = String(testIdOrDescriptor).trim();
+  let isOfficial = isOfficialHint;
+
+  if (rawStr.startsWith('offt_')) {
+    rawStr = rawStr.replace('offt_', '');
+    isOfficial = true;
+  } else if (rawStr.startsWith('t_')) {
+    try {
+      const { resolveShareParam } = require('../services/shareService');
+      const resolved = resolveShareParam(rawStr);
+      if (resolved && resolved.id) {
+        rawStr = String(resolved.id);
+        if (resolved.type === 'offt') isOfficial = true;
+      }
+    } catch {}
+  } else if (rawStr.startsWith('blitz_')) {
+    rawStr = rawStr.replace('blitz_', '');
+  }
+
   const memDb = getMemoryDb();
 
   // 1. Official block pattern: e.g. "Matematika_1" or "offt_Matematika_1"
-  const rawStr = String(testIdOrDescriptor).replace(/^offt_/, '').trim();
-  if (isOfficialHint || rawStr.includes('_')) {
+  if (isOfficial || rawStr.includes('_')) {
     const parts = rawStr.split('_');
     const testId = parseInt(parts[parts.length - 1], 10);
     const subjectKey = parts.slice(0, -1).join('_');
@@ -465,12 +512,16 @@ async function startSubjectMockExam(ctx, subjectIdOrKey, isOfficial) {
   const data = await resolveSubjectData(subjectIdOrKey, isOfficial);
 
   if (!data || !data.blocks || data.blocks.length === 0) {
-    return ctx.reply('❌ Imtihon uchun savollar topilmadi.').catch(() => {});
+    return safeEdit(ctx, '❌ <b>Imtihon uchun savollar topilmadi.</b>', Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Orqaga', isOfficial ? 'official_tests' : 'my_tests')],
+    ]));
   }
 
   const allQuestions = data.blocks.flatMap(b => b.questions || []);
   if (!allQuestions.length) {
-    return ctx.reply('❌ Ushbu fanda savollar mavjud emas.').catch(() => {});
+    return safeEdit(ctx, '❌ <b>Ushbu fanda savollar mavjud emas.</b>', Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Fan Hubiga qaytish', safeCallbackData(`hub_subj_${isOfficial ? 'off' : 'ugc'}_${data.id}`))],
+    ]));
   }
 
   const shuffled = deepClone(allQuestions);
@@ -531,8 +582,9 @@ async function startSubjectBlitzCards(ctx, subjectIdOrKey, isOfficial) {
   shuffleArray(shuffled);
   const blitzQuestions = shuffled.slice(0, 20);
 
-  if (cramReviewHandler && typeof cramReviewHandler.launchFlashcardReview === 'function') {
-    return cramReviewHandler.launchFlashcardReview(
+  const handler = cramReviewHandler || require('./cramReviewHandler');
+  if (handler && typeof handler.launchFlashcardReview === 'function') {
+    return handler.launchFlashcardReview(
       ctx,
       isOfficial ? data.subjectKey : 'ugc',
       `blitz_${data.id}`,
@@ -544,6 +596,13 @@ async function startSubjectBlitzCards(ctx, subjectIdOrKey, isOfficial) {
       }
     );
   }
+
+  return safeEdit(ctx,
+    `⚠️ <b>Flashcard modulini ishga tushirishda xatolik yuz berdi.</b>`,
+    Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Fan Hubiga qaytish', safeCallbackData(`hub_subj_${isOfficial ? 'off' : 'ugc'}_${data.id}`))],
+    ])
+  );
 }
 
 /**
@@ -923,5 +982,6 @@ module.exports = {
   startSubjectAdaptiveRun,
   startSubjectBlitzCards,
   startSubjectMarathon,
+  setMemoryDb,
   register,
 };
