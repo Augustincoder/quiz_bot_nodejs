@@ -13,7 +13,8 @@
 const { Markup } = require('telegraf');
 const dbService = require('../services/dbService');
 const logger = require('../core/logger');
-const { escapeHtml, safeEdit, safeCallbackData, shuffleArray, deepClone } = require('../core/utils');
+const { escapeHtml, safeEdit, safeCallbackData } = require('../core/utils');
+const { shuffleArray, deepClone } = require('../core/questionUtils');
 
 let featureFlagService = null;
 try {

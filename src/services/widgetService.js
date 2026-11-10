@@ -10,6 +10,36 @@ try {
 } catch {}
 
 /**
+ * Validates if a URL is a valid, external HTTPS URL suitable for Telegram WebApp.
+ * Telegram Bot API strictly forbids Telegram domains (t.me, telegram.org) in web_app buttons
+ * and throws 400 Bad Request: BUTTON_URL_INVALID.
+ *
+ * @param {string} url
+ * @returns {boolean}
+ */
+function isValidWebAppUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed.startsWith('https://')) return false;
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.toLowerCase();
+    if (
+      !host ||
+      host === 't.me' ||
+      host.endsWith('.t.me') ||
+      host === 'telegram.org' ||
+      host.endsWith('.telegram.org')
+    ) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Checks if Telegram 10.4 Widget Engine is enabled for a user.
  * @param {string|number} userId
  * @returns {boolean}
@@ -213,35 +243,51 @@ function buildWidgetMessage(type, payload = {}, fallbackText = '', fallbackKeybo
     process.env.NF_PUBLIC_URL ||
     process.env.RENDER_EXTERNAL_URL ||
     process.env.RAILWAY_STATIC_URL ||
-    'https://t.me';
+    'https://quiz-bot-app.code.run';
   const baseUrl = rawBaseUrl.replace(/\/+$/, '');
   const widgetUrl = `${baseUrl}/widget/${token}`;
+  const isUrlValid = isValidWebAppUrl(widgetUrl);
 
   let defaultKeyboard = fallbackKeyboard;
-  if (!defaultKeyboard || !defaultKeyboard.inline_keyboard) {
-    defaultKeyboard = {
-      inline_keyboard: [
-        [
-          {
-            text: '🚀 Widgetni ochish',
-            web_app: { url: widgetUrl },
-          },
-        ],
-      ],
-    };
-  } else {
-    const hasWebApp = defaultKeyboard.inline_keyboard.some(row =>
-      Array.isArray(row) && row.some(btn => btn && btn.web_app)
-    );
-    if (!hasWebApp && widgetUrl) {
-      const buttonLabel = type === 'flashcard'
-        ? '🎴 3D Kartochka (Web App)'
-        : (type === 'podium' ? '🏛 3D Shohsupa & Radar' : '🚀 Visual Inspektorni Ochish');
+  if (isUrlValid) {
+    if (!defaultKeyboard || !defaultKeyboard.inline_keyboard) {
       defaultKeyboard = {
         inline_keyboard: [
-          [{ text: buttonLabel, web_app: { url: widgetUrl } }],
-          ...defaultKeyboard.inline_keyboard,
+          [
+            {
+              text: '🚀 Widgetni ochish',
+              web_app: { url: widgetUrl },
+            },
+          ],
         ],
+      };
+    } else {
+      const hasWebApp = defaultKeyboard.inline_keyboard.some(row =>
+        Array.isArray(row) && row.some(btn => btn && btn.web_app)
+      );
+      if (!hasWebApp) {
+        const buttonLabel = type === 'flashcard'
+          ? '🎴 3D Kartochka (Web App)'
+          : (type === 'podium' ? '🏛 3D Shohsupa & Radar' : '🚀 Visual Inspektorni Ochish');
+        defaultKeyboard = {
+          inline_keyboard: [
+            [{ text: buttonLabel, web_app: { url: widgetUrl } }],
+            ...defaultKeyboard.inline_keyboard,
+          ],
+        };
+      }
+    }
+  } else {
+    // If URL is invalid (e.g. t.me or non-https), strip web_app to prevent BUTTON_URL_INVALID
+    if (!defaultKeyboard || !defaultKeyboard.inline_keyboard) {
+      defaultKeyboard = { inline_keyboard: [] };
+    } else {
+      defaultKeyboard = {
+        inline_keyboard: defaultKeyboard.inline_keyboard.map(row =>
+          Array.isArray(row)
+            ? row.filter(btn => !btn || !btn.web_app || isValidWebAppUrl(btn.web_app.url))
+            : row
+        ).filter(row => row.length > 0),
       };
     }
   }
@@ -264,6 +310,7 @@ function buildWidgetMessage(type, payload = {}, fallbackText = '', fallbackKeybo
 }
 
 module.exports = {
+  isValidWebAppUrl,
   createWidgetToken,
   verifyWidgetToken,
   escapeHtml,

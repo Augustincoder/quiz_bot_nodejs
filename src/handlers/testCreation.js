@@ -2287,7 +2287,6 @@ async function cbOpenInspector(ctx) {
     `Aniqlangan xatoliklar: <b>${invalidQs.length} ta</b>\n` +
     `To'g'ri javoblarni qulay interaktiv ko'rinishda belgilang yoki 1-bosishda AI yordamida tuzating:`,
     Markup.inlineKeyboard([
-      [Markup.button.webApp("🚀 Visual Inspektorni Ochish", widgetService.buildWidgetMessage('docxHealer', { userId, title: 'Docx Smart Healer', questions: widgetQuestions }, '', null, { userId }).url)],
       [Markup.button.callback("🔙 Menyuga qaytish", data.is_auto_docx ? "show_status_menu" : "back_to_dashboard")],
     ]),
     { userId }

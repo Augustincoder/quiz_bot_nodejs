@@ -634,6 +634,8 @@ module.exports = {
   downloadFile, isAdmin, adminGuard, buildUserContext,
   getTashkentDate, getTashkentDayOfWeek,
   timeToMinutes, safeCallbackData, naturalSortBlocks,
+  shuffleArray: (...args) => require('./questionUtils').shuffleArray(...args),
+  deepClone: (...args) => require('./questionUtils').deepClone(...args),
 };
 
 

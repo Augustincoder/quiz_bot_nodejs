@@ -2,7 +2,7 @@
 
 const { Markup } = require('telegraf');
 const { TTLMap, escapeHtml, safeCallbackData } = require('../core/utils');
-const { buildWidgetMessage } = require('../services/widgetService');
+const { buildWidgetMessage, isValidWebAppUrl } = require('../services/widgetService');
 
 // Active cram sessions (2 hours TTL to prevent memory leaks)
 const cramSessions = new TTLMap(2 * 60 * 60 * 1000);
@@ -272,7 +272,7 @@ function getFlashcardFallbackKeyboard(cardIdx, isRevealed = false, webAppUrl = n
   ];
 
   const rows = [];
-  if (webAppUrl) {
+  if (webAppUrl && isValidWebAppUrl(webAppUrl)) {
     rows.push([
       Markup.button.webApp('🎴 3D Kartochka (Web App)', webAppUrl),
     ]);
@@ -446,17 +446,39 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
         parse_mode: 'HTML',
         ...fallbackKeyboard,
       });
-    } catch {
+    } catch (err) {
+      if (err?.message && err.message.includes('BUTTON_URL_INVALID')) {
+        const safeKeyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, null);
+        await ctx.editMessageText(fallbackText, {
+          parse_mode: 'HTML',
+          ...safeKeyboard,
+        }).catch(() => ctx.reply(fallbackText, { parse_mode: 'HTML', ...safeKeyboard }));
+        return;
+      }
+      try {
+        await ctx.reply(fallbackText, {
+          parse_mode: 'HTML',
+          ...fallbackKeyboard,
+        });
+      } catch (e2) {
+        if (e2?.message && e2.message.includes('BUTTON_URL_INVALID')) {
+          const safeKeyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, null);
+          await ctx.reply(fallbackText, { parse_mode: 'HTML', ...safeKeyboard });
+        }
+      }
+    }
+  } else {
+    try {
       await ctx.reply(fallbackText, {
         parse_mode: 'HTML',
         ...fallbackKeyboard,
       });
+    } catch (err) {
+      if (err?.message && err.message.includes('BUTTON_URL_INVALID')) {
+        const safeKeyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, null);
+        await ctx.reply(fallbackText, { parse_mode: 'HTML', ...safeKeyboard });
+      }
     }
-  } else {
-    await ctx.reply(fallbackText, {
-      parse_mode: 'HTML',
-      ...fallbackKeyboard,
-    });
   }
 
   await ctx.answerCbQuery().catch(() => {});
