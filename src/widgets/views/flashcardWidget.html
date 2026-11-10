@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>{{TITLE}}</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg-color: #0e1621;
+      --card-bg: #17212b;
+      --accent: #2481cc;
+      --success: #4caf50;
+      --warning: #ff9800;
+      --text: #f5f5f5;
+      --text-muted: #8e9ca8;
+      --border-color: rgba(255, 255, 255, 0.08);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-tap-highlight-color: transparent; }
+    body {
+      background: radial-gradient(circle at 50% 0%, #172b3c 0%, var(--bg-color) 85%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px;
+      overflow-x: hidden;
+    }
+    .header {
+      width: 100%;
+      max-width: 420px;
+      margin-bottom: 14px;
+      text-align: center;
+    }
+    .header h1 {
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .header p {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* Progress bar */
+    .progress-bar-wrap {
+      width: 100%;
+      max-width: 420px;
+      background: rgba(255, 255, 255, 0.08);
+      height: 8px;
+      border-radius: 4px;
+      margin-bottom: 18px;
+      overflow: hidden;
+      position: relative;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #2481cc, #4caf50);
+      border-radius: 4px;
+      transition: width 0.3s ease;
+    }
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      width: 100%;
+      max-width: 420px;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+
+    /* 3D Flashcard Perspective Arena */
+    .card-arena {
+      perspective: 1200px;
+      width: 100%;
+      max-width: 420px;
+      height: 380px;
+      position: relative;
+      margin-bottom: 20px;
+    }
+    .card-wrapper {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      transform-style: preserve-3d;
+      transition: transform 0.6s cubic-bezier(0.2, 0.85, 0.4, 1.2), opacity 0.3s;
+      cursor: pointer;
+    }
+    .card-wrapper.flipped {
+      transform: rotateY(180deg);
+    }
+    .card-wrapper.slide-right {
+      transform: translateX(120%) rotateZ(20deg) rotateY(10deg);
+      opacity: 0;
+    }
+    .card-wrapper.slide-left {
+      transform: translateX(-120%) rotateZ(-20deg) rotateY(-10deg);
+      opacity: 0;
+    }
+
+    .card-face {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 20px;
+      padding: 24px 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(10px);
+    }
+    .card-front {
+      border-top: 3px solid var(--accent);
+    }
+    .card-back {
+      transform: rotateY(180deg);
+      border-top: 3px solid var(--success);
+      background: #142230;
+    }
+
+    .card-badge {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--accent);
+      background: rgba(36, 129, 204, 0.15);
+      padding: 4px 10px;
+      border-radius: 12px;
+      align-self: flex-start;
+    }
+    .card-back .card-badge {
+      color: var(--success);
+      background: rgba(76, 175, 80, 0.15);
+    }
+
+    .card-text {
+      font-size: 17px;
+      line-height: 1.6;
+      color: #fff;
+      font-weight: 500;
+      margin: auto 0;
+      overflow-y: auto;
+      max-height: 240px;
+    }
+    .card-hint {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    /* Swipe hint indicators */
+    .swipe-indicators {
+      display: flex;
+      justify-content: space-between;
+      width: 100%;
+      max-width: 420px;
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+      padding: 0 4px;
+    }
+
+    /* Control buttons */
+    .actions-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+      width: 100%;
+      max-width: 420px;
+    }
+    .btn {
+      padding: 13px 8px;
+      border: none;
+      border-radius: 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      transition: transform 0.15s, opacity 0.15s;
+    }
+    .btn:active { transform: scale(0.96); opacity: 0.85; }
+    .btn-repeat {
+      background: rgba(255, 152, 0, 0.15);
+      color: #ffb74d;
+      border: 1px solid rgba(255, 152, 0, 0.3);
+    }
+    .btn-flip {
+      background: rgba(36, 129, 204, 0.18);
+      color: #64b5f6;
+      border: 1px solid rgba(36, 129, 204, 0.3);
+    }
+    .btn-known {
+      background: rgba(76, 175, 80, 0.18);
+      color: #81c784;
+      border: 1px solid rgba(76, 175, 80, 0.3);
+    }
+
+    /* Finished screen */
+    .finish-screen {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 20px;
+      padding: 32px 20px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    }
+    .finish-screen.active { display: flex; }
+    .finish-icon { font-size: 48px; margin-bottom: 12px; }
+    .finish-title { font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 6px; }
+    .finish-sub { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1 id="subject-title">⚡ {{TITLE}}</h1>
+    <p>3D Blitz-Flashcard Takrorlash</p>
+  </div>
+
+  <div class="progress-label">
+    <span id="progress-text">Kartochka: 1 / 1</span>
+    <span id="percent-text">0%</span>
+  </div>
+  <div class="progress-bar-wrap">
+    <div class="progress-fill" id="progress-fill"></div>
+  </div>
+
+  <div class="swipe-indicators">
+    <span>👈 Qiyin (Qaytarish)</span>
+    <span>Bilib oldim (Surish) 👉</span>
+  </div>
+
+  <!-- 3D Arena -->
+  <div class="card-arena" id="card-arena">
+    <div class="card-wrapper" id="card-element" onclick="flipCard()">
+      <!-- Front -->
+      <div class="card-face card-front">
+        <div class="card-badge">❓ Savol</div>
+        <div class="card-text" id="front-text">Yuklanmoqda...</div>
+        <div class="card-hint">👆 Javobni ko'rish uchun bosing</div>
+      </div>
+      <!-- Back -->
+      <div class="card-face card-back">
+        <div class="card-badge">✅ To'g'ri Javob</div>
+        <div class="card-text" id="back-text">Yuklanmoqda...</div>
+        <div class="card-hint">👆 Qaytadan savolga o'tish</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Finish view -->
+  <div class="finish-screen" id="finish-screen">
+    <div class="finish-icon">🎉</div>
+    <div class="finish-title">Blitz yakunlandi!</div>
+    <div class="finish-sub" id="finish-sub">Barcha kartochkalar muvaffaqiyatli takrorlandi.</div>
+    <button class="btn btn-flip" style="width: 100%; margin-top: 12px;" onclick="restartDeck()">🔄 Qaytadan boshlash</button>
+  </div>
+
+  <!-- Action buttons -->
+  <div class="actions-grid" id="actions-grid">
+    <button class="btn btn-repeat" onclick="handleCardAction('repeat')">
+      <span>👈</span>
+      <span>Qaytarish</span>
+    </button>
+    <button class="btn btn-flip" onclick="flipCard()">
+      <span>🔄</span>
+      <span>Aylantirish</span>
+    </button>
+    <button class="btn btn-known" onclick="handleCardAction('known')">
+      <span>👉</span>
+      <span>Bilib oldim</span>
+    </button>
+  </div>
+
+  <script>
+    window.__WIDGET_DATA__ = {{DATA_JSON}};
+
+    if (window.Telegram && window.Telegram.WebApp) {
+      window.Telegram.WebApp.ready();
+      window.Telegram.WebApp.expand();
+    }
+
+    const data = window.__WIDGET_DATA__ || {};
+    const deck = data.deck || {
+      cards: [
+        { q: data.question || 'Savol mavjud emas', a: data.answer || 'Javob mavjud emas' }
+      ]
+    };
+
+    let cards = (deck.cards && deck.cards.length > 0) ? [...deck.cards] : [
+      { q: 'Savol namunasi', a: 'To\'g\'ri javob' }
+    ];
+    let currentIndex = 0;
+    let learnedCount = 0;
+    const totalCount = cards.length;
+
+    const cardEl = document.getElementById('card-element');
+    const frontText = document.getElementById('front-text');
+    const backText = document.getElementById('back-text');
+    const progressFill = document.getElementById('progress-fill');
+    const progressText = document.getElementById('progress-text');
+    const percentText = document.getElementById('percent-text');
+
+    function renderCurrentCard() {
+      if (currentIndex >= cards.length) {
+        showFinish();
+        return;
+      }
+      cardEl.className = 'card-wrapper';
+      const c = cards[currentIndex];
+      frontText.textContent = c.q || c.question || 'Savol';
+      backText.textContent = c.a || c.answer || 'To\'g\'ri javob';
+
+      const currentNum = Math.min(currentIndex + 1, totalCount);
+      progressText.textContent = `Kartochka: ${currentNum} / ${totalCount}`;
+      const pct = Math.round((learnedCount / totalCount) * 100);
+      progressFill.style.width = pct + '%';
+      percentText.textContent = pct + '%';
+    }
+
+    function flipCard() {
+      cardEl.classList.toggle('flipped');
+    }
+
+    function handleCardAction(action) {
+      if (currentIndex >= cards.length) return;
+
+      if (action === 'known') {
+        learnedCount++;
+        cardEl.classList.add('slide-right');
+        sendWidgetQuery('card_action', { cardIdx: currentIndex, action: 'known' });
+        setTimeout(() => {
+          currentIndex++;
+          renderCurrentCard();
+        }, 300);
+      } else {
+        // Repeat: append card to back of deck
+        cardEl.classList.add('slide-left');
+        sendWidgetQuery('card_action', { cardIdx: currentIndex, action: 'repeat' });
+        setTimeout(() => {
+          const currentCard = cards[currentIndex];
+          cards.push(currentCard);
+          currentIndex++;
+          renderCurrentCard();
+        }, 300);
+      }
+    }
+
+    function showFinish() {
+      document.getElementById('card-arena').style.display = 'none';
+      document.getElementById('actions-grid').style.display = 'none';
+      document.getElementById('finish-screen').classList.add('active');
+      progressFill.style.width = '100%';
+      percentText.textContent = '100%';
+    }
+
+    function restartDeck() {
+      currentIndex = 0;
+      learnedCount = 0;
+      cards = (deck.cards && deck.cards.length > 0) ? [...deck.cards] : [];
+      document.getElementById('card-arena').style.display = 'block';
+      document.getElementById('actions-grid').style.display = 'grid';
+      document.getElementById('finish-screen').classList.remove('active');
+      renderCurrentCard();
+    }
+
+    function sendWidgetQuery(action, actionData) {
+      const token = '{{TOKEN}}' || data.token;
+      if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.sendData === 'function') {
+        window.Telegram.WebApp.sendData(JSON.stringify({ action, data: actionData }));
+      }
+      fetch('/widget/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, action, data: actionData })
+      }).catch(() => {});
+    }
+
+    // Touch Event Listeners for Swipe Gestures
+    let touchStartX = 0;
+    let touchStartY = 0;
+
+    cardEl.addEventListener('touchstart', (e) => {
+      touchStartX = e.changedTouches[0].screenX;
+      touchStartY = e.changedTouches[0].screenY;
+    }, { passive: true });
+
+    cardEl.addEventListener('touchend', (e) => {
+      const diffX = e.changedTouches[0].screenX - touchStartX;
+      const diffY = e.changedTouches[0].screenY - touchStartY;
+      if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 60) {
+        if (diffX > 0) {
+          handleCardAction('known');
+        } else {
+          handleCardAction('repeat');
+        }
+      }
+    }, { passive: true });
+
+    renderCurrentCard();
+  </script>
+</body>
+</html>
