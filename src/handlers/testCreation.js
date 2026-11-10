@@ -27,7 +27,10 @@ const {
   SubjectSchema,
   BlockNameSchema,
   escapeMarkdown,
+  extractQuestionCandidates,
 } = require("../validators/testValidators");
+const widgetService = require("../services/widgetService");
+const aiDocxHealer = require("../services/aiDocxHealer");
 const AI_WARNING_TEXT = `\n\n⚠️ <b>Eslatma:</b> <i>Bu javoblar tezkor AI modellarida tayyorlanmoqda va xatolar ehtimolligi bor. Rasmiy imtihonga tayyorlanayotganlar yoki Pro modellar uchun adminga murojaat qiling:</i> @AvazovM`;
 
 // ─── TUGMALAR GENERATORI ─────────────────────────────────────
@@ -2046,23 +2049,213 @@ async function cbFixErrors(ctx, targetIdx = null) {
   setState(ctx, States.CREATE_QUESTIONS);
   await updateData(ctx, { fixing_error_index: idx });
 
-  const text =
+  const candidate = extractQuestionCandidates(badText);
+  const options = candidate.options || [];
+
+  let text =
     `⚠️ <b>Xato Savolni To'g'rilash</b> (${idx + 1} / ${invalidQs.length})\n\n` +
-    `Ushbu savol formatida xato bor (masalan, to'g'ri javob belgisi <code>#</code> unutilgan yoki variantlar kam).\n\n` +
-    `<b>Matnni nusxalang (ustiga bossangiz nusxalanadi), to'g'rilang va menga qayta yuboring:</b>\n\n` +
-    `<pre><code>${escapeHtml(badText)}</code></pre>`;
+    `Savol matni:\n<b>${escapeHtml(candidate.questionText || badText)}</b>\n\n`;
+
+  if (options.length >= 2) {
+    text += `📋 <i>Variantlar aniqlandi. To'g'ri javobni 1 marta bosib tanlang:</i>\n\n`;
+    options.forEach((opt, oIdx) => {
+      const letter = String.fromCharCode(65 + oIdx);
+      const isMarked = opt.isCorrect ? ' ✅' : '';
+      text += `<b>${letter})</b> ${escapeHtml(opt.cleanText)}${isMarked}\n`;
+    });
+  } else {
+    text +=
+      `Ushbu savol formatida xato bor (variantlar kam yoki to'g'ri javob belgisi <code>#</code> unutilgan).\n\n` +
+      `<i>1-Tap AI orqali avto-tuzatishingiz yoki Web Inspektorda ochishingiz mumkin:</i>\n\n` +
+      `<pre><code>${escapeHtml(badText)}</code></pre>`;
+  }
 
   const backAction = data.is_auto_docx ? "show_status_menu" : "back_to_dashboard";
 
+  const keyboardRows = [];
+
+  // 1-Tap Option Selection Buttons
+  if (options.length >= 2) {
+    for (let i = 0; i < options.length; i += 2) {
+      const row = [];
+      const opt1 = options[i];
+      const l1 = String.fromCharCode(65 + i);
+      const short1 = (opt1.cleanText || opt1.text || '').slice(0, 16);
+      row.push(Markup.button.callback(`✅ ${l1}) ${short1}`, `fix_pick_key_${idx}_${i}`));
+
+      if (i + 1 < options.length) {
+        const opt2 = options[i + 1];
+        const l2 = String.fromCharCode(65 + i + 1);
+        const short2 = (opt2.cleanText || opt2.text || '').slice(0, 16);
+        row.push(Markup.button.callback(`✅ ${l2}) ${short2}`, `fix_pick_key_${idx}_${i + 1}`));
+      }
+      keyboardRows.push(row);
+    }
+  }
+
+  // AI Auto-Heal & Interactive Web Inspector Controls
+  keyboardRows.push([
+    Markup.button.callback("✨ AI Barchasini Avto-Tuzatish", "fix_auto_all"),
+    Markup.button.callback("🌐 Web Inspektor", "fix_open_inspector"),
+  ]);
+
+  // Navigation & Deletion Controls
+  keyboardRows.push([
+    Markup.button.callback("⏭ O'tkazib yuborish", `fix_errors_${idx + 1}`),
+    Markup.button.callback("🗑 O'chirish", `del_err_${idx}`),
+  ]);
+
+  keyboardRows.push([Markup.button.callback("🔙 Ortga", backAction)]);
+
   await safeEdit(ctx, text, {
     parse_mode: "HTML",
-    ...Markup.inlineKeyboard([
-      [
-        Markup.button.callback("⏭ O'tkazib yuborish", `fix_errors_${idx + 1}`),
-        Markup.button.callback("🗑 O'chirish", `del_err_${idx}`),
-      ],
-      [Markup.button.callback("🔙 Ortga", backAction)],
+    ...Markup.inlineKeyboard(keyboardRows),
+  });
+}
+
+// 1-Tap to pick correct key for a question candidate
+async function cbFixPickKey(ctx) {
+  if (ctx.callbackQuery) {
+    await ctx.answerCbQuery("✅ To'g'ri javob belgilandi!").catch(() => {});
+  }
+  const match = ctx.callbackQuery?.data?.match(/^fix_pick_key_(\d+)_(\d+)/);
+  if (!match) return cbFixErrors(ctx);
+
+  const idx = parseInt(match[1], 10);
+  const optIdx = parseInt(match[2], 10);
+
+  const data = await getData(ctx);
+  const invalidQs = data.invalidQs || [];
+  const questions = data.questions || [];
+
+  if (idx < 0 || idx >= invalidQs.length) {
+    return cbFixErrors(ctx);
+  }
+
+  const badText = invalidQs[idx];
+  const cand = extractQuestionCandidates(badText);
+  const opts = (cand.options && cand.options.length >= 2)
+    ? cand.options.map(o => o.cleanText || o.text)
+    : [];
+
+  if (opts.length < 2 || optIdx < 0 || optIdx >= opts.length) {
+    return cbFixErrors(ctx, idx);
+  }
+
+  const resolvedQuestion = {
+    question: cand.questionText || badText.split('\n')[0].replace(/^(\d+[\)\.]|№\s*\d+[\)\.]?)\s*/, '').trim(),
+    options: opts,
+    correct_index: optIdx,
+  };
+
+  questions.push(resolvedQuestion);
+  invalidQs.splice(idx, 1);
+
+  if (data.is_auto_docx) {
+    const chunks = [];
+    for (let i = 0; i < questions.length; i += 25) {
+      chunks.push(questions.slice(i, i + 25));
+    }
+    await updateData(ctx, { questions, invalidQs, chunks });
+  } else {
+    await updateData(ctx, { questions, invalidQs });
+  }
+
+  return cbFixErrors(ctx, idx);
+}
+
+// 1-Tap AI Auto-Heal for all invalid questions
+async function cbFixAutoAll(ctx) {
+  if (ctx.callbackQuery) {
+    await ctx.answerCbQuery("⏳ AI avto-tuzatmoqda...").catch(() => {});
+  }
+  const data = await getData(ctx);
+  const invalidQs = data.invalidQs || [];
+  if (!invalidQs.length) {
+    return ctx.reply("ℹ️ Tuzatish uchun xato savollar mavjud emas.");
+  }
+
+  const questions = data.questions || [];
+  const res = await aiDocxHealer.batchAutoHeal(invalidQs, process.env.GEMINI_API_KEY);
+  const healed = res.healed || [];
+  const remaining = res.remainingInvalid || [];
+
+  if (healed.length > 0) {
+    questions.push(...healed);
+  }
+
+  if (data.is_auto_docx) {
+    const chunks = [];
+    for (let i = 0; i < questions.length; i += 25) {
+      chunks.push(questions.slice(i, i + 25));
+    }
+    await updateData(ctx, { questions, invalidQs: remaining, chunks });
+  } else {
+    await updateData(ctx, { questions, invalidQs: remaining });
+  }
+
+  if (remaining.length === 0) {
+    await ctx.reply(`✨ AI barcha ${healed.length} ta savolni muvaffaqiyatli tuzatdi va testga qo'shdi!`);
+    if (data.is_auto_docx && data.chunks) {
+      return showAutoDocxStatusMenu(ctx, data.chunks, 0);
+    }
+    return data.is_editing ? showEditDashboard(ctx) : showDraftDashboard(ctx);
+  } else {
+    await ctx.reply(`✨ AI ${healed.length} ta savolni tuzatdi. ${remaining.length} ta savol qo'lda ko'rib chiqishni talab qiladi.`);
+    return cbFixErrors(ctx, 0);
+  }
+}
+
+// Launch interactive HTML Web Inspector Widget
+async function cbOpenInspector(ctx) {
+  if (ctx.callbackQuery) {
+    await ctx.answerCbQuery().catch(() => {});
+  }
+  const data = await getData(ctx);
+  const invalidQs = data.invalidQs || [];
+
+  if (!invalidQs.length) {
+    return ctx.reply("ℹ️ Tekshirish uchun xato savollar qolmadi.");
+  }
+
+  const widgetQuestions = invalidQs.map((raw, i) => {
+    const cand = extractQuestionCandidates(raw);
+    return {
+      id: i + 1,
+      questionText: cand.questionText || raw,
+      raw,
+      error: cand.options.length < 2 ? "Variantlar yetarli emas" : "To'g'ri javob kaliti belgilanmagan",
+      options: (cand.options.length >= 2 ? cand.options : [
+        { text: "Variant A", cleanText: "Variant A", isCorrect: false },
+        { text: "Variant B", cleanText: "Variant B", isCorrect: false },
+      ]).map((o, oi) => ({
+        text: o.cleanText || o.text,
+        isCorrect: cand.suggestedCorrectIdx === oi || Boolean(o.isCorrect),
+      })),
+    };
+  });
+
+  const userId = ctx.from?.id || 0;
+  const widgetMsg = widgetService.buildWidgetMessage(
+    'docxHealer',
+    {
+      userId,
+      title: "Docx Smart Healer",
+      questions: widgetQuestions,
+    },
+    `🔧 <b>Smart Docx Visual Healer & Xatoliklar Inspektori</b>\n\n` +
+    `Aniqlangan xatoliklar: <b>${invalidQs.length} ta</b>\n` +
+    `To'g'ri javoblarni qulay interaktiv ko'rinishda belgilang yoki 1-bosishda AI yordamida tuzating:`,
+    Markup.inlineKeyboard([
+      [Markup.button.webApp("🚀 Visual Inspektorni Ochish", widgetService.buildWidgetMessage('docxHealer', { userId, title: 'Docx Smart Healer', questions: widgetQuestions }, '', null, { userId }).url)],
+      [Markup.button.callback("🔙 Menyuga qaytish", data.is_auto_docx ? "show_status_menu" : "back_to_dashboard")],
     ]),
+    { userId }
+  );
+
+  return safeEdit(ctx, widgetMsg.text, {
+    parse_mode: "HTML",
+    ...widgetMsg.reply_markup,
   });
 }
 
@@ -2150,6 +2343,10 @@ function register(bot) {
 
   bot.action(/^fix_errors_/, cbFixErrors);
   bot.action(/^del_err_/, cbDeleteError);
+  bot.action("fix_auto_all", cbFixAutoAll);
+  bot.action(/^fix_pick_key_/, cbFixPickKey);
+  bot.action("fix_open_inspector", cbOpenInspector);
+  bot.action("fix_open_web_inspector", cbOpenInspector);
 }
 
 module.exports = {
@@ -2170,5 +2367,9 @@ module.exports = {
   cbDeleteTest,
   cbMyTests,
   processBatchedTextQuestions,
+  cbFixErrors,
+  cbFixPickKey,
+  cbFixAutoAll,
+  cbOpenInspector,
   _userTextChunks: userTextChunks,
 };

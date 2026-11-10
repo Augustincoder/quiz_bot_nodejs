@@ -119,6 +119,111 @@ function validateQuizQuestion(q) {
   return true;
 }
 
+/**
+ * Extracts candidate question stem and options from malformed / invalid question text.
+ * Integrates aiDocxHealer (healSmashedLine, detectFormattedKey, normalizeOptionPrefixes).
+ *
+ * @param {string} badText
+ * @returns {{ questionText: string, options: Array<{ index: number, raw: string, text: string, cleanText: string, isCorrect: boolean }>, suggestedCorrectIdx: number }}
+ */
+function extractQuestionCandidates(badText) {
+  if (!badText || typeof badText !== 'string') {
+    return { questionText: '', options: [], suggestedCorrectIdx: -1 };
+  }
+
+  const aiDocxHealer = require('../services/aiDocxHealer');
+
+  // 1. Try single-line smashed line recovery
+  const smashed = aiDocxHealer.healSmashedLine(badText);
+  if (smashed && smashed.success && Array.isArray(smashed.options) && smashed.options.length >= 2) {
+    let suggestedIdx = smashed.options.findIndex((o) => o.isCorrect);
+    if (suggestedIdx === -1) {
+      const fmt = aiDocxHealer.detectFormattedKey(badText);
+      if (fmt.correctIndex >= 0 && fmt.correctIndex < smashed.options.length) {
+        suggestedIdx = fmt.correctIndex;
+      }
+    }
+
+    return {
+      questionText: smashed.questionText,
+      options: smashed.options.map((opt, idx) => ({
+        index: idx,
+        raw: opt.raw || opt.cleanText,
+        text: opt.cleanText || opt.raw,
+        cleanText: opt.cleanText || opt.raw,
+        isCorrect: idx === suggestedIdx || Boolean(opt.isCorrect),
+      })),
+      suggestedCorrectIdx: suggestedIdx,
+    };
+  }
+
+  // 2. Multi-line candidate extraction
+  const normalized = aiDocxHealer.normalizeOptionPrefixes(badText);
+  const normalizedHtml = normalized
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/w:p>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n');
+  const cleanStr = aiDocxHealer.stripHtmlTags ? aiDocxHealer.stripHtmlTags(normalizedHtml) : normalizedHtml;
+  const lines = cleanStr.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+  if (lines.length < 2) {
+    return { questionText: badText.trim(), options: [], suggestedCorrectIdx: -1 };
+  }
+
+  // Find first option marker index
+  let firstOptIdx = 1;
+  for (let i = 1; i < lines.length; i++) {
+    if (/^[#*+]?\s*(?:[A-Za-z][\)\.]|\d+[\)\.]|[•\-\*]|\[[xX ]\])\s*/.test(lines[i])) {
+      firstOptIdx = i;
+      break;
+    }
+  }
+
+  const questionStem = lines
+    .slice(0, firstOptIdx)
+    .join(' ')
+    .replace(/^(\d+[\)\.]|№\s*\d+[\)\.]?)\s*/, '')
+    .trim();
+
+  const rawOpts = lines.slice(firstOptIdx);
+  let suggestedCorrectIdx = -1;
+
+  const options = rawOpts.map((line, idx) => {
+    let isCorrect = /^[#*+]|\[[xX]\]/.test(line);
+    let clean = line.replace(/^[#*+]?\s*(\[[xX ]\]\s*)?(?:[A-Za-z0-9][\)\.\-]|[•\-\*])\s*/, '').trim();
+    if (/^[#*+]/.test(clean)) {
+      isCorrect = true;
+      clean = clean.replace(/^[#*+]\s*/, '').trim();
+    }
+    if (isCorrect && suggestedCorrectIdx === -1) {
+      suggestedCorrectIdx = idx;
+    }
+    return {
+      index: idx,
+      raw: line,
+      text: clean || line,
+      cleanText: clean || line,
+      isCorrect,
+    };
+  });
+
+  if (suggestedCorrectIdx === -1) {
+    const fmt = aiDocxHealer.detectFormattedKey(badText);
+    if (fmt.correctIndex >= 0 && fmt.correctIndex < options.length) {
+      suggestedCorrectIdx = fmt.correctIndex;
+      if (options[suggestedCorrectIdx]) {
+        options[suggestedCorrectIdx].isCorrect = true;
+      }
+    }
+  }
+
+  return {
+    questionText: questionStem,
+    options,
+    suggestedCorrectIdx,
+  };
+}
+
 module.exports = {
   SubjectSchema,
   BlockNameSchema,
@@ -127,4 +232,5 @@ module.exports = {
   escapeMarkdown,
   sanitizeQuizQuestions,
   validateQuizQuestion,
+  extractQuestionCandidates,
 };
