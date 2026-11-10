@@ -3,6 +3,11 @@
 const { Markup } = require("telegraf");
 const { TTLMap, safeCallbackData } = require("../core/utils");
 
+let featureFlagService = null;
+try {
+  featureFlagService = require("../services/featureFlagService");
+} catch {}
+
 const ITEMS_PER_PAGE = 5;
 
 // memory_db botdan import qilinadi (circular dep yechimi)
@@ -83,8 +88,11 @@ function paginationRow(prefix, currentPage, totalPages) {
   return nav;
 }
 
-function getBlocksKeyboard(subjectKey, page = 0) {
-  const cacheKey = `${subjectKey}:${page}`;
+function getBlocksKeyboard(subjectKey, page = 0, userId = null) {
+  const isFlashcardEnabled = featureFlagService
+    ? featureFlagService.isFeatureEnabledSync('FEATURE_BLITZ_FLASHCARD', userId)
+    : false;
+  const cacheKey = `${subjectKey}:${page}:${isFlashcardEnabled ? 1 : 0}`;
   if (blocksKbCache.has(cacheKey)) return blocksKbCache.get(cacheKey);
 
   const db = _memoryDb || {};
@@ -113,12 +121,14 @@ function getBlocksKeyboard(subjectKey, page = 0) {
           safeCallbackData(`start_test_${subjectKey}_${tId}`),
         ),
       ]);
-      buttons.push([
-        Markup.button.callback(
-          `⚡ Tezkor ko'rish (Flashcard)`,
-          safeCallbackData(`cram_start_${subjectKey}_${tId}`),
-        ),
-      ]);
+      if (isFlashcardEnabled) {
+        buttons.push([
+          Markup.button.callback(
+            `⚡ Tezkor ko'rish (Flashcard)`,
+            safeCallbackData(`cram_start_${subjectKey}_${tId}`),
+          ),
+        ]);
+      }
     }
     const nav = paginationRow(`page_${subjectKey}_`, page, totalPages);
     if (nav.length) buttons.push(nav);

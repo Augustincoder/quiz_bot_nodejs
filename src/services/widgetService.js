@@ -4,6 +4,21 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
+let featureFlagService = null;
+try {
+  featureFlagService = require('./featureFlagService');
+} catch {}
+
+/**
+ * Checks if Telegram 10.4 Widget Engine is enabled for a user.
+ * @param {string|number} userId
+ * @returns {boolean}
+ */
+function isWidgetEngineEnabled(userId) {
+  if (!featureFlagService) return true;
+  return featureFlagService.isFeatureEnabledSync('FEATURE_WIDGET_ENGINE', userId);
+}
+
 // HMAC Secret Key derivation (uses WIDGET_SECRET, BOT_TOKEN, or secure fallback)
 const RAW_SECRET = process.env.WIDGET_SECRET || process.env.BOT_TOKEN || 'quiz_bot_widget_hmac_secret_v1';
 const SECRET_KEY = crypto.createHash('sha256').update(RAW_SECRET).digest();
@@ -167,6 +182,26 @@ function renderWidgetHtml(type, data = {}) {
  */
 function buildWidgetMessage(type, payload = {}, fallbackText = '', fallbackKeyboard = null, options = {}) {
   const userId = options.userId !== undefined ? options.userId : (payload?.userId || 0);
+  const isEnabled = isWidgetEngineEnabled(userId);
+
+  if (!isEnabled) {
+    const defaultKeyboard = fallbackKeyboard || {
+      inline_keyboard: [],
+    };
+    return {
+      type,
+      token: null,
+      url: null,
+      widgetUrl: null,
+      text: fallbackText || '',
+      fallbackText: fallbackText || '',
+      reply_markup: defaultKeyboard,
+      fallbackKeyboard: defaultKeyboard,
+      widget: null,
+      enabled: false,
+    };
+  }
+
   const ttlMs = options.ttlMs || DEFAULT_TTL_MS;
   const token = createWidgetToken(userId, type, payload, ttlMs);
 
@@ -208,4 +243,5 @@ module.exports = {
   escapeHtml,
   renderWidgetHtml,
   buildWidgetMessage,
+  isWidgetEngineEnabled,
 };

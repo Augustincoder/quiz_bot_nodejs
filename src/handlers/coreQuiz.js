@@ -18,6 +18,7 @@ const {
 } = require("../core/utils");
 const redisConnection = require("../services/redisService");
 const { buildShareLink } = require("../services/shareService");
+const featureFlagService = require("../services/featureFlagService");
 
 const lastGroupQuizCache = new TTLMap(24 * 3600 * 1000, 500);
 
@@ -763,6 +764,10 @@ async function cbMyGroupQuizResult(ctx, testSession = null) {
   if (!userId) return;
 
   const chatId = ctx.chat?.id;
+  if (!featureFlagService.isFeatureEnabledSync('FEATURE_TOP3_PODIUM', userId, { chatId, isGroup: true })) {
+    return ctx.answerCbQuery("ℹ️ Ushbu funksiya hozirda faol emas.", { show_alert: true });
+  }
+
   let session = testSession;
   if (!session && chatId) {
     session = (await sessionService.getActiveTest(chatId)) ||
@@ -1052,7 +1057,30 @@ async function finishTest(chatId, telegram) {
             ? session.groupScores
             : session.groupScores;
 
-      const { body, sortedEntries, top3 } = formatPublicPodium(scoresToUse);
+      const targetUserId = session.initiatorId || session.creatorId || session.userId || null;
+      const isPodiumEnabled = featureFlagService.isFeatureEnabledSync('FEATURE_TOP3_PODIUM', targetUserId, { chatId, isGroup: true });
+
+      let body = "";
+      if (isPodiumEnabled) {
+        const podiumRes = formatPublicPodium(scoresToUse);
+        body = podiumRes.body;
+      } else {
+        const entries = Object.values(scoresToUse || {});
+        const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"];
+        const sortedEntries = entries.sort((a, b) => (b.correct || 0) - (a.correct || 0));
+        const topEntries = sortedEntries.slice(0, 25);
+        body = topEntries.length
+          ? topEntries
+            .map(
+              (s, i) =>
+                `${medals[i] ?? "🔸"} <b>${escapeHtml(s.name)}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`,
+            )
+            .join("\n")
+          : "😔 Hech kim javob bermadi.";
+        if (sortedEntries.length > 25) {
+          body += `\n<i>...va yana ${sortedEntries.length - 25} nafar ishtirokchi</i>`;
+        }
+      }
 
       // MARAFON: Agar hali bloklar qolgan bo'lsa
       if (
@@ -1083,23 +1111,26 @@ async function finishTest(chatId, telegram) {
         text = `🏁 <b>${session.currentBlockIdx}-Blok Yakunlandi!</b>\n\n🏆 <b>Bu blok bo'yicha oraliq natijalar:</b>\n${body}\n\n⏳ <i>Keyingi navbat: <b>${escapeHtml(nextBlock.block_name)}</b></i>`;
         text = truncateText(text, 4000);
 
+        const interButtons = [];
+        if (isPodiumEnabled) {
+          interButtons.push([
+            {
+              text: "📊 Mening Tahlilim (Faqat Menga)",
+              callback_data: "my_group_quiz_result",
+            },
+          ]);
+        }
+        interButtons.push([
+          {
+            text: "▶️ Keyingi blokni boshlash",
+            callback_data: "room_next_block",
+          },
+        ]);
+
         const interOpts = {
           parse_mode: "HTML",
           reply_markup: {
-            inline_keyboard: [
-              [
-                {
-                  text: "📊 Mening Tahlilim (Faqat Menga)",
-                  callback_data: "my_group_quiz_result",
-                },
-              ],
-              [
-                {
-                  text: "▶️ Keyingi blokni boshlash",
-                  callback_data: "room_next_block",
-                },
-              ],
-            ],
+            inline_keyboard: interButtons,
           },
         };
         if (session.messageThreadId) interOpts.message_thread_id = session.messageThreadId;
@@ -1141,26 +1172,46 @@ async function finishTest(chatId, telegram) {
         const shareLink = `https://t.me/share/url?url=${encodeURIComponent(targetLink)}&text=${encodeURIComponent("🏆 Bizning guruh reytingimiz chiroyli chiqdi! Siz ham do'stlar bilan o'ynang.")}`;
 
         if (session.isMarathon) {
-          const { body: globalBody } = formatPublicPodium(session.marathonGlobalScores);
+          let globalBody;
+          if (isPodiumEnabled) {
+            const res = formatPublicPodium(session.marathonGlobalScores);
+            globalBody = res.body;
+          } else {
+            const globalEntries = Object.values(session.marathonGlobalScores || {}).sort((a, b) => (b.correct || 0) - (a.correct || 0));
+            const topGlobal = globalEntries.slice(0, 25);
+            const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"];
+            globalBody = topGlobal.length
+              ? topGlobal
+                .map(
+                  (s, i) =>
+                    `${medals[i] ?? "🔸"} <b>${escapeHtml(s.name)}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`,
+                )
+                .join("\n")
+              : "😔 Hech kim javob bermadi.";
+            if (globalEntries.length > 25) {
+              globalBody += `\n<i>...va yana ${globalEntries.length - 25} nafar ishtirokchi</i>`;
+            }
+          }
           text = `🏆 <b>MARAFON YAKUNLANDI!</b>\n\n📚 Fan: <b>${escapeHtml(subjName)}</b>\nJami: <b>${session.marathonBlocks.length} ta blok</b> o'ynaldi\n⏱ Umumiy vaqt: <b>${time}</b>\n\n👑 <b>YAKUNIY CHEMPIONLAR REYTINGI:</b>\n${globalBody}`;
         } else {
           text = `🏁 <b>Musobaqa Yakunlandi!</b>\n\n📚 Fan: <b>${escapeHtml(subjName)}</b>\n🔖 Blok: <b>${escapeHtml(tName)}</b>\n⏱ Vaqt: <b>${time}</b>\n\n🏆 <b>Yakuniy Reyting:</b>\n${body}`;
         }
 
-        buttons = [
-          [
+        buttons = [];
+        if (isPodiumEnabled) {
+          buttons.push([
             Markup.button.callback(
               "📊 Mening Tahlilim (Faqat Menga)",
               "my_group_quiz_result",
             ),
-          ],
-          [
-            Markup.button.url(
-              "↗️ Do'stlarga maqtanib qo'yish (Ulashish)",
-              shareLink,
-            ),
-          ],
-        ];
+          ]);
+        }
+        buttons.push([
+          Markup.button.url(
+            "↗️ Do'stlarga maqtanib qo'yish (Ulashish)",
+            shareLink,
+          ),
+        ]);
       }
     }
 

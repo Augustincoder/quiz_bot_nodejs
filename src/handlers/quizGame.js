@@ -190,9 +190,10 @@ async function cbSubject(ctx) {
   const subjectKey = parseSuffix(ctx.callbackQuery.data, "subj_");
   const subjName = escapeHtml(SUBJECTS[subjectKey] || "Fan");
   const botInfo = await ctx.telegram.getMe(); // Bot usernamesini olamiz
+  const userId = ctx.from?.id;
 
   // Asosiy tugmalar (Bloklar) ni olamiz
-  const blocksKb = getBlocksKeyboard(subjectKey, 0);
+  const blocksKb = getBlocksKeyboard(subjectKey, 0, userId);
 
   // Eng tepasiga "Guruhda Marafon o'ynash" tugmasini qo'shamiz
   blocksKb.reply_markup.inline_keyboard.unshift([
@@ -214,9 +215,10 @@ async function cbPage(ctx) {
   const parts = ctx.callbackQuery.data.split("_");
   const page = parseInt(parts[parts.length - 1], 10);
   const subjectKey = parts.slice(1, parts.length - 1).join("_");
+  const userId = ctx.from?.id;
   try {
     await ctx.editMessageReplyMarkup(
-      getBlocksKeyboard(subjectKey, page).reply_markup,
+      getBlocksKeyboard(subjectKey, page, userId).reply_markup,
     );
   } catch {
     /* no change */
@@ -1424,10 +1426,11 @@ async function cbPostSubj(ctx) {
   if (!SUBJECTS[subjectKey]) {
     return cbOfficialTests(ctx);
   }
+  const userId = ctx.from?.id;
   await safeEdit(
     ctx,
     `📚 <b>${escapeHtml(SUBJECTS[subjectKey] || "Fan")}</b>\n\nBlokni tanlang:`,
-    { parse_mode: "HTML", ...getBlocksKeyboard(subjectKey, 0) },
+    { parse_mode: "HTML", ...getBlocksKeyboard(subjectKey, 0, userId) },
   );
 }
 

@@ -10,9 +10,12 @@ const {
   generatePersonalAnalysis,
   cbMyGroupQuizResult,
 } = require('../src/handlers/coreQuiz');
+const featureFlagService = require('../src/services/featureFlagService');
 
 async function runTests() {
   console.log('🧪 Starting 3D Top-3 Podium & Ephemeral Knowledge Radar Tests...\n');
+  await featureFlagService.setFeatureState('FEATURE_TOP3_PODIUM', featureFlagService.STATES.PUBLIC);
+  await featureFlagService.setFeatureState('FEATURE_WIDGET_ENGINE', featureFlagService.STATES.PUBLIC);
 
   // ─── TEST 1: Tie-breaker with Equal Correct Scores ──────────────────
   console.log('[Test 1] Deterministic Tie-Breaker with Response Times...');

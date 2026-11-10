@@ -25,9 +25,12 @@ const {
 const { getBlocksKeyboard, setMemoryDb } = require('../src/keyboards/keyboards');
 const botCore = require('../src/core/bot');
 const { buildWidgetMessage, verifyWidgetToken } = require('../src/services/widgetService');
+const featureFlagService = require('../src/services/featureFlagService');
 
 async function runTests() {
   console.log('🧪 Starting 3D Blitz-Flashcard Review Widget & Spaced Repetition Tests...\n');
+  await featureFlagService.setFeatureState('FEATURE_BLITZ_FLASHCARD', featureFlagService.STATES.PUBLIC);
+  await featureFlagService.setFeatureState('FEATURE_WIDGET_ENGINE', featureFlagService.STATES.PUBLIC);
 
   // Sample questions fixture
   const sampleQuestions = [

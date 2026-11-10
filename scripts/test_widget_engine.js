@@ -16,9 +16,11 @@ const {
 } = require('../src/services/widgetService');
 
 const widgetRouter = require('../src/widgets/widgetServer');
+const featureFlagService = require('../src/services/featureFlagService');
 
 async function runTests() {
   console.log('🧪 Starting Telegram 10.4 Widget Engine & HMAC Infrastructure Tests...\n');
+  await featureFlagService.setFeatureState('FEATURE_WIDGET_ENGINE', featureFlagService.STATES.PUBLIC);
 
   // ─── TEST 1: Token Generation & Verification ─────────────────────────
   console.log('[Test 1] Token Generation & Verification...');

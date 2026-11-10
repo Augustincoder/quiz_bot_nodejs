@@ -9,9 +9,12 @@ const assert = require('assert');
 const aiDocxHealer = require('../src/services/aiDocxHealer');
 const { extractQuestionCandidates } = require('../src/validators/testValidators');
 const testCreation = require('../src/handlers/testCreation');
+const featureFlagService = require('../src/services/featureFlagService');
 
 async function runTests() {
   console.log('🧪 Testing Task 4: Docx Multi-Error AI & Visual Healer...\n');
+  await featureFlagService.setFeatureState('FEATURE_DOCX_SMART_HEALER', featureFlagService.STATES.PUBLIC);
+  await featureFlagService.setFeatureState('FEATURE_WIDGET_ENGINE', featureFlagService.STATES.PUBLIC);
 
   // Test 1: Smashed line - Question and options on a single unformatted line
   console.log('[Test 1] Smashed single line recovery...');

@@ -305,6 +305,12 @@ function formatFlashcardMessage(viewData, isRevealed = false) {
  */
 async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, options = {}) {
   const userId = ctx.from?.id;
+  try {
+    const featureFlagService = require('../services/featureFlagService');
+    if (!featureFlagService.isFeatureEnabledSync('FEATURE_BLITZ_FLASHCARD', userId)) {
+      return ctx.answerCbQuery("ℹ️ Ushbu funksiya hozirda faol emas.", { show_alert: true }).catch(() => {});
+    }
+  } catch {}
   const userKey = userId ? String(userId) : 'default';
 
   // 1. Resolve questions if not passed

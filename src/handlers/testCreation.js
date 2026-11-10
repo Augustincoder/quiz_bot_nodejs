@@ -31,6 +31,7 @@ const {
 } = require("../validators/testValidators");
 const widgetService = require("../services/widgetService");
 const aiDocxHealer = require("../services/aiDocxHealer");
+const featureFlagService = require("../services/featureFlagService");
 const AI_WARNING_TEXT = `\n\n⚠️ <b>Eslatma:</b> <i>Bu javoblar tezkor AI modellarida tayyorlanmoqda va xatolar ehtimolligi bor. Rasmiy imtihonga tayyorlanayotganlar yoki Pro modellar uchun adminga murojaat qiling:</i> @AvazovM`;
 
 // ─── TUGMALAR GENERATORI ─────────────────────────────────────
@@ -2049,6 +2050,29 @@ async function cbFixErrors(ctx, targetIdx = null) {
   setState(ctx, States.CREATE_QUESTIONS);
   await updateData(ctx, { fixing_error_index: idx });
 
+  const userId = ctx.from?.id;
+  const isHealerEnabled = featureFlagService.isFeatureEnabledSync('FEATURE_DOCX_SMART_HEALER', userId);
+  const backAction = data.is_auto_docx ? "show_status_menu" : "back_to_dashboard";
+
+  if (!isHealerEnabled) {
+    const text =
+      `⚠️ <b>Xato Savolni To'g'rilash</b> (${idx + 1} / ${invalidQs.length})\n\n` +
+      `Ushbu savol formatida xato bor (masalan, to'g'ri javob belgisi <code>#</code> unutilgan yoki variantlar kam).\n\n` +
+      `<b>Matnni nusxalang (ustiga bossangiz nusxalanadi), to'g'rilang va menga qayta yuboring:</b>\n\n` +
+      `<pre><code>${escapeHtml(badText)}</code></pre>`;
+
+    return safeEdit(ctx, text, {
+      parse_mode: "HTML",
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback("⏭ O'tkazib yuborish", `fix_errors_${idx + 1}`),
+          Markup.button.callback("🗑 O'chirish", `del_err_${idx}`),
+        ],
+        [Markup.button.callback("🔙 Ortga", backAction)],
+      ]),
+    });
+  }
+
   const candidate = extractQuestionCandidates(badText);
   const options = candidate.options || [];
 
@@ -2069,8 +2093,6 @@ async function cbFixErrors(ctx, targetIdx = null) {
       `<i>1-Tap AI orqali avto-tuzatishingiz yoki Web Inspektorda ochishingiz mumkin:</i>\n\n` +
       `<pre><code>${escapeHtml(badText)}</code></pre>`;
   }
-
-  const backAction = data.is_auto_docx ? "show_status_menu" : "back_to_dashboard";
 
   const keyboardRows = [];
 
@@ -2115,6 +2137,12 @@ async function cbFixErrors(ctx, targetIdx = null) {
 
 // 1-Tap to pick correct key for a question candidate
 async function cbFixPickKey(ctx) {
+  if (!featureFlagService.isFeatureEnabledSync('FEATURE_DOCX_SMART_HEALER', ctx.from?.id)) {
+    if (ctx.callbackQuery) {
+      await ctx.answerCbQuery("ℹ️ Ushbu funksiya hozirda faol emas.", { show_alert: true }).catch(() => {});
+    }
+    return cbFixErrors(ctx);
+  }
   if (ctx.callbackQuery) {
     await ctx.answerCbQuery("✅ To'g'ri javob belgilandi!").catch(() => {});
   }
@@ -2166,6 +2194,12 @@ async function cbFixPickKey(ctx) {
 
 // 1-Tap AI Auto-Heal for all invalid questions
 async function cbFixAutoAll(ctx) {
+  if (!featureFlagService.isFeatureEnabledSync('FEATURE_DOCX_SMART_HEALER', ctx.from?.id)) {
+    if (ctx.callbackQuery) {
+      await ctx.answerCbQuery("ℹ️ Ushbu funksiya hozirda faol emas.", { show_alert: true }).catch(() => {});
+    }
+    return cbFixErrors(ctx);
+  }
   if (ctx.callbackQuery) {
     await ctx.answerCbQuery("⏳ AI avto-tuzatmoqda...").catch(() => {});
   }
@@ -2208,6 +2242,12 @@ async function cbFixAutoAll(ctx) {
 
 // Launch interactive HTML Web Inspector Widget
 async function cbOpenInspector(ctx) {
+  if (!featureFlagService.isFeatureEnabledSync('FEATURE_DOCX_SMART_HEALER', ctx.from?.id)) {
+    if (ctx.callbackQuery) {
+      await ctx.answerCbQuery("ℹ️ Ushbu funksiya hozirda faol emas.", { show_alert: true }).catch(() => {});
+    }
+    return cbFixErrors(ctx);
+  }
   if (ctx.callbackQuery) {
     await ctx.answerCbQuery().catch(() => {});
   }
