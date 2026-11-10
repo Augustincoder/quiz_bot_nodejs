@@ -137,7 +137,7 @@ async function refreshFromRedis() {
       if (parsed && typeof parsed === 'object') {
         // Merge with local state, preserving local additions
         for (const [k, v] of Object.entries(parsed)) {
-          if (!_features[k] || (_features[k].updatedAt || 0) <= (v.updatedAt || 0)) {
+          if (!_features[k] || (v.updatedAt || 0) > (_features[k].updatedAt || 0)) {
             _features[k] = v;
           }
         }
@@ -339,6 +339,7 @@ async function setFeatureState(featureKey, state, options = {}) {
   };
 
   _features[featureKey] = updated;
+  _lastL1Refresh = Date.now();
   await persistFeaturesToRedis();
   return updated;
 }
@@ -561,6 +562,7 @@ function recordFeatureError(featureKey, error, options = {}) {
     const reason = errMsg || 'Error threshold exceeded';
     feat.trippedReason = reason;
     feat.updatedAt = now;
+    _lastL1Refresh = now;
 
     // Background sync to Redis
     persistFeaturesToRedis().catch(() => {});
@@ -617,6 +619,7 @@ function resetFeatureBreaker(featureKey, restoredState) {
   feat.errorCount = 0;
   feat.previousState = null;
   feat.updatedAt = Date.now();
+  _lastL1Refresh = Date.now();
 
   persistFeaturesToRedis().catch(() => {});
 
