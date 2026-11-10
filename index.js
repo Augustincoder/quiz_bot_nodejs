@@ -99,6 +99,7 @@ const handlers = {
   contact: require("./src/handlers/contactAdmin"),
   notes: require("./src/handlers/noteHandler"),
   donate: require("./src/handlers/donateHandler"),
+  cram: require("./src/handlers/cramReviewHandler"),
 };
 
 

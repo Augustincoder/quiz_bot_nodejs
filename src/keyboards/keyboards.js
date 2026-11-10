@@ -9,6 +9,12 @@ const ITEMS_PER_PAGE = 5;
 let _memoryDb = null;
 function setMemoryDb(db) {
   _memoryDb = db;
+  try {
+    const botModule = require("../core/bot");
+    if (botModule && typeof botModule === 'object') {
+      botModule.memoryDb = db;
+    }
+  } catch {}
 }
 
 // Cache with 30-minute TTL to prevent unbounded memory growth
@@ -105,6 +111,12 @@ function getBlocksKeyboard(subjectKey, page = 0) {
         Markup.button.callback(
           `📘 ${tId}-Blok  •  ${qCount} ta savol`,
           safeCallbackData(`start_test_${subjectKey}_${tId}`),
+        ),
+      ]);
+      buttons.push([
+        Markup.button.callback(
+          `⚡ Tezkor ko'rish (Flashcard)`,
+          safeCallbackData(`cram_start_${subjectKey}_${tId}`),
         ),
       ]);
     }
@@ -230,6 +242,10 @@ module.exports = {
   getScheduleV2SettingsKeyboard,
   getNoteActionsKeyboard,
   paginationRow,
+  getFlashcardFallbackKeyboard: (cardIdx, isRevealed) => {
+    const { getFlashcardFallbackKeyboard } = require('../handlers/cramReviewHandler');
+    return getFlashcardFallbackKeyboard(cardIdx, isRevealed);
+  },
 };
 
 
