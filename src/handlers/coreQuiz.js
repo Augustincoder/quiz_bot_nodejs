@@ -14,9 +14,23 @@ const {
   escapeHtml,
   truncateText,
   safeCallbackData,
+  TTLMap,
 } = require("../core/utils");
 const redisConnection = require("../services/redisService");
 const { buildShareLink } = require("../services/shareService");
+
+const lastGroupQuizCache = new TTLMap(24 * 3600 * 1000, 500);
+
+async function getLastGroupQuiz(chatId) {
+  const cid = String(chatId);
+  const mem = lastGroupQuizCache.get(cid);
+  if (mem) return mem;
+  try {
+    const raw = await redisConnection.get(`last_group_quiz:${cid}`);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+}
 
 
 // ─── REDIS-BACKED ACTIVE POLLS VA GROUP CACHE ─────────────────────────────
@@ -461,6 +475,7 @@ async function sendNextQuestion(chatId, telegram) {
         expectedParticipantsCount: session.expectedParticipantsCount || 0,
         readyUserIds: session.readyUserIds || [],
         autoAdvance: session.autoAdvance !== false,
+        sentAt: Date.now(),
       });
       if (!(await groupTestCache.get(chatId))) {
         await groupTestCache.set(chatId, { scores: session.groupScores || {} });
@@ -536,6 +551,304 @@ async function sendNextQuestion(chatId, telegram) {
         ).catch(() => {});
       }
     } catch {}
+  }
+}
+
+// ─── 3D PODIUM, TIE-BREAKER & PERSONAL ANALYSIS ───────────────────
+function sortGroupScores(scores) {
+  if (!scores) return [];
+  const entries = Array.isArray(scores)
+    ? scores
+    : Object.entries(scores).map(([k, v]) => ({
+        userId: v.userId || k,
+        ...v,
+      }));
+
+  return [...entries].sort((a, b) => {
+    const diffCorrect = (b.correct || 0) - (a.correct || 0);
+    if (diffCorrect !== 0) return diffCorrect;
+    const timeA = typeof a.totalTimeMs === "number" ? a.totalTimeMs : 0;
+    const timeB = typeof b.totalTimeMs === "number" ? b.totalTimeMs : 0;
+    const diffTime = timeA - timeB;
+    if (diffTime !== 0) return diffTime;
+    return (
+      String(a.name || "").localeCompare(String(b.name || "")) ||
+      String(a.userId || "").localeCompare(String(b.userId || ""))
+    );
+  });
+}
+
+function formatPublicPodium(scores) {
+  const sortedEntries = sortGroupScores(scores);
+  const medals = ["🥇", "🥈", "🥉"];
+  const top3 = sortedEntries.slice(0, 3);
+
+  let body = "";
+  if (top3.length === 0) {
+    body = "😔 Hech kim javob bermadi.";
+  } else {
+    body = top3
+      .map(
+        (s, i) =>
+          `${medals[i]} <b>${escapeHtml(s.name)}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`
+      )
+      .join("\n");
+    if (sortedEntries.length > 3) {
+      body += "\n\n👥 <i>Qolgan ishtirokchilar o'z natijasini quyidagi tugma orqali ko'rishi mumkin:</i>";
+    }
+  }
+  return { body, sortedEntries, top3 };
+}
+
+function generateGhostCoachAdvice(userData, session, categories) {
+  const correct = userData?.correct || 0;
+  const wrong = userData?.wrong || 0;
+  const totalAnswered = correct + wrong;
+  const pct = totalAnswered > 0 ? Math.round((correct / totalAnswered) * 100) : 0;
+
+  if (totalAnswered === 0) {
+    return "🎯 <b>Ghost Coach maslahati:</b> Testda faolroq qatnashib, o'z bilimingizni sinab ko'ring!";
+  }
+
+  if (wrong === 0) {
+    return "🔥 <b>Ghost Coach maslahati:</b> Benuqson g'alaba! Siz barcha savollarga 100% to'g'ri javob berdingiz. Siz haqiqiy chempionsiz!";
+  }
+
+  let weakCategory = null;
+  if (Array.isArray(categories) && categories.length > 0) {
+    const weakList = [...categories]
+      .filter((c) => c.wrong > 0)
+      .sort((a, b) => (b.wrong / (b.total || 1)) - (a.wrong / (a.total || 1)));
+    if (weakList.length > 0 && weakList[0].name && weakList[0].name !== "Umumiy") {
+      weakCategory = weakList[0].name;
+    }
+  }
+
+  const topicHint = weakCategory
+    ? ` Ayniqsa <b>${escapeHtml(weakCategory)}</b> mavzusiga e'tibor qaratishingizni tavsiya qilaman.`
+    : "";
+
+  if (pct >= 80) {
+    return `🎯 <b>Ghost Coach maslahati:</b> Ajoyib natija! Faqat ${wrong} ta xatolik bo'ldi.${topicHint} Xatolar ustida ishlab, 100% lik marraga osonlikcha erishasiz!`;
+  }
+  if (pct >= 50) {
+    return `🎯 <b>Ghost Coach maslahati:</b> Yaxshi harakat! Biroq ${wrong} ta xato bor.${topicHint} Xatolar ro'yxatini ko'rib chiqing va qayta urinib ko'ring!`;
+  }
+  return `🎯 <b>Ghost Coach maslahati:</b> Bugungi ${wrong} ta xato — yangi bilim olish uchun ajoyib imkoniyat.${topicHint} Qaytadan tayyorlanib, marrani zabt eting!`;
+}
+
+function generatePersonalAnalysis(userId, session) {
+  const scores = session?.groupScores || session?.marathonGlobalScores || {};
+  const sorted = sortGroupScores(scores);
+  const total = sorted.length;
+  const userIndex = sorted.findIndex((s) => String(s.userId || s.id) === String(userId));
+
+  const userData = userIndex !== -1 ? sorted[userIndex] : (scores[userId] || {
+    userId,
+    name: "Talaba",
+    correct: 0,
+    wrong: 0,
+    totalTimeMs: 0,
+    mistakes: [],
+  });
+
+  const rank = userIndex !== -1 ? userIndex + 1 : total + 1;
+  const rankStr = `${rank} / ${total || 1}`;
+  const pctRank = total > 0 ? Math.max(1, Math.min(100, Math.round((rank / total) * 100))) : 100;
+  const percentile = `Top ${pctRank}%`;
+
+  const correct = userData.correct || 0;
+  const wrong = userData.wrong || 0;
+  const totalAnswered = correct + wrong;
+  const accuracy = totalAnswered > 0 ? Math.round((correct / totalAnswered) * 100) : 0;
+  const totalTimeMs = userData.totalTimeMs || 0;
+  const timeFormatted = `${(totalTimeMs / 1000).toFixed(1)}s`;
+
+  // Category / topic breakdown
+  const categoryStats = {};
+  const mistakes = Array.isArray(userData.mistakes) ? userData.mistakes : [];
+  const mistakesQuestions = new Set(mistakes.map((m) => m.question).filter(Boolean));
+
+  if (Array.isArray(session?.sessionQuestions) && session.sessionQuestions.length > 0) {
+    for (const q of session.sessionQuestions) {
+      const cat = q.category || q.topic || session.blockName || session.subjectKey || "Umumiy";
+      if (!categoryStats[cat]) {
+        categoryStats[cat] = { name: cat, correct: 0, wrong: 0, total: 0 };
+      }
+      categoryStats[cat].total++;
+      if (mistakesQuestions.has(q.question)) {
+        categoryStats[cat].wrong++;
+      } else {
+        categoryStats[cat].correct++;
+      }
+    }
+  } else {
+    const cat = session?.blockName || session?.subjectKey || "Umumiy";
+    categoryStats[cat] = {
+      name: cat,
+      correct: correct,
+      wrong: wrong,
+      total: totalAnswered,
+    };
+  }
+
+  const categories = Object.values(categoryStats);
+  let categoryBreakdownText = "";
+  if (categories.length > 0) {
+    const lines = categories.map((c) => {
+      const cPct = c.total > 0 ? Math.round((c.correct / c.total) * 100) : 0;
+      return `• <b>${escapeHtml(c.name)}</b>: ${c.correct}/${c.total} to'g'ri (${cPct}%)`;
+    });
+    categoryBreakdownText = `📂 <b>Mavzular bo'yicha tahlil:</b>\n${lines.join("\n")}`;
+  }
+
+  const ghostCoachAdvice = generateGhostCoachAdvice(userData, session, categories);
+
+  // Mistakes review formatting
+  let mistakesText = "";
+  if (mistakes.length > 0) {
+    const displayMistakes = mistakes.slice(0, 3);
+    const mLines = displayMistakes.map((m, idx) => {
+      const qText = escapeHtml(truncateText(m.question || "Savol", 80));
+      const wText = escapeHtml(truncateText(m.wrong_ans || "Noto'g'ri", 50));
+      const cText = escapeHtml(truncateText(m.correct_ans || "To'g'ri", 50));
+      return `${idx + 1}. <b>${qText}</b>\n   ❌ Sizning javobingiz: <i>${wText}</i>\n   ✅ To'g'ri javob: <b>${cText}</b>`;
+    });
+    mistakesText = `❌ <b>Xatoliklar ko'rib chiqishi (${mistakes.length} ta):</b>\n${mLines.join("\n")}`;
+    if (mistakes.length > 3) {
+      mistakesText += `\n<i>...va yana ${mistakes.length - 3} ta xato</i>`;
+    }
+  }
+
+  const userName = userData.name || "Talaba";
+  const text =
+    `📊 <b>Shaxsiy Natijangiz Tahlili (Radar)</b>\n\n` +
+    `👤 <b>Qatnashchi:</b> ${escapeHtml(userName)}\n` +
+    `🏆 <b>Reytingdagi o'rningiz:</b> <b>${rankStr}</b> (${percentile})\n` +
+    `⏱ <b>Javob berish vaqti:</b> ${timeFormatted}\n\n` +
+    `━━━━━━━━━━━━━━━━\n` +
+    `✅ To'g'ri javoblar:    <b>${correct} ta</b>\n` +
+    `❌ Noto'g'ri javoblar: <b>${wrong} ta</b>\n` +
+    `🎯 Aniqlik ko'rsatkichi: <b>${accuracy}%</b>\n` +
+    `━━━━━━━━━━━━━━━━\n\n` +
+    (categoryBreakdownText ? `${categoryBreakdownText}\n\n` : "") +
+    `${ghostCoachAdvice}\n\n` +
+    (mistakesText ? `${mistakesText}\n\n` : "") +
+    `<i>💡 Ushbu tahlil faqat sizga ko'rinadi (ephemeral).</i>`;
+
+  return {
+    userId,
+    userName,
+    rank,
+    total,
+    rankStr,
+    percentile,
+    correct,
+    wrong,
+    totalAnswered,
+    accuracy,
+    totalTimeMs,
+    timeFormatted,
+    categories,
+    categoryBreakdownText,
+    ghostCoachAdvice,
+    mistakes,
+    mistakesText,
+    text: truncateText(text, 4000),
+  };
+}
+
+async function cbMyGroupQuizResult(ctx, testSession = null) {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+
+  const chatId = ctx.chat?.id;
+  let session = testSession;
+  if (!session && chatId) {
+    session = (await sessionService.getActiveTest(chatId)) ||
+      (await getLastGroupQuiz(chatId));
+  }
+
+  const scores = session?.groupScores || session?.marathonGlobalScores || {};
+  const hasParticipated = Object.entries(scores).some(
+    ([k, v]) => String(v.userId || k) === String(userId)
+  );
+
+  if (!hasParticipated) {
+    const toast = "ℹ️ Siz ushbu testda qatnashmagansiz. Keyingi safar sizni ham kutamiz!";
+    return ctx.answerCbQuery(toast, { show_alert: true });
+  }
+
+  const analysis = generatePersonalAnalysis(userId, session);
+
+  let replyMarkup = undefined;
+  try {
+    const widgetService = require("../services/widgetService");
+    const baseUrl = (process.env.BASE_URL || process.env.APP_URL || "").replace(/\/+$/, "");
+    if (baseUrl) {
+      const top3Sorted = sortGroupScores(scores).slice(0, 3);
+      const token = widgetService.createWidgetToken(userId, "podium", {
+        chatId,
+        top3: top3Sorted.map((t) => ({
+          name: t.name,
+          score: t.correct,
+          timeFormatted: `${((t.totalTimeMs || 0) / 1000).toFixed(1)}s`,
+        })),
+        personal: {
+          rank: analysis.rank,
+          total: analysis.total,
+          percentile: analysis.percentile,
+          correct: analysis.correct,
+          timeFormatted: analysis.timeFormatted,
+          advice: analysis.ghostCoachAdvice,
+        },
+      });
+      replyMarkup = {
+        inline_keyboard: [
+          [
+            {
+              text: "🏛 3D Radar & Shohsupani ochish",
+              web_app: { url: `${baseUrl}/widget/${token}` },
+            },
+          ],
+        ],
+      };
+    }
+  } catch {}
+
+  const sendOptions = {
+    parse_mode: "HTML",
+    ephemeral_message_parameters: {
+      target_user_id: userId,
+    },
+    ephemeralMessageParameters: {
+      userId: userId,
+    },
+  };
+  if (replyMarkup) {
+    sendOptions.reply_markup = replyMarkup;
+  }
+
+  try {
+    if (ctx.telegram?.sendMessage && chatId) {
+      await ctx.telegram.sendMessage(chatId, analysis.text, sendOptions);
+    } else if (typeof ctx.reply === "function") {
+      await ctx.reply(analysis.text, sendOptions);
+    }
+    await ctx.answerCbQuery().catch(() => {});
+  } catch (err) {
+    // Fallback: alert popup with summary or direct private message
+    const alertSummary = `📊 O'rin: ${analysis.rankStr} (${analysis.percentile}) | ✅ ${analysis.correct} | ❌ ${analysis.wrong}\n\n${analysis.ghostCoachAdvice}`.replace(/<[^>]*>/g, "");
+    try {
+      await ctx.answerCbQuery(alertSummary.slice(0, 195), { show_alert: true });
+    } catch (e2) {
+      if (ctx.telegram?.sendMessage) {
+        await ctx.telegram.sendMessage(userId, analysis.text, {
+          parse_mode: "HTML",
+          reply_markup: replyMarkup,
+        }).catch(() => {});
+      }
+    }
   }
 }
 
@@ -711,13 +1024,22 @@ async function finishTest(chatId, telegram) {
         for (const [uid, sc] of Object.entries(session.groupScores)) {
           if (!session.marathonGlobalScores[uid]) {
             session.marathonGlobalScores[uid] = {
+              userId: uid,
               name: sc.name,
               correct: 0,
               wrong: 0,
+              totalTimeMs: 0,
+              mistakes: [],
             };
           }
           session.marathonGlobalScores[uid].correct += sc.correct;
           session.marathonGlobalScores[uid].wrong += sc.wrong;
+          session.marathonGlobalScores[uid].totalTimeMs =
+            (session.marathonGlobalScores[uid].totalTimeMs || 0) + (sc.totalTimeMs || 0);
+          if (Array.isArray(sc.mistakes)) {
+            session.marathonGlobalScores[uid].mistakes =
+              (session.marathonGlobalScores[uid].mistakes || []).concat(sc.mistakes);
+          }
         }
       }
 
@@ -730,22 +1052,7 @@ async function finishTest(chatId, telegram) {
             ? session.groupScores
             : session.groupScores;
 
-      const entries = Object.values(scoresToUse);
-      const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"];
-
-      const sortedEntries = entries.sort((a, b) => b.correct - a.correct);
-      const topEntries = sortedEntries.slice(0, 25);
-      let body = topEntries.length
-        ? topEntries
-          .map(
-            (s, i) =>
-              `${medals[i] ?? "🔸"} <b>${escapeHtml(s.name)}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`,
-          )
-          .join("\n")
-        : "😔 Hech kim javob bermadi.";
-      if (sortedEntries.length > 25) {
-        body += `\n<i>...va yana ${sortedEntries.length - 25} nafar ishtirokchi</i>`;
-      }
+      const { body, sortedEntries, top3 } = formatPublicPodium(scoresToUse);
 
       // MARAFON: Agar hali bloklar qolgan bo'lsa
       if (
@@ -780,6 +1087,12 @@ async function finishTest(chatId, telegram) {
           parse_mode: "HTML",
           reply_markup: {
             inline_keyboard: [
+              [
+                {
+                  text: "📊 Mening Tahlilim (Faqat Menga)",
+                  callback_data: "my_group_quiz_result",
+                },
+              ],
               [
                 {
                   text: "▶️ Keyingi blokni boshlash",
@@ -828,28 +1141,19 @@ async function finishTest(chatId, telegram) {
         const shareLink = `https://t.me/share/url?url=${encodeURIComponent(targetLink)}&text=${encodeURIComponent("🏆 Bizning guruh reytingimiz chiroyli chiqdi! Siz ham do'stlar bilan o'ynang.")}`;
 
         if (session.isMarathon) {
-          const globalEntries = Object.values(
-            session.marathonGlobalScores,
-          ).sort((a, b) => b.correct - a.correct);
-          const topGlobal = globalEntries.slice(0, 25);
-          let globalBody = topGlobal.length
-            ? topGlobal
-              .map(
-                (s, i) =>
-                  `${medals[i] ?? "🔸"} <b>${escapeHtml(s.name)}</b>: ${s.correct} to'g'ri, ${s.wrong} xato`,
-              )
-              .join("\n")
-            : "😔 Hech kim javob bermadi.";
-          if (globalEntries.length > 25) {
-            globalBody += `\n<i>...va yana ${globalEntries.length - 25} nafar ishtirokchi</i>`;
-          }
-
+          const { body: globalBody } = formatPublicPodium(session.marathonGlobalScores);
           text = `🏆 <b>MARAFON YAKUNLANDI!</b>\n\n📚 Fan: <b>${escapeHtml(subjName)}</b>\nJami: <b>${session.marathonBlocks.length} ta blok</b> o'ynaldi\n⏱ Umumiy vaqt: <b>${time}</b>\n\n👑 <b>YAKUNIY CHEMPIONLAR REYTINGI:</b>\n${globalBody}`;
         } else {
           text = `🏁 <b>Musobaqa Yakunlandi!</b>\n\n📚 Fan: <b>${escapeHtml(subjName)}</b>\n🔖 Blok: <b>${escapeHtml(tName)}</b>\n⏱ Vaqt: <b>${time}</b>\n\n🏆 <b>Yakuniy Reyting:</b>\n${body}`;
         }
 
         buttons = [
+          [
+            Markup.button.callback(
+              "📊 Mening Tahlilim (Faqat Menga)",
+              "my_group_quiz_result",
+            ),
+          ],
           [
             Markup.button.url(
               "↗️ Do'stlarga maqtanib qo'yish (Ulashish)",
@@ -871,6 +1175,10 @@ async function finishTest(chatId, telegram) {
   } catch (e) {
     console.error(`finishTest send error [${chatId}]:`, e.message);
   } finally {
+    if (session?.chatType !== "private" && session) {
+      lastGroupQuizCache.set(chatId, session);
+      await redisConnection.set(`last_group_quiz:${chatId}`, JSON.stringify(session), "EX", 86400).catch(() => {});
+    }
     if (session?.pollId)
       await sessionService.deletePollChat(session.pollId).catch(() => { });
     if (!isMarathonContinuing) {
@@ -918,14 +1226,24 @@ async function handlePollAnswer(pollAnswer, telegram) {
 
       if (!groupEntry.scores[uId]) {
         groupEntry.scores[uId] = {
+          userId: uId,
           name: uName,
           correct: 0,
           wrong: 0,
+          totalTimeMs: 0,
           mistakes: [],
         };
       }
 
       const sc = groupEntry.scores[uId];
+      if (typeof sc.totalTimeMs !== "number") {
+        sc.totalTimeMs = 0;
+      }
+      if (cachedPoll.sentAt) {
+        const delta = Math.max(0, Date.now() - cachedPoll.sentAt);
+        sc.totalTimeMs += delta;
+      }
+
       if (isCorrect) {
         sc.correct++;
       } else {
@@ -936,6 +1254,7 @@ async function handlePollAnswer(pollAnswer, telegram) {
           wrong_ans: qData.options[pollAnswer.option_ids[0]],
           options: qData.options,
           correct_index: qData.correct_index,
+          category: qData.category || qData.topic || null,
         });
       }
       await groupTestCache.set(chatId, groupEntry);
@@ -1177,4 +1496,12 @@ module.exports = {
   activePollsCache,
   buildFinishButtons,
   cancelSessionTimer,
+  // 3D Podium & Ephemeral Knowledge Radar
+  sortGroupScores,
+  formatPublicPodium,
+  generateGhostCoachAdvice,
+  generatePersonalAnalysis,
+  cbMyGroupQuizResult,
+  lastGroupQuizCache,
+  getLastGroupQuiz,
 };

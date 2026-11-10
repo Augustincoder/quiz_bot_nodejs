@@ -35,6 +35,7 @@ const {
   lastMistakesCache,
   groupTestCache,
   cancelSessionTimer,
+  cbMyGroupQuizResult,
 } = require("./coreQuiz");
 const {
   cbRoomReady,
@@ -1623,6 +1624,9 @@ function register(bot) {
   // Mistakes review & AI Tutor actions
   bot.action(/^review_mistakes/, cbReviewMistakes);
   bot.action(/^ai_explain_mistakes/, cbAiExplainMistakes);
+
+  // Group quiz results & ephemeral analysis (Telegram 10.4)
+  bot.action("my_group_quiz_result", cbMyGroupQuizResult);
 }
 
 module.exports = {
@@ -1635,6 +1639,7 @@ module.exports = {
   cbReviewMistakes,
   cbAiExplainMistakes,
   cbAdaptiveTest,
+  cbMyGroupQuizResult,
   showUgcSubjectBlocks,
   cbUgcSubj,
   cbAdaptiveRun,
