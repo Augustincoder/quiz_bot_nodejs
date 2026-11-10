@@ -183,7 +183,8 @@ function renderFlagsDashboardText(flagsMap) {
       const threshold = feat.errorThreshold || 3;
       const windowMin = Math.round((feat.windowSeconds || 300) / 60);
 
-      text += `⚙️ <b>${escapeHtml(feat.key)}</b>\n`;
+      const featName = feat.name ? ` — <i>${escapeHtml(feat.name)}</i>` : '';
+      text += `⚙️ <b>${escapeHtml(feat.key)}</b>${featName}\n`;
       text += `   ├─ Holat: <b>${badge}</b>\n`;
       text += `   ├─ Izoh: <i>${desc}</i>\n`;
 
@@ -343,6 +344,9 @@ async function cbFlagsDashboard(ctx) {
   }
 
   try {
+    if (typeof featureFlagService.init === 'function') {
+      await featureFlagService.init().catch(() => {});
+    }
     const flagsMap = featureFlagService.getFeatureStates();
     const text = renderFlagsDashboardText(flagsMap);
     const kb = buildFlagsKeyboard(flagsMap);

@@ -675,6 +675,15 @@ async function main() {
   await loadAllTests();
   await syncUserNames();
 
+  // Initialize Feature Flag Governance & pre-load states from Redis
+  try {
+    const featureFlagService = require("./src/services/featureFlagService");
+    await featureFlagService.init();
+    logger.info("🎛 Feature Flag Governance xizmati ishga tushirildi");
+  } catch (err) {
+    logger.warn("Feature Flag xizmatini yuklashda xatolik:", { error: err.message });
+  }
+
   // Pre-load EduPage Timetable from L3 Disk Cache into RAM (Zero cold-start delay)
   try {
     await edupageService.getIndexedDatabase();

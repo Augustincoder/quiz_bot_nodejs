@@ -30,9 +30,61 @@ const STATES = Object.freeze({
 const REDIS_KEY_STATES = 'feature_flags:states';
 const REDIS_KEY_BETA_USERS = 'feature_flags:beta_users';
 
+// Pre-seeded known core system features (defaulting to ADMIN_ONLY dogfooding mode)
+const KNOWN_CORE_FEATURES = Object.freeze({
+  FEATURE_TOP3_PODIUM: {
+    key: 'FEATURE_TOP3_PODIUM',
+    name: 'Guruhda TOP 3 Shohsupa & Ghost Coach',
+    state: STATES.ADMIN_ONLY,
+    updatedAt: 0,
+    autoKillTriggered: false,
+    trippedAt: null,
+    trippedReason: null,
+    errorCount: 0,
+  },
+  FEATURE_BLITZ_FLASHCARD: {
+    key: 'FEATURE_BLITZ_FLASHCARD',
+    name: '3D Blitz-Flashcard Cram Mode',
+    state: STATES.ADMIN_ONLY,
+    updatedAt: 0,
+    autoKillTriggered: false,
+    trippedAt: null,
+    trippedReason: null,
+    errorCount: 0,
+  },
+  FEATURE_DOCX_SMART_HEALER: {
+    key: 'FEATURE_DOCX_SMART_HEALER',
+    name: 'Word Docx Visual Smart Healer',
+    state: STATES.ADMIN_ONLY,
+    updatedAt: 0,
+    autoKillTriggered: false,
+    trippedAt: null,
+    trippedReason: null,
+    errorCount: 0,
+  },
+  FEATURE_WIDGET_ENGINE: {
+    key: 'FEATURE_WIDGET_ENGINE',
+    name: 'Telegram 10.4 HTML Widget Engine',
+    state: STATES.ADMIN_ONLY,
+    updatedAt: 0,
+    autoKillTriggered: false,
+    trippedAt: null,
+    trippedReason: null,
+    errorCount: 0,
+  },
+});
+
+function createInitialFeatures() {
+  const map = {};
+  for (const [k, v] of Object.entries(KNOWN_CORE_FEATURES)) {
+    map[k] = { ...v };
+  }
+  return map;
+}
+
 // L1 In-Memory Cache
 const L1_CACHE_TTL_MS = 5000;
-let _features = {};
+let _features = createInitialFeatures();
 let _betaUsers = new Set();
 let _adminList = new Set();
 let _featureErrors = new Map();
@@ -445,9 +497,10 @@ function getBetaUsers() {
 
 /**
  * Reset local state (useful for test isolation).
+ * @param {boolean} [clearAll=false]
  */
-function resetLocalState() {
-  _features = {};
+function resetLocalState(clearAll = false) {
+  _features = clearAll ? {} : createInitialFeatures();
   _betaUsers.clear();
   _featureErrors.clear();
   _lastL1Refresh = 0;
