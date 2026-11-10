@@ -157,6 +157,21 @@ class ErrorReporterService {
    * Core reporting method
    */
   async report(errorOrMessage, context = {}) {
+    // Notify featureFlagService circuit breaker if context.featureKey is specified
+    if (context && context.featureKey && context.source !== 'circuitBreaker') {
+      try {
+        let featureFlagService;
+        try {
+          featureFlagService = require('./featureFlagService');
+        } catch {}
+        if (featureFlagService && typeof featureFlagService.recordFeatureError === 'function') {
+          featureFlagService.recordFeatureError(context.featureKey, errorOrMessage);
+        }
+      } catch {
+        // Safe silence: error reporter must never throw
+      }
+    }
+
     if (this._isReporting) return false; // Prevent recursive loops
     this._isReporting = true;
 

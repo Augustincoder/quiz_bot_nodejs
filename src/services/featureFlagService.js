@@ -35,6 +35,7 @@ const L1_CACHE_TTL_MS = 5000;
 let _features = {};
 let _betaUsers = new Set();
 let _adminList = new Set();
+let _featureErrors = new Map();
 let _lastL1Refresh = 0;
 let _isRefreshing = false;
 let _initialized = false;
@@ -447,7 +448,222 @@ function getBetaUsers() {
 function resetLocalState() {
   _features = {};
   _betaUsers.clear();
+  _featureErrors.clear();
   _lastL1Refresh = 0;
+}
+
+/**
+ * Dispatch emergency alert to bot owner / admins when circuit breaker trips.
+ *
+ * @param {string} featureKey 
+ * @param {Object} info 
+ */
+function dispatchCircuitBreakerAlert(featureKey, info) {
+  try {
+    let errorReporter;
+    try {
+      errorReporter = require('./errorReporterService');
+    } catch {
+      // safe fallback if not found
+    }
+    if (errorReporter && typeof errorReporter.report === 'function') {
+      const alertMsg = `🚨 <b>[CIRCUIT BREAKER / AUTO-KILL TRIGGERED]</b>\n` +
+        `⚙️ <b>Feature:</b> <code>${featureKey}</code>\n` +
+        `📉 <b>Action:</b> Downgraded from <code>${info.previousState}</code> to <code>${info.downgradedTo}</code>\n` +
+        `💥 <b>Errors in window:</b> <code>${info.errorCount}</code>\n` +
+        `⚠️ <b>Tripped reason:</b> <code>${info.reason}</code>\n` +
+        `💡 Use <code>/flags</code> to inspect and reset once resolved.`;
+
+      errorReporter.report(alertMsg, {
+        source: 'circuitBreaker',
+        feature: featureKey,
+        previousState: info.previousState,
+        downgradedTo: info.downgradedTo,
+        errorCount: info.errorCount,
+        trippedAt: info.trippedAt,
+      }).catch(err => {
+        logger.debug('featureFlagService: circuit breaker alert failed to send', { error: err.message });
+      });
+    }
+  } catch (err) {
+    logger.warn('featureFlagService: failed to dispatch alert', { error: err.message });
+  }
+}
+
+/**
+ * Record an unhandled feature error in the sliding window.
+ * If errors in window exceed threshold, trips circuit breaker and auto-downgrades.
+ *
+ * @param {string} featureKey 
+ * @param {Error|Object|string} error 
+ * @param {Object} [options]
+ * @param {number} [options.errorThreshold] Default 3
+ * @param {number} [options.windowSeconds] Default 300 (5 minutes)
+ * @param {string} [options.targetState] Default STATES.ADMIN_ONLY
+ * @returns {Object} Trip status and error metrics
+ */
+function recordFeatureError(featureKey, error, options = {}) {
+  if (!featureKey || typeof featureKey !== 'string') {
+    return { tripped: false, errorCount: 0, threshold: 3 };
+  }
+
+  const feat = ensureRegistered(featureKey);
+  const now = Date.now();
+
+  const errorThreshold = (options && typeof options.errorThreshold === 'number' && options.errorThreshold > 0)
+    ? options.errorThreshold
+    : (feat.errorThreshold || 3);
+  const windowSeconds = (options && typeof options.windowSeconds === 'number' && options.windowSeconds > 0)
+    ? options.windowSeconds
+    : (feat.windowSeconds || 300);
+  const targetState = (options && options.targetState && STATES[options.targetState])
+    ? options.targetState
+    : (feat.targetState || STATES.ADMIN_ONLY);
+
+  const cutoff = now - (windowSeconds * 1000);
+  let errors = _featureErrors.get(featureKey) || [];
+  errors = errors.filter(e => e.timestamp >= cutoff);
+
+  const errMsg = error instanceof Error
+    ? error.message
+    : (typeof error === 'object' && error !== null
+      ? (error.message || JSON.stringify(error))
+      : String(error || 'Unknown error'));
+
+  errors.push({
+    timestamp: now,
+    message: errMsg,
+  });
+  _featureErrors.set(featureKey, errors);
+
+  feat.errorCount = errors.length;
+  feat.windowSeconds = windowSeconds;
+  feat.errorThreshold = errorThreshold;
+
+  // Check if threshold exceeded
+  if (errors.length >= errorThreshold) {
+    if (feat.autoKillTriggered) {
+      return {
+        tripped: true,
+        alreadyTripped: true,
+        previousState: feat.previousState || feat.state,
+        downgradedTo: feat.state,
+        reason: feat.trippedReason || errMsg,
+        errorCount: errors.length,
+      };
+    }
+
+    const previousState = feat.state;
+    feat.previousState = previousState;
+    feat.state = targetState;
+    feat.autoKillTriggered = true;
+    feat.trippedAt = now;
+    const reason = errMsg || 'Error threshold exceeded';
+    feat.trippedReason = reason;
+    feat.updatedAt = now;
+
+    // Background sync to Redis
+    persistFeaturesToRedis().catch(() => {});
+
+    // Dispatch emergency alert to bot owner / admins
+    dispatchCircuitBreakerAlert(featureKey, {
+      previousState,
+      downgradedTo: targetState,
+      errorCount: errors.length,
+      reason,
+      trippedAt: now,
+    });
+
+    return {
+      tripped: true,
+      previousState,
+      downgradedTo: targetState,
+      reason,
+      errorCount: errors.length,
+    };
+  }
+
+  return {
+    tripped: false,
+    errorCount: errors.length,
+    threshold: errorThreshold,
+    windowSeconds,
+  };
+}
+
+/**
+ * Reset circuit breaker for a feature, restoring state and clearing error window.
+ *
+ * @param {string} featureKey 
+ * @param {string} [restoredState] Optional state to force, otherwise restores previousState or current state
+ * @returns {Object|null}
+ */
+function resetFeatureBreaker(featureKey, restoredState) {
+  if (!featureKey || typeof featureKey !== 'string') return null;
+  const feat = _features[featureKey];
+  if (!feat) return null;
+
+  _featureErrors.delete(featureKey);
+
+  const previousState = feat.previousState;
+  const target = restoredState && STATES[restoredState]
+    ? restoredState
+    : (previousState || feat.state || STATES.ADMIN_ONLY);
+
+  feat.state = target;
+  feat.autoKillTriggered = false;
+  feat.trippedAt = null;
+  feat.trippedReason = null;
+  feat.errorCount = 0;
+  feat.previousState = null;
+  feat.updatedAt = Date.now();
+
+  persistFeaturesToRedis().catch(() => {});
+
+  return {
+    success: true,
+    featureKey,
+    state: feat.state,
+    autoKillTriggered: false,
+  };
+}
+
+/**
+ * Get real-time health metrics and circuit breaker status for a feature.
+ *
+ * @param {string} featureKey 
+ * @returns {Object}
+ */
+function getFeatureHealth(featureKey) {
+  if (!featureKey || typeof featureKey !== 'string') {
+    return {
+      errorCount: 0,
+      windowSeconds: 300,
+      autoKillTriggered: false,
+      trippedAt: null,
+      trippedReason: null,
+    };
+  }
+
+  const feat = _features[featureKey] || ensureRegistered(featureKey);
+  const windowSeconds = feat.windowSeconds || 300;
+  const cutoff = Date.now() - (windowSeconds * 1000);
+
+  let errors = _featureErrors.get(featureKey) || [];
+  errors = errors.filter(e => e.timestamp >= cutoff);
+  _featureErrors.set(featureKey, errors);
+
+  return {
+    featureKey,
+    errorCount: errors.length,
+    windowSeconds,
+    errorThreshold: feat.errorThreshold || 3,
+    autoKillTriggered: Boolean(feat.autoKillTriggered),
+    trippedAt: feat.trippedAt || null,
+    trippedReason: feat.trippedReason || null,
+    state: feat.state,
+    previousState: feat.previousState || null,
+  };
 }
 
 /**
@@ -476,5 +692,8 @@ module.exports = {
   removeBetaUser,
   getBetaUsers,
   resetLocalState,
+  recordFeatureError,
+  resetFeatureBreaker,
+  getFeatureHealth,
   init,
 };
