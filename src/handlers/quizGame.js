@@ -263,10 +263,27 @@ async function cbStartTest(ctx) {
     let subjectKey, testId, testData;
 
     if (isMock) {
-      subjectKey = parseSuffix(ctx.callbackQuery.data, "mock_");
-      const allRaw = Object.values(memDb[subjectKey] || {}).flatMap(
-        (t) => t.questions || [],
-      );
+      const rawSubj = parseSuffix(ctx.callbackQuery.data, "mock_");
+      let allRaw = [];
+      let subjName = rawSubj;
+      if (memDb[rawSubj]) {
+        subjectKey = rawSubj;
+        allRaw = Object.values(memDb[subjectKey] || {}).flatMap(
+          (t) => t.questions || [],
+        );
+      } else {
+        const numericId = parseInt(rawSubj.replace(/^ugc_/, ''), 10);
+        if (!isNaN(numericId) && numericId > 0) {
+          try {
+            const blocks = await dbService.getSubjectBlocks(numericId);
+            if (blocks && blocks.length) {
+              allRaw = blocks.flatMap(b => b.questions || []);
+              const subj = await dbService.getSubjectById(numericId);
+              if (subj?.name) subjName = subj.name;
+            }
+          } catch {}
+        }
+      }
       if (!allRaw.length)
         return ctx
           .answerCbQuery("❌ Bu fanda savollar yo'q!", {
@@ -275,7 +292,7 @@ async function cbStartTest(ctx) {
           .catch(() => { });
       const allQs = deepClone(allRaw);
       shuffleArray(allQs);
-      testData = { questions: allQs.slice(0, 25), block_name: "Aralash Test" };
+      testData = { questions: allQs.slice(0, 25), block_name: "Aralash Test", subject: subjName };
       testId = "mock";
     } else {
       const suffix = parseSuffix(ctx.callbackQuery.data, "start_test_");

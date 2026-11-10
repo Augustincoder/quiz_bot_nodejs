@@ -77,19 +77,27 @@ async function runTests() {
   ];
 
   let replyCalledWith = null;
+  let lastSentText = '';
   const mockCtx = {
-    chat: { id: 2014973670 },
+    chat: { id: 2014973670, type: 'private' },
     from: { id: 2014973670, first_name: 'AvazovM' },
     telegram: {
-      sendMessage: async () => ({ message_id: 100 }),
+      sendMessage: async (chatId, text, extra) => {
+        lastSentText = text;
+        replyCalledWith = { text, extra };
+        return { message_id: 100 };
+      },
       sendPoll: async () => ({ message_id: 101, poll: { id: 'poll_1' } }),
+      deleteMessage: async () => true,
     },
     answerCbQuery: async () => true,
     reply: async (text, extra) => {
+      lastSentText = text;
       replyCalledWith = { text, extra };
       return { message_id: 999 };
     },
     editMessageText: async (text, extra) => {
+      lastSentText = text;
       replyCalledWith = { text, extra };
       return true;
     },
@@ -103,12 +111,24 @@ async function runTests() {
   await universalTestHub.startSubjectBlitzCards(mockCtx, 54, false);
   console.log('  ✅ [PASS] startSubjectBlitzCards executed cleanly without deepClone or BUTTON_URL_INVALID error.');
 
+  // ─── TEST 5: AI Adaptive in Universal Hub & Zero-Mistakes Diagnostic Test ───
+  console.log('\n[Test 5] Testing AI Adaptive picker & execution for UGC and Diagnostic mode...');
+  // Run showAdaptivePicker
+  await universalTestHub.showAdaptivePicker(mockCtx, 54, false);
+  assert(replyCalledWith && replyCalledWith.text.includes('AI Adaptiv'), 'Must show AI Adaptiv prompt');
+  console.log('  ✅ [PASS] showAdaptivePicker renders prompt with options.');
+
+  // Run startSubjectAdaptiveRun
+  await universalTestHub.startSubjectAdaptiveRun(mockCtx, 54, false, 10);
+  assert(replyCalledWith && replyCalledWith.text.includes('Savollar:'), 'Must initialize adaptive test session');
+  console.log('  ✅ [PASS] startSubjectAdaptiveRun successfully generates diagnostic adaptive quiz without blocking.');
+
   // Restore originals
   dbService.getSubjectById = origGetSubjectById;
   dbService.getSubjectBlocks = origGetSubjectBlocks;
 
   console.log('\n================================================================');
-  console.log('🎉 ALL PRODUCTION BUG FIXES VERIFIED SUCCESSFULLY (4/4)!');
+  console.log('🎉 ALL PRODUCTION BUG FIXES VERIFIED SUCCESSFULLY (5/5)!');
   console.log('================================================================\n');
 }
 

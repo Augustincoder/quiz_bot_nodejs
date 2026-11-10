@@ -574,6 +574,196 @@ async function startSubjectMarathon(ctx, subjectIdOrKey, isOfficial) {
 }
 
 /**
+ * Displays AI Adaptive Test setup / question count picker for a subject.
+ *
+ * @param {object} ctx
+ * @param {string|number} subjectIdOrKey
+ * @param {boolean} isOfficial
+ */
+async function showAdaptivePicker(ctx, subjectIdOrKey, isOfficial) {
+  await ctx.answerCbQuery().catch(() => {});
+  const data = await resolveSubjectData(subjectIdOrKey, isOfficial);
+
+  if (!data || !data.blocks || data.blocks.length === 0) {
+    return ctx.reply("❌ Fan yoki uning testlari topilmadi.", Markup.inlineKeyboard([[Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')]])).catch(() => {});
+  }
+
+  const srcTag = isOfficial ? 'off' : 'ugc';
+  const idTag = String(data.id);
+  const userId = ctx.from?.id;
+
+  // Retrieve user's previous mistakes for this subject
+  let mistakes = [];
+  try {
+    const stats = await dbService.getUserStats(userId);
+    const history = stats?.history || [];
+    mistakes = history
+      .filter(r =>
+        r &&
+        (
+          r.subject === data.title ||
+          r.subjectKey === data.subjectKey ||
+          r.subjectId === data.id ||
+          r.subject === data.subjectKey
+        ) &&
+        Array.isArray(r.mistakes) &&
+        r.mistakes.length > 0
+      )
+      .flatMap(r => r.mistakes);
+  } catch {}
+
+  const hasMistakes = mistakes.length > 0;
+  const countButtons = [];
+
+  if (hasMistakes) {
+    countButtons.push(
+      [
+        Markup.button.callback('5 ta', safeCallbackData(`hub_adprun_${srcTag}_${idTag}_5`)),
+        Markup.button.callback('10 ta', safeCallbackData(`hub_adprun_${srcTag}_${idTag}_10`)),
+      ],
+      [
+        Markup.button.callback('15 ta', safeCallbackData(`hub_adprun_${srcTag}_${idTag}_15`)),
+        Markup.button.callback('20 ta', safeCallbackData(`hub_adprun_${srcTag}_${idTag}_20`)),
+      ]
+    );
+  } else {
+    // Diagnostic adaptive test: draws questions across all blocks
+    countButtons.push(
+      [
+        Markup.button.callback('10 ta', safeCallbackData(`hub_adprun_${srcTag}_${idTag}_10`)),
+        Markup.button.callback('15 ta', safeCallbackData(`hub_adprun_${srcTag}_${idTag}_15`)),
+      ]
+    );
+  }
+
+  countButtons.push([
+    Markup.button.callback('🔙 Fan Hubiga qaytish', safeCallbackData(`hub_subj_${srcTag}_${idTag}`)),
+  ]);
+
+  const text = hasMistakes
+    ? `🎯 <b>AI Adaptiv Test — ${escapeHtml(data.title)}</b>\n\n` +
+      `AI sizning <b>avvalgi xatolaringiz</b> asosida maxsus test yaratadi — zaif joylaringizni mustahkamlash uchun eng samarali usul!\n\n` +
+      `━━━━━━━━━━━━━━━━\n` +
+      `📊 <b>Jamg'arilgan xatolar:</b> <b>${mistakes.length} ta</b>\n` +
+      `━━━━━━━━━━━━━━━━\n\n` +
+      `<b>Nechta savol ishlashni tanlang:</b>\n` +
+      `<i>💡 10–15 ta — diqqat va samaradorlik uchun eng maqbul.</i>`
+    : `🎯 <b>AI Adaptiv Diagnostika — ${escapeHtml(data.title)}</b>\n\n` +
+      `✨ <i>Ushbu fandan hali xatolaringiz qayd etilmagan.</i>\n\n` +
+      `🧠 AI fanning barcha bloklaridan bilim darajangizni aniqlovchi <b>Diagnostik Adaptiv Test</b> tuzib beradi!\n\n` +
+      `<b>Nechta savol ishlashni tanlang:</b>`;
+
+  const kb = Markup.inlineKeyboard(countButtons);
+  if (ctx.callbackQuery) {
+    return safeEdit(ctx, text, { parse_mode: 'HTML', ...kb });
+  }
+  return ctx.reply(text, { parse_mode: 'HTML', ...kb });
+}
+
+/**
+ * Executes AI Adaptive Test for a subject.
+ *
+ * @param {object} ctx
+ * @param {string|number} subjectIdOrKey
+ * @param {boolean} isOfficial
+ * @param {number} count
+ */
+async function startSubjectAdaptiveRun(ctx, subjectIdOrKey, isOfficial, count = 10) {
+  await ctx.answerCbQuery('🧠 AI savollar tayyorlanmoqda...').catch(() => {});
+  const data = await resolveSubjectData(subjectIdOrKey, isOfficial);
+
+  if (!data || !data.blocks || data.blocks.length === 0) {
+    return ctx.reply('❌ Fan yoki uning testlari topilmadi.').catch(() => {});
+  }
+
+  const chatId = ctx.chat?.id || ctx.from?.id;
+  const userId = ctx.from?.id;
+
+  const msg = await ctx.reply(
+    `⏳ <i>AI "${escapeHtml(data.title)}" fanidan siz uchun maxsus ${count} ta adaptiv savol tayyorlamoqda...</i> 🧠`,
+    { parse_mode: 'HTML' }
+  ).catch(() => null);
+
+  let finalQuestions = [];
+
+  // 1. Try finding previous mistakes
+  try {
+    const stats = await dbService.getUserStats(userId);
+    const history = stats?.history || [];
+    const mistakes = history
+      .filter(r =>
+        r &&
+        (
+          r.subject === data.title ||
+          r.subjectKey === data.subjectKey ||
+          r.subjectId === data.id ||
+          r.subject === data.subjectKey
+        ) &&
+        Array.isArray(r.mistakes) &&
+        r.mistakes.length > 0
+      )
+      .flatMap(r => r.mistakes);
+
+    if (mistakes.length > 0) {
+      const aiService = require('../services/aiService');
+      const shuffledMistakes = deepClone(mistakes);
+      shuffleArray(shuffledMistakes);
+
+      try {
+        const aiQs = await aiService.generateAdaptiveQuiz(data.title, shuffledMistakes, count);
+        if (Array.isArray(aiQs) && aiQs.length > 0) {
+          finalQuestions = aiQs.filter(q => q && q.question && Array.isArray(q.options) && q.options.length >= 2);
+        }
+      } catch (aiErr) {
+        logger.warn('AI adaptive generation fallback to raw mistakes:', aiErr.message);
+      }
+
+      if (!finalQuestions.length) {
+        finalQuestions = shuffledMistakes.slice(0, count);
+      }
+    }
+  } catch (err) {
+    logger.warn('Error reading mistakes for adaptive test:', err.message);
+  }
+
+  // 2. If no mistakes yet, pull diverse questions from across all blocks
+  if (!finalQuestions.length) {
+    const allQuestions = data.blocks.flatMap(b => b.questions || []);
+    if (allQuestions.length > 0) {
+      const shuffled = deepClone(allQuestions);
+      shuffleArray(shuffled);
+      finalQuestions = shuffled.slice(0, count);
+    }
+  }
+
+  if (msg && ctx.telegram?.deleteMessage) {
+    await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
+  }
+
+  if (!finalQuestions.length) {
+    return ctx.reply('❌ Ushbu fandan test savollari topilmadi.').catch(() => {});
+  }
+
+  const testData = {
+    questions: finalQuestions,
+    block_name: `🎯 AI Adaptiv Test (${finalQuestions.length} ta)`,
+    subject: data.title,
+  };
+
+  const { initAndStartTest, startUgcTest } = require('./quizGame');
+
+  if (isOfficial) {
+    return initAndStartTest(chatId, ctx.telegram, data.subjectKey, 'adaptive', testData, ctx.from.id, 'private');
+  } else {
+    return startUgcTest(ctx, {
+      ...testData,
+      id: `adapt_${data.id}`,
+      title: `${data.title} — AI Adaptiv`,
+    });
+  }
+}
+
+/**
  * Registers all action handlers for Universal Test Hub.
  *
  * @param {object} bot - Telegraf bot instance
@@ -689,6 +879,21 @@ function register(bot) {
       return startUgcTest(ctx, { ...testData, id: `blitz_${block.id}` });
     }
   });
+
+  // 10. AI Adaptive Picker: hub_adapt_{srcTag}_{id}
+  bot.action(/^hub_adapt_(off|ugc)_(.+)$/, async (ctx) => {
+    const srcTag = ctx.match[1];
+    const id = ctx.match[2];
+    await showAdaptivePicker(ctx, id, srcTag === 'off');
+  });
+
+  // 11. AI Adaptive Run: hub_adprun_{srcTag}_{id}_{count}
+  bot.action(/^hub_adprun_(off|ugc)_(.+)_(\d+)$/, async (ctx) => {
+    const srcTag = ctx.match[1];
+    const id = ctx.match[2];
+    const count = parseInt(ctx.match[3], 10) || 10;
+    await startSubjectAdaptiveRun(ctx, id, srcTag === 'off', count);
+  });
 }
 
 module.exports = {
@@ -697,7 +902,9 @@ module.exports = {
   showSubjectHub,
   showBlockHub,
   showFlashcardPicker,
+  showAdaptivePicker,
   startSubjectMockExam,
+  startSubjectAdaptiveRun,
   startSubjectBlitzCards,
   startSubjectMarathon,
   register,
