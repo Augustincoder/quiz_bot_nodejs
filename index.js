@@ -108,6 +108,17 @@ const handlers = {
 // ═══ MIDDLEWARE STACK ═════════════════════════════════════════
 bot.use(rateLimiterMiddleware());
 
+// Telegram Bot API 10.4 HTML Widget Queries Middleware
+bot.use(async (ctx, next) => {
+  if (ctx.update?.widget_query && handlers.cram?.handleWidgetQuery) {
+    return handlers.cram.handleWidgetQuery(ctx, ctx.update.widget_query);
+  }
+  if (ctx.update?.shared_widget_query && handlers.cram?.handleSharedWidgetQuery) {
+    return handlers.cram.handleSharedWidgetQuery(ctx, ctx.update.shared_widget_query);
+  }
+  return next();
+});
+
 // Bug 55 fix: Prevent Telegram "query is too old" (10s timeout) or "query ID is invalid" unhandled rejections
 bot.use(async (ctx, next) => {
   if (ctx.callbackQuery && typeof ctx.answerCbQuery === "function") {

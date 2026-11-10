@@ -11,6 +11,7 @@ const testScripts = [
   'scripts/test_smart_docx_healer.js',
   'scripts/test_universal_test_hub.js',
   'scripts/test_prod_bug_fixes.js',
+  'scripts/test_widget_and_flashcard_fixes.js',
 ];
 
 let totalPassed = 0;

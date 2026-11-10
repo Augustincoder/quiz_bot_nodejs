@@ -399,7 +399,13 @@ async function showBlockHub(ctx, testIdOrDescriptor, options = {}) {
 async function showFlashcardPicker(ctx, subjectIdOrKey, isOfficial) {
   const data = await resolveSubjectData(subjectIdOrKey, isOfficial);
   if (!data || !data.blocks || data.blocks.length === 0) {
-    return ctx.answerCbQuery('❌ Fan bloklari topilmadi!', { show_alert: true }).catch(() => {});
+    return safeEdit(ctx,
+      `❌ <b>Flashcard uchun fan bloklari topilmadi.</b>\n\n` +
+      `<i>Ushbu fan uchun test savollari hali yuklanmagan bo'lishi mumkin.</i>`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Orqaga', isOfficial ? 'official_tests' : 'my_tests')],
+      ])
+    );
   }
 
   const srcTag = isOfficial ? 'off' : 'ugc';
@@ -503,12 +509,22 @@ async function startSubjectBlitzCards(ctx, subjectIdOrKey, isOfficial) {
   const data = await resolveSubjectData(subjectIdOrKey, isOfficial);
 
   if (!data || !data.blocks || data.blocks.length === 0) {
-    return ctx.answerCbQuery('❌ Savollar topilmadi!', { show_alert: true }).catch(() => {});
+    return safeEdit(ctx,
+      `❌ <b>Fan bloklari yoki savollari topilmadi.</b>`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Orqaga', isOfficial ? 'official_tests' : 'my_tests')],
+      ])
+    );
   }
 
   const allQuestions = data.blocks.flatMap(b => b.questions || []);
   if (!allQuestions.length) {
-    return ctx.answerCbQuery('❌ Ushbu fanda savollar mavjud emas!', { show_alert: true }).catch(() => {});
+    return safeEdit(ctx,
+      `❌ <b>Ushbu fanda test savollari mavjud emas.</b>`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Fan Hubiga qaytish', safeCallbackData(`hub_subj_${isOfficial ? 'off' : 'ugc'}_${data.id}`))],
+      ])
+    );
   }
 
   const shuffled = deepClone(allQuestions);

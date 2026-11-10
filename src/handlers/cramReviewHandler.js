@@ -1,8 +1,9 @@
 'use strict';
 
 const { Markup } = require('telegraf');
-const { TTLMap, escapeHtml, safeCallbackData } = require('../core/utils');
-const { buildWidgetMessage, isValidWebAppUrl } = require('../services/widgetService');
+const { TTLMap, escapeHtml, safeCallbackData, safeEdit } = require('../core/utils');
+const { buildWidgetMessage, isValidWebAppUrl, buildInlineFlashcardWidgetHtml } = require('../services/widgetService');
+const logger = require('../core/logger');
 
 // Active cram sessions (2 hours TTL to prevent memory leaks)
 const cramSessions = new TTLMap(2 * 60 * 60 * 1000);
@@ -360,16 +361,23 @@ function formatFlashcardMessage(viewData, isRevealed = false) {
  * @param {object} [options={}]
  */
 async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, options = {}) {
+  await ctx.answerCbQuery().catch(() => {});
   const userId = ctx.from?.id;
+
   try {
     const featureFlagService = require('../services/featureFlagService');
     if (!featureFlagService.isFeatureEnabledSync('FEATURE_BLITZ_FLASHCARD', userId)) {
-      return ctx.answerCbQuery("ℹ️ Ushbu funksiya hozirda faol emas.", { show_alert: true }).catch(() => {});
+      return safeEdit(ctx, "ℹ️ <b>Flashcard funksiyasi hozircha sozlanmoqda.</b>", {
+        reply_markup: {
+          inline_keyboard: [[Markup.button.callback('🔙 Orqaga', 'official_tests')]],
+        },
+      });
     }
   } catch {}
+
   const userKey = userId ? String(userId) : 'default';
 
-  // 1. Resolve questions if not passed
+  // 1. Robust question resolution across memDb, Postgres user_tests, and universalTestHub
   let qs = questions;
   let subjectName = options.subjectName || formatSubjectTitle(subjectKey);
   let blockName = options.blockName || `${testId}-Blok`;
@@ -381,7 +389,7 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
     if (testData?.questions?.length) {
       qs = testData.questions;
     } else {
-      // Try resolving as UGC user test from Postgres
+      // 1a. Try resolving from Postgres user_tests
       try {
         const dbService = require('../services/dbService');
         const ugcTest = await dbService.getUserTest(testId);
@@ -391,11 +399,31 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
           if (ugcTest.block_name) blockName = ugcTest.block_name;
         }
       } catch (err) {}
+
+      // 1b. Fallback to universalTestHub block resolver
+      if (!qs || !qs.length) {
+        try {
+          const universalTestHub = require('./universalTestHub');
+          const resolvedBlock = await universalTestHub.resolveBlockData(testId, subjectKey !== 'ugc');
+          if (resolvedBlock && Array.isArray(resolvedBlock.questions) && resolvedBlock.questions.length > 0) {
+            qs = resolvedBlock.questions;
+            if (resolvedBlock.subjectTitle) subjectName = resolvedBlock.subjectTitle;
+            if (resolvedBlock.blockName) blockName = resolvedBlock.blockName;
+          }
+        } catch {}
+      }
     }
   }
 
   if (!qs || qs.length === 0) {
-    return ctx.answerCbQuery('❌ Savollar topilmadi!', { show_alert: true }).catch(() => {});
+    const returnTarget = subjectKey !== 'ugc' ? `hub_subj_off_${subjectKey}` : `hub_subj_ugc_${testId}`;
+    return safeEdit(ctx,
+      `❌ <b>Ushbu blokda test savollari topilmadi.</b>\n\n` +
+      `<i>Iltimos, boshqa blokni yoki boshqa fanni tanlab ko'ring.</i>`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Fan Hubiga qaytish', safeCallbackData(returnTarget))],
+      ])
+    );
   }
 
   // 2. Initialize spaced repetition deck
@@ -405,18 +433,24 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
   const viewData = buildFlashcardViewData(deck, subjectName, blockName);
   const fallbackText = formatFlashcardMessage(viewData, false);
 
-  // Generate signed WebApp widget URL
+  // Generate signed WebApp widget URL if external domain configured
   let webAppUrl = null;
   try {
     const widgetMsg = buildWidgetMessage('flashcard', viewData, fallbackText, null, { userId });
-    webAppUrl = widgetMsg?.url || null;
+    if (widgetMsg?.url && isValidWebAppUrl(widgetMsg.url)) {
+      webAppUrl = widgetMsg.url;
+    }
   } catch {}
 
-  const fallbackKeyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, webAppUrl);
+  const safeFallbackKeyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, webAppUrl);
+
+  const chatId = ctx.chat?.id || ctx.from?.id;
+  let widgetSent = false;
 
   // 4. Save session in TTLMap
   const session = {
     userId,
+    chatId,
     subjectKey,
     testId,
     subjectName,
@@ -426,68 +460,72 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
     blitzMode: !!options.blitzMode,
     webAppUrl,
     messageId: ctx.callbackQuery?.message?.message_id,
+    widgetId: null,
   };
   cramSessions.set(userKey, session);
 
-  // 5. Dual-mode launch: try 10.4 sendWidget or fallback to HTML edit/reply
-  if (typeof ctx.sendWidget === 'function') {
+  // 5. Telegram Bot API 10.4 HTML Widget launcher
+  // Native inline message widget with QuickJS sandbox, 3D CSS flip & zero-latency updates
+  if (chatId && ctx.chat?.type === 'private' && ctx.telegram && typeof ctx.telegram.callApi === 'function') {
     try {
-      await ctx.sendWidget(widgetMsg);
-      await ctx.answerCbQuery().catch(() => {});
-      return;
-    } catch {
-      // Fall through to regular message
-    }
-  }
+      const inlineWidgetHtml = buildInlineFlashcardWidgetHtml(viewData);
+      const publicData = {
+        title: `${subjectName} • ${blockName}`,
+        q: viewData.question,
+        a: viewData.answer,
+        total: viewData.total,
+        learned: viewData.learnedCount,
+        cardIdx: viewData.cardIdx,
+      };
+      const chatData = {
+        userId,
+        cardIdx: viewData.cardIdx,
+      };
 
-  if (ctx.callbackQuery?.message) {
-    try {
-      await ctx.editMessageText(fallbackText, {
+      const widgetRes = await ctx.telegram.callApi('sendWidget', {
+        chat_id: chatId,
+        html: inlineWidgetHtml,
+        width: 360,
+        height: 380,
+        public_data: JSON.stringify(publicData),
+        chat_data: JSON.stringify(chatData),
+        is_shared: true,
+        allow_queries: true,
+        caption: `🎴 <b>3D Blitz-Flashcard</b> • <i>${escapeHtml(subjectName)}</i> (${escapeHtml(blockName)})`,
         parse_mode: 'HTML',
-        ...fallbackKeyboard,
+        reply_markup: safeFallbackKeyboard.reply_markup,
       });
-    } catch (err) {
-      if (err?.message && err.message.includes('BUTTON_URL_INVALID')) {
-        const safeKeyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, null);
-        await ctx.editMessageText(fallbackText, {
-          parse_mode: 'HTML',
-          ...safeKeyboard,
-        }).catch(() => ctx.reply(fallbackText, { parse_mode: 'HTML', ...safeKeyboard }));
-        return;
-      }
-      try {
-        await ctx.reply(fallbackText, {
-          parse_mode: 'HTML',
-          ...fallbackKeyboard,
-        });
-      } catch (e2) {
-        if (e2?.message && e2.message.includes('BUTTON_URL_INVALID')) {
-          const safeKeyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, null);
-          await ctx.reply(fallbackText, { parse_mode: 'HTML', ...safeKeyboard });
+
+      if (widgetRes && widgetRes.message_id) {
+        widgetSent = true;
+        session.messageId = widgetRes.message_id;
+        session.widgetId = widgetRes.widget?.id || null;
+        cramSessions.set(userKey, session);
+
+        // Delete previous menu message to keep chat uncluttered
+        if (ctx.callbackQuery?.message) {
+          await ctx.deleteMessage().catch(() => {});
         }
       }
-    }
-  } else {
-    try {
-      await ctx.reply(fallbackText, {
-        parse_mode: 'HTML',
-        ...fallbackKeyboard,
-      });
-    } catch (err) {
-      if (err?.message && err.message.includes('BUTTON_URL_INVALID')) {
-        const safeKeyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, null);
-        await ctx.reply(fallbackText, { parse_mode: 'HTML', ...safeKeyboard });
-      }
+    } catch (widgetErr) {
+      logger.debug('sendWidget unavailable or error (falling back to interactive message):', widgetErr.message);
     }
   }
 
-  await ctx.answerCbQuery().catch(() => {});
+  // 6. Dual-mode fallback: safeEdit interactive flashcard message
+  if (!widgetSent) {
+    await safeEdit(ctx, fallbackText, {
+      parse_mode: 'HTML',
+      ...safeFallbackKeyboard,
+    });
+  }
 }
 
 /**
  * Handles callback: cram_start_{subjectKey}_{testId}
  */
 async function cbCramStart(ctx) {
+  await ctx.answerCbQuery().catch(() => {});
   const data = ctx.callbackQuery?.data || '';
   const match = data.match(/^cram_start_(.+)_([^_]+)$/);
   if (!match) {
@@ -515,10 +553,7 @@ async function cbCramReveal(ctx) {
   const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
   const text = formatFlashcardMessage(viewData, true);
   const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, true, session.webAppUrl);
-
-  try {
-    await ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard });
-  } catch {}
+  await safeEdit(ctx, text, { parse_mode: 'HTML', ...keyboard });
   await ctx.answerCbQuery().catch(() => {});
 }
 
@@ -540,9 +575,7 @@ async function cbCramHide(ctx) {
   const text = formatFlashcardMessage(viewData, false);
   const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, session.webAppUrl);
 
-  try {
-    await ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard });
-  } catch {}
+  await safeEdit(ctx, text, { parse_mode: 'HTML', ...keyboard });
   await ctx.answerCbQuery().catch(() => {});
 }
 
@@ -570,14 +603,10 @@ async function cbCramKnown(ctx) {
 
   if (viewData.isFinished) {
     const finishKeyboard = getCramFinishedKeyboard(session.subjectKey, session.testId);
-    try {
-      await ctx.editMessageText(text, { parse_mode: 'HTML', ...finishKeyboard });
-    } catch {}
+    await safeEdit(ctx, text, { parse_mode: 'HTML', ...finishKeyboard });
   } else {
     const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, session.webAppUrl);
-    try {
-      await ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard });
-    } catch {}
+    await safeEdit(ctx, text, { parse_mode: 'HTML', ...keyboard });
   }
 
   await ctx.answerCbQuery('👉 Bilib oldim!').catch(() => {});
@@ -606,10 +635,7 @@ async function cbCramRepeat(ctx) {
   const text = formatFlashcardMessage(viewData, false);
   const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, session.webAppUrl);
 
-  try {
-    await ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard });
-  } catch {}
-
+  await safeEdit(ctx, text, { parse_mode: 'HTML', ...keyboard });
   await ctx.answerCbQuery('👈 Kartochka oxiriga qaytarildi').catch(() => {});
 }
 
@@ -647,12 +673,127 @@ async function cbCramExit(ctx) {
     ],
   ]);
 
-  try {
-    await ctx.editMessageText(exitText, { parse_mode: 'HTML', ...exitKeyboard });
-  } catch {
-    await ctx.reply(exitText, { parse_mode: 'HTML', ...exitKeyboard });
-  }
+  await safeEdit(ctx, exitText, { parse_mode: 'HTML', ...exitKeyboard });
   await ctx.answerCbQuery().catch(() => {});
+}
+
+/**
+ * Handles incoming `widget_query` update from Telegram Bot API 10.4.
+ *
+ * @param {object} ctx - Telegraf context
+ * @param {object} query - widget_query object
+ */
+async function handleWidgetQuery(ctx, query) {
+  if (!query) return;
+
+  await ctx.telegram.callApi('answerWidgetQuery', {
+    widget_query_id: query.id,
+    data: 'OK',
+  }).catch(() => {});
+
+  const userId = query.from?.id;
+  const userKey = userId ? String(userId) : 'default';
+  const session = cramSessions.get(userKey);
+  if (!session) return;
+
+  const rawAction = String(query.data || '').trim();
+  let action = 'known';
+  let targetIdx = null;
+
+  try {
+    if (rawAction.startsWith('{')) {
+      const parsed = JSON.parse(rawAction);
+      action = parsed.a || parsed.action || 'known';
+      targetIdx = parsed.i !== undefined ? parsed.i : null;
+    } else {
+      action = rawAction === 'repeat' ? 'repeat' : 'known';
+    }
+  } catch {}
+
+  processCardAction(session.deck, action, targetIdx);
+  session.isRevealed = false;
+  cramSessions.set(userKey, session);
+
+  const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
+  const newPublicData = {
+    title: `${session.subjectName} • ${session.blockName}`,
+    q: viewData.question,
+    a: viewData.answer,
+    total: viewData.total,
+    learned: viewData.learnedCount,
+    cardIdx: viewData.cardIdx,
+    isFinished: viewData.isFinished,
+  };
+
+  const chatId = query.chat?.id || ctx.chat?.id;
+  const messageId = query.message_id;
+
+  if (chatId && messageId) {
+    await ctx.telegram.callApi('editMessageWidgetData', {
+      chat_id: chatId,
+      message_id: messageId,
+      public_data: JSON.stringify(newPublicData),
+      chat_data: JSON.stringify({ cardIdx: viewData.cardIdx }),
+    }).catch(err => logger.debug('editMessageWidgetData error:', err.message));
+  }
+}
+
+/**
+ * Handles incoming `shared_widget_query` update from Telegram Bot API 10.4.
+ * Uses `editSharedWidgetData` per https://core.telegram.org/bots/api#editsharedwidgetdata.
+ *
+ * @param {object} ctx - Telegraf context
+ * @param {object} query - shared_widget_query object
+ */
+async function handleSharedWidgetQuery(ctx, query) {
+  if (!query) return;
+
+  await ctx.telegram.callApi('answerWidgetQuery', {
+    widget_query_id: query.id,
+    data: 'OK',
+  }).catch(() => {});
+
+  const userId = query.from?.id;
+  const userKey = userId ? String(userId) : 'default';
+  const session = cramSessions.get(userKey);
+  if (!session) return;
+
+  const rawAction = String(query.data || '').trim();
+  let action = 'known';
+  let targetIdx = null;
+
+  try {
+    if (rawAction.startsWith('{')) {
+      const parsed = JSON.parse(rawAction);
+      action = parsed.a || parsed.action || 'known';
+      targetIdx = parsed.i !== undefined ? parsed.i : null;
+    } else {
+      action = rawAction === 'repeat' ? 'repeat' : 'known';
+    }
+  } catch {}
+
+  processCardAction(session.deck, action, targetIdx);
+  session.isRevealed = false;
+  cramSessions.set(userKey, session);
+
+  const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
+  const newPublicData = {
+    title: `${session.subjectName} • ${session.blockName}`,
+    q: viewData.question,
+    a: viewData.answer,
+    total: viewData.total,
+    learned: viewData.learnedCount,
+    cardIdx: viewData.cardIdx,
+    isFinished: viewData.isFinished,
+  };
+
+  if (query.widget_id) {
+    await ctx.telegram.callApi('editSharedWidgetData', {
+      widget_id: query.widget_id,
+      public_data: JSON.stringify(newPublicData),
+      cache_time: 5,
+    }).catch(err => logger.debug('editSharedWidgetData error:', err.message));
+  }
 }
 
 /**
@@ -662,6 +803,19 @@ async function cbCramExit(ctx) {
  */
 function register(bot) {
   if (!bot || typeof bot.action !== 'function') return;
+
+  // Telegram 10.4 Widget queries middleware
+  if (typeof bot.use === 'function') {
+    bot.use(async (ctx, next) => {
+      if (ctx.update?.widget_query) {
+        return handleWidgetQuery(ctx, ctx.update.widget_query);
+      }
+      if (ctx.update?.shared_widget_query) {
+        return handleSharedWidgetQuery(ctx, ctx.update.shared_widget_query);
+      }
+      return next();
+    });
+  }
 
   bot.action(/^cram_start_(.+)_(.+)$/, cbCramStart);
   bot.action(/^cram_reveal_(\d+)$/, cbCramReveal);
@@ -682,6 +836,8 @@ module.exports = {
   getCramFinishedKeyboard,
   formatFlashcardMessage,
   launchFlashcardReview,
+  handleWidgetQuery,
+  handleSharedWidgetQuery,
   cbCramStart,
   cbCramReveal,
   cbCramHide,
