@@ -12,6 +12,7 @@ const dbService                = require('../services/dbService');
 const logger                   = require('../core/logger');
 const timetableCdnService      = require('../services/timetableCdnService');
 const edupageService           = require('../services/edupageService');
+const featureFlagAdminHandler  = require('./featureFlagAdminHandler');
 const {
   States, setState, clearState, updateData, getData,
   safeEdit, backToMainKb, progressBar, parseSuffix,
@@ -259,6 +260,9 @@ function buildDashboardKb() {
     [
       Markup.button.callback('🌐 EduPage Holati',          'admin_edupage_status'),
       Markup.button.callback('📥 Jadval Yuklash',          'admin_upload_timetable_prompt'),
+    ],
+    [
+      Markup.button.callback('🎛 Feature Flags & Rollout',  'flags_dash'),
     ],
     [
       Markup.button.callback('🔄 Yangilash',               'admin_refresh_dashboard'),
@@ -2115,6 +2119,7 @@ function register(bot) {
   bot.action('admin_refresh_dashboard', adminGuard(cbAdminRefreshDashboard));
   bot.action('admin_sync_timetables',   adminGuard(cbAdminSyncTimetables));
   bot.action('admin_cancel',            adminGuard(cbAdminCancel));
+  bot.action('flags_dash',              adminGuard(featureFlagAdminHandler.cbFlagsDashboard));
 
   // Users
   bot.action(/^admin_users_page_\d+$/, adminGuard(cbAdminUsersList));

@@ -100,6 +100,7 @@ const handlers = {
   notes: require("./src/handlers/noteHandler"),
   donate: require("./src/handlers/donateHandler"),
   cram: require("./src/handlers/cramReviewHandler"),
+  featureFlags: require("./src/handlers/featureFlagAdminHandler"),
 };
 
 
@@ -255,6 +256,12 @@ bot.command("profile", (ctx) => handlers.profile.cbProfile(ctx));
 bot.command("schedule", (ctx) => (handlers.schedule.cbSchedule || handlers.schedule.cmdTimetable)(ctx));
 bot.command(["settings", "sozlamalar"], (ctx) => (handlers.schedule.cbNotifySettings || handlers.schedule.cbSettings)(ctx));
 bot.command(["donate", "donat"], (ctx) => handlers.donate.cbDonateMenu(ctx));
+
+// ─── Feature Flags & Rollout Governance ─────────────────────
+bot.command("flags", (ctx) => handlers.featureFlags.cbFlagsDashboard(ctx));
+bot.command("beta_add", (ctx) => handlers.featureFlags.cmdBetaAdd(ctx));
+bot.command("beta_remove", (ctx) => handlers.featureFlags.cmdBetaRemove(ctx));
+bot.command("beta_list", (ctx) => handlers.featureFlags.cmdBetaList(ctx));
 
 bot.command("testcron_bugun", async (ctx) => {
   if (!isAdmin(ctx.from?.id)) return ctx.reply("⛔ Faqat bot adminlari uchun!");
