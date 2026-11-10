@@ -205,7 +205,15 @@ function buildWidgetMessage(type, payload = {}, fallbackText = '', fallbackKeybo
   const ttlMs = options.ttlMs || DEFAULT_TTL_MS;
   const token = createWidgetToken(userId, type, payload, ttlMs);
 
-  const rawBaseUrl = options.baseUrl || process.env.BASE_URL || process.env.APP_URL || 'https://t.me';
+  const rawBaseUrl = options.baseUrl ||
+    process.env.BASE_URL ||
+    process.env.APP_URL ||
+    process.env.SERVER_URL ||
+    process.env.PUBLIC_URL ||
+    process.env.NF_PUBLIC_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.RAILWAY_STATIC_URL ||
+    'https://t.me';
   const baseUrl = rawBaseUrl.replace(/\/+$/, '');
   const widgetUrl = `${baseUrl}/widget/${token}`;
 
