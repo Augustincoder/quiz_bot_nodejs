@@ -38,6 +38,62 @@ function makeProgressBar(percent) {
 }
 
 /**
+ * Resolves the true text of the correct answer from question object.
+ * Handles numeric correct_index, string index, direct correct_ans, and cleans option prefixes.
+ *
+ * @param {object} q 
+ * @returns {string} Clean correct answer string
+ */
+function extractCorrectAnswerText(q) {
+  if (!q) return 'To\'g\'ri javob';
+  const options = Array.isArray(q.options) ? q.options : [];
+
+  // 1. Check numeric correct_index, correct_option, or numeric answer
+  let idx = -1;
+  if (typeof q.correct_index === 'number') {
+    idx = q.correct_index;
+  } else if (typeof q.correct_option === 'number') {
+    idx = q.correct_option;
+  } else if (typeof q.answer === 'number') {
+    idx = q.answer;
+  } else if (typeof q.correct_index === 'string' && /^\d+$/.test(q.correct_index.trim())) {
+    idx = parseInt(q.correct_index.trim(), 10);
+  } else if (typeof q.answer === 'string' && /^\d+$/.test(q.answer.trim())) {
+    idx = parseInt(q.answer.trim(), 10);
+  } else if (typeof q.a === 'number') {
+    idx = q.a;
+  }
+
+  if (idx >= 0 && idx < options.length) {
+    const optText = options[idx];
+    if (typeof optText === 'string' && optText.trim()) {
+      return optText.replace(/^[#*+]?\s*(\[[xX ]\]\s*)?(?:[A-Za-z0-9][\)\.\-]|[•\-\*])\s*/, '').trim() || optText.trim();
+    }
+  }
+
+  // 2. Direct string answer properties
+  if (typeof q.correct_ans === 'string' && q.correct_ans.trim()) {
+    return q.correct_ans.trim();
+  }
+  if (typeof q.correct_text === 'string' && q.correct_text.trim()) {
+    return q.correct_text.trim();
+  }
+  if (typeof q.answer === 'string' && q.answer.trim() && isNaN(Number(q.answer.trim()))) {
+    return q.answer.trim();
+  }
+  if (typeof q.a === 'string' && q.a.trim() && isNaN(Number(q.a.trim()))) {
+    return q.a.trim();
+  }
+
+  // 3. Fallback to first option if available
+  if (options.length > 0 && typeof options[0] === 'string' && options[0].trim()) {
+    return options[0].replace(/^[#*+]?\s*(\[[xX ]\]\s*)?(?:[A-Za-z0-9][\)\.\-]|[•\-\*])\s*/, '').trim() || options[0].trim();
+  }
+
+  return 'To\'g\'ri javob';
+}
+
+/**
  * Initializes spaced repetition flashcard deck.
  *
  * @param {Array<object>} questions - Questions array
@@ -55,7 +111,7 @@ function initFlashcardDeck(questions = []) {
 
   const cards = questions.map((q, idx) => {
     const questionText = q.question || q.q || `Savol ${idx + 1}`;
-    const answerText = q.answer || q.a || q.correct_ans || 'To\'g\'ri javob';
+    const answerText = extractCorrectAnswerText(q);
     const options = Array.isArray(q.options) ? q.options : [];
     return {
       id: q.id !== undefined ? q.id : idx,
@@ -315,11 +371,27 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
 
   // 1. Resolve questions if not passed
   let qs = questions;
+  let subjectName = options.subjectName || formatSubjectTitle(subjectKey);
+  let blockName = options.blockName || `${testId}-Blok`;
+
   if (!qs || !Array.isArray(qs) || qs.length === 0) {
     const botCore = require('../core/bot');
     const memDb = _customMemoryDb || botCore.memoryDb || {};
     const testData = (memDb[subjectKey] || {})[testId];
-    qs = testData?.questions || [];
+    if (testData?.questions?.length) {
+      qs = testData.questions;
+    } else {
+      // Try resolving as UGC user test from Postgres
+      try {
+        const dbService = require('../services/dbService');
+        const ugcTest = await dbService.getUserTest(testId);
+        if (ugcTest && Array.isArray(ugcTest.questions) && ugcTest.questions.length > 0) {
+          qs = ugcTest.questions;
+          if (ugcTest.subject) subjectName = ugcTest.subject;
+          if (ugcTest.block_name) blockName = ugcTest.block_name;
+        }
+      } catch (err) {}
+    }
   }
 
   if (!qs || qs.length === 0) {
@@ -328,10 +400,21 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
 
   // 2. Initialize spaced repetition deck
   const deck = initFlashcardDeck(qs);
-  const subjectName = formatSubjectTitle(subjectKey);
-  const blockName = `${testId}-Blok`;
 
-  // 3. Save session in TTLMap
+  // 3. Build view data & widget message
+  const viewData = buildFlashcardViewData(deck, subjectName, blockName);
+  const fallbackText = formatFlashcardMessage(viewData, false);
+
+  // Generate signed WebApp widget URL
+  let webAppUrl = null;
+  try {
+    const widgetMsg = buildWidgetMessage('flashcard', viewData, fallbackText, null, { userId });
+    webAppUrl = widgetMsg?.url || null;
+  } catch {}
+
+  const fallbackKeyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, webAppUrl);
+
+  // 4. Save session in TTLMap
   const session = {
     userId,
     subjectKey,
@@ -341,16 +424,10 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
     deck,
     isRevealed: false,
     blitzMode: !!options.blitzMode,
+    webAppUrl,
     messageId: ctx.callbackQuery?.message?.message_id,
   };
   cramSessions.set(userKey, session);
-
-  // 4. Build view data & widget message
-  const viewData = buildFlashcardViewData(deck, subjectName, blockName);
-  const fallbackText = formatFlashcardMessage(viewData, false);
-  const fallbackKeyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false);
-
-  const widgetMsg = buildWidgetMessage('flashcard', viewData, fallbackText, fallbackKeyboard, { userId });
 
   // 5. Dual-mode launch: try 10.4 sendWidget or fallback to HTML edit/reply
   if (typeof ctx.sendWidget === 'function') {
@@ -415,7 +492,7 @@ async function cbCramReveal(ctx) {
 
   const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
   const text = formatFlashcardMessage(viewData, true);
-  const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, true);
+  const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, true, session.webAppUrl);
 
   try {
     await ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard });
@@ -439,7 +516,7 @@ async function cbCramHide(ctx) {
 
   const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
   const text = formatFlashcardMessage(viewData, false);
-  const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false);
+  const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, session.webAppUrl);
 
   try {
     await ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard });
@@ -475,7 +552,7 @@ async function cbCramKnown(ctx) {
       await ctx.editMessageText(text, { parse_mode: 'HTML', ...finishKeyboard });
     } catch {}
   } else {
-    const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false);
+    const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, session.webAppUrl);
     try {
       await ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard });
     } catch {}
@@ -505,7 +582,7 @@ async function cbCramRepeat(ctx) {
 
   const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
   const text = formatFlashcardMessage(viewData, false);
-  const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false);
+  const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, session.webAppUrl);
 
   try {
     await ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard });
@@ -575,6 +652,7 @@ function register(bot) {
 
 module.exports = {
   cramSessions,
+  extractCorrectAnswerText,
   initFlashcardDeck,
   processCardAction,
   buildFlashcardViewData,

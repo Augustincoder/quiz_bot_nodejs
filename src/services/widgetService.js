@@ -209,16 +209,34 @@ function buildWidgetMessage(type, payload = {}, fallbackText = '', fallbackKeybo
   const baseUrl = rawBaseUrl.replace(/\/+$/, '');
   const widgetUrl = `${baseUrl}/widget/${token}`;
 
-  const defaultKeyboard = fallbackKeyboard || {
-    inline_keyboard: [
-      [
-        {
-          text: '🚀 Widgetni ochish',
-          web_app: { url: widgetUrl },
-        },
+  let defaultKeyboard = fallbackKeyboard;
+  if (!defaultKeyboard || !defaultKeyboard.inline_keyboard) {
+    defaultKeyboard = {
+      inline_keyboard: [
+        [
+          {
+            text: '🚀 Widgetni ochish',
+            web_app: { url: widgetUrl },
+          },
+        ],
       ],
-    ],
-  };
+    };
+  } else {
+    const hasWebApp = defaultKeyboard.inline_keyboard.some(row =>
+      Array.isArray(row) && row.some(btn => btn && btn.web_app)
+    );
+    if (!hasWebApp && widgetUrl) {
+      const buttonLabel = type === 'flashcard'
+        ? '🎴 3D Kartochka (Web App)'
+        : (type === 'podium' ? '🏛 3D Shohsupa & Radar' : '🚀 Visual Inspektorni Ochish');
+      defaultKeyboard = {
+        inline_keyboard: [
+          [{ text: buttonLabel, web_app: { url: widgetUrl } }],
+          ...defaultKeyboard.inline_keyboard,
+        ],
+      };
+    }
+  }
 
   return {
     type,

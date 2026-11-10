@@ -1,22 +1,17 @@
 'use strict';
 
 const cramReviewHandler = require('../handlers/cramReviewHandler');
+const universalTestHub = require('../handlers/universalTestHub');
 
 /**
- * Registers cram review and blitz-flashcard actions into Telegraf bot.
- * Actions:
- * - cram_start_:subj_:id
- * - cram_reveal_:idx
- * - cram_hide_:idx
- * - cram_known_:idx
- * - cram_repeat_:idx
- * - cram_exit
+ * Registers cram review and universal test hub actions into Telegraf bot.
  *
  * @param {object} bot - Telegraf bot instance
  */
 function registerCramActions(bot) {
   if (!bot || typeof bot.action !== 'function') return;
-  return cramReviewHandler.register(bot);
+  cramReviewHandler.register(bot);
+  universalTestHub.register(bot);
 }
 
 module.exports = {

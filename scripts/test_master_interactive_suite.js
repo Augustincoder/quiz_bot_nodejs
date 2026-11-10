@@ -7,7 +7,9 @@ const testScripts = [
   'scripts/test_widget_engine.js',
   'scripts/test_podium_and_ghost_coach.js',
   'scripts/test_blitz_flashcard.js',
-  'scripts/test_smart_docx_healer.js'
+  'scripts/test_flashcard_correct_answers.js',
+  'scripts/test_smart_docx_healer.js',
+  'scripts/test_universal_test_hub.js',
 ];
 
 let totalPassed = 0;

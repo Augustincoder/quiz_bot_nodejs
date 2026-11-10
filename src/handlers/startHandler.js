@@ -112,8 +112,16 @@ async function cmdStart(ctx) {
   // LINK ORQALI KIRGANDA (Deep Linking - Shaxsiy chat uchun)
   const args = (ctx.message.text || '').trim().split(/\s+/);
   if (args.length > 1) {
+    if (dbService.isRecentDbError()) {
+      return ctx.reply(
+        "⚠️ <b>Ma'lumotlar bazasida vaqtinchalik uzilish yuz berdi.</b>\n\nIltimos, 1-2 daqiqadan so'ng qayta urinib ko'ring.",
+        { parse_mode: 'HTML', ...backToMainKb() }
+      );
+    }
+
     const param = args[1];
     const resolved = resolveShareParam(param);
+    const universalTestHub = require('./universalTestHub');
 
     if (resolved.type === 's') {
       if (resolved.isInvalid || !resolved.id) {
@@ -122,81 +130,26 @@ async function cmdStart(ctx) {
 
       ctx.sendChatAction('typing').catch(() => {});
       const loadingMsg = await ctx.reply(
-        '⏳ <b>Fan bloklari yuklanmoqda...</b>\n<i>Iltimos, kuting...</i>',
+        '⏳ <b>Fan ma\'lumotlari yuklanmoqda...</b>\n<i>Iltimos, kuting...</i>',
         { parse_mode: 'HTML' }
       ).catch(() => null);
 
-      const rawId = resolved.id;
-      const { showUgcSubjectBlocks } = require('./quizGame');
-
-      // 1. Avval rawId ni subject_id deb tekshiramiz
-      const subject = await dbService.getSubjectById(rawId);
-      if (subject) {
-        return showUgcSubjectBlocks(ctx, subject.id, subject.name, loadingMsg?.message_id);
-      }
-
-      // 2. Agar subject topilmasa, eski havola bo'lishi mumkin (rawId = test_id)
-      const testData = await dbService.getUserTest(rawId);
-      if (testData) {
-        if (testData.subject_id) {
-          const s = await dbService.getSubjectById(testData.subject_id);
-          return showUgcSubjectBlocks(ctx, testData.subject_id, s?.name || testData.subject, loadingMsg?.message_id);
-        }
-        return showUgcSubjectBlocks(ctx, testData.creator_id, testData.subject, loadingMsg?.message_id);
-      }
-
-      const isDbDown = dbService.isRecentDbError();
-      const notFoundText = isDbDown
-        ? '⚠️ <b>Ma\'lumotlar bazasida vaqtinchalik uzilish yuz berdi.</b>\n\nIltimos, 1-2 daqiqadan so\'ng qayta urinib ko\'ring.'
-        : '❌ Bu fan topilmadi yoki o\'chirilgan.';
-      const notFoundOpts = { parse_mode: 'HTML', ...backToMainKb() };
-      if (loadingMsg) {
-        return ctx.telegram.editMessageText(
-          chatId,
-          loadingMsg.message_id,
-          undefined,
-          notFoundText,
-          notFoundOpts
-        ).catch(() => ctx.reply(notFoundText, notFoundOpts));
-      }
-      return ctx.reply(notFoundText, notFoundOpts);
+      return universalTestHub.showSubjectHub(ctx, resolved.id, {
+        isOfficial: false,
+        loadingMsgId: loadingMsg?.message_id,
+      });
     }
     if (resolved.type === 't') {
       if (resolved.isInvalid || !resolved.id) {
         return ctx.reply("❌ Bu blok topilmadi yoki havola yaroqsiz.", backToMainKb());
       }
-      const testData = await dbService.getUserTest(resolved.id);
-      if (testData) {
-        const { startUgcTest } = require('./quizGame');
-        return startUgcTest(ctx, testData);
-      }
-      const isDbDown = dbService.isRecentDbError();
-      const testErrText = isDbDown
-        ? '⚠️ <b>Ma\'lumotlar bazasida vaqtinchalik uzilish yuz berdi.</b>\n\nIltimos, 1-2 daqiqadan so\'ng qayta urinib ko\'ring.'
-        : '❌ Bu blok topilmadi yoki o\'chirilgan.';
-      return ctx.reply(testErrText, { parse_mode: 'HTML', ...backToMainKb() });
+      return universalTestHub.showBlockHub(ctx, resolved.id, { isOfficial: false });
     }
     if (param.startsWith('offt_')) {
-      const parts = param.split('_');
-      const testId = parseInt(parts.pop(), 10);
-      const subject = parts.slice(1).join('_');
-      const memDb = require('../core/bot').memoryDb || {};
-      const testData = (memDb[subject] || {})[testId];
-      if (testData) {
-        const { initAndStartTest } = require('./quizGame');
-        return initAndStartTest(chatId, ctx.telegram, subject, testId, testData, ctx.from.id, 'private');
-      }
-      return ctx.reply("❌ Rasmiy test topilmadi yoki o'chirilgan.", backToMainKb());
+      return universalTestHub.showBlockHub(ctx, param, { isOfficial: true });
     }
     if (param.startsWith('offs_')) {
-      const subject = param.replace('offs_', '');
-      const memDb = require('../core/bot').memoryDb || {};
-      if (memDb[subject]) {
-        const { cbSubject } = require('./quizGame');
-        ctx.callbackQuery = { data: `subj_${subject}` };
-        return cbSubject(ctx);
-      }
-      return ctx.reply("❌ Bu fanda rasmiy testlar topilmadi.", backToMainKb());
+      return universalTestHub.showSubjectHub(ctx, param.replace('offs_', ''), { isOfficial: true });
     }
   }
 

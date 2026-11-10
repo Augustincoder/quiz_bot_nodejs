@@ -2295,7 +2295,7 @@ async function cbOpenInspector(ctx) {
 
   return safeEdit(ctx, widgetMsg.text, {
     parse_mode: "HTML",
-    ...widgetMsg.reply_markup,
+    reply_markup: widgetMsg.reply_markup,
   });
 }
 

@@ -458,12 +458,28 @@ async function showUgcSubjectBlocks(ctx, subjectIdOrCreator, subjectName = null,
       return ctx.reply(emptyText, errOpts);
     }
 
-    const buttons = subjTests.map((t) => [
-      Markup.button.callback(
-        `📘 ${t.block_name}  •  ${(t.questions || []).length} savol`,
-        `ugc_start_${t.id}`,
-      ),
-    ]);
+    const targetSubjectId = numericId || subjTests[0]?.subject_id || subjTests[0]?.id;
+    const buttons = [];
+
+    // Header toolbar: Marafon, Mock Exam, Flashcard
+    if (subjTests.length > 1) {
+      buttons.push([
+        Markup.button.callback("▶️ Ketma-ket Marafon", safeCallbackData(`hub_seq_ugc_${targetSubjectId}`)),
+        Markup.button.callback("🎲 Mock Exam", safeCallbackData(`hub_mock_ugc_${targetSubjectId}`)),
+      ]);
+      buttons.push([
+        Markup.button.callback("⚡ 3D Flashcard (Kartochkalar)", safeCallbackData(`hub_cram_pick_ugc_${targetSubjectId}`)),
+      ]);
+    }
+
+    for (const t of subjTests) {
+      buttons.push([
+        Markup.button.callback(
+          `📘 ${t.block_name}  •  ${(t.questions || []).length} savol`,
+          safeCallbackData(`hub_block_ugc_${t.id}`),
+        ),
+      ]);
+    }
     buttons.push([Markup.button.callback("🏠 Asosiy Menyu", "back_to_main")]);
 
     const text = `📚 <b>${escapeHtml(titleSubject || "Fan")}</b>\n\n${subjTests.length} ta blok mavjud. Boshlash uchun blokni tanlang:`;

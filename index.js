@@ -101,6 +101,7 @@ const handlers = {
   donate: require("./src/handlers/donateHandler"),
   cram: require("./src/handlers/cramReviewHandler"),
   featureFlags: require("./src/handlers/featureFlagAdminHandler"),
+  universalHub: require("./src/handlers/universalTestHub"),
 };
 
 
