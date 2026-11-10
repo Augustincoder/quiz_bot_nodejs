@@ -840,7 +840,7 @@ async function main() {
   initSocket(server);
 
   const port = parseInt(process.env.PORT || "8080", 10);
-  server.listen(port, () => logger.info(`🌐 Web & Socket.io server started on port ${port}`));
+  server.listen(port, "0.0.0.0", () => logger.info(`🌐 Web & Socket.io server started on port ${port}`));
 
   await bot.telegram.deleteWebhook({ drop_pending_updates: true });
   await bot.launch();

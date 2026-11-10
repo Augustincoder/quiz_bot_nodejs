@@ -179,10 +179,9 @@ async function runTests() {
   await cramReviewHandler.cbCramReveal(revealCtx);
   assert(sentText.includes("To'g'ri javob"), 'Answer section must be revealed');
   assert(sentText.includes('4'), 'Must display the true correct answer string "4"');
-  assert(
-    sentExtra.reply_markup.inline_keyboard[0][0].text.includes('Yashirish'),
-    'Reveal button should switch to Yashirish'
-  );
+  const allButtons = sentExtra.reply_markup.inline_keyboard.flat();
+  const hasYashirish = allButtons.some(b => b.text && b.text.includes('Yashirish'));
+  assert(hasYashirish, 'Reveal button should switch to Yashirish');
   console.log('  ✅ [PASS] Answer revealed with correct answer text "4" and toggle button.');
 
   // -----------------------------------------------------------

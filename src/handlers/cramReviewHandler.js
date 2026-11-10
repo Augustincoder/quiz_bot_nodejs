@@ -434,20 +434,21 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
   const viewData = buildFlashcardViewData(deck, subjectName, blockName);
   const fallbackText = formatFlashcardMessage(viewData, false);
 
-  // Generate signed WebApp widget URL only if an external domain is explicitly configured
+  // Generate signed WebApp widget URL using configured Northflank host
   let webAppUrl = null;
   try {
-    const isDomainConfigured = !!(
+    const rawHost = process.env.APP_URL ||
       process.env.WEBAPP_URL ||
-      process.env.APP_URL ||
       process.env.SERVER_URL ||
-      process.env.BASE_URL
-    );
-    if (isDomainConfigured) {
-      const widgetMsg = buildWidgetMessage('flashcard', viewData, fallbackText, null, { userId });
-      if (widgetMsg?.url && isValidWebAppUrl(widgetMsg.url)) {
-        webAppUrl = widgetMsg.url;
-      }
+      process.env.BASE_URL ||
+      process.env.NF_PUBLIC_URL ||
+      'https://p01--quiz-bot-nodejs--hqhlj8nqhyp9.code.run';
+    const widgetMsg = buildWidgetMessage('flashcard', viewData, fallbackText, null, {
+      userId,
+      baseUrl: rawHost,
+    });
+    if (widgetMsg?.url && isValidWebAppUrl(widgetMsg.url)) {
+      webAppUrl = widgetMsg.url;
     }
   } catch {}
 

@@ -789,7 +789,14 @@ async function cbMyGroupQuizResult(ctx, testSession = null) {
   let replyMarkup = undefined;
   try {
     const widgetService = require("../services/widgetService");
-    const baseUrl = (process.env.BASE_URL || process.env.APP_URL || "").replace(/\/+$/, "");
+    const baseUrl = (
+      process.env.APP_URL ||
+      process.env.WEBAPP_URL ||
+      process.env.SERVER_URL ||
+      process.env.BASE_URL ||
+      process.env.NF_PUBLIC_URL ||
+      'https://p01--quiz-bot-nodejs--hqhlj8nqhyp9.code.run'
+    ).replace(/\/+$/, "");
     if (baseUrl) {
       const top3Sorted = sortGroupScores(scores).slice(0, 3);
       const token = widgetService.createWidgetToken(userId, "podium", {

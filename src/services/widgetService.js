@@ -248,7 +248,7 @@ function buildWidgetMessage(type, payload = {}, fallbackText = '', fallbackKeybo
     process.env.NF_PUBLIC_URL ||
     process.env.RENDER_EXTERNAL_URL ||
     process.env.RAILWAY_STATIC_URL ||
-    'https://quiz-app.railway.app';
+    'https://p01--quiz-bot-nodejs--hqhlj8nqhyp9.code.run';
   const baseUrl = rawBaseUrl.replace(/\/+$/, '');
   const widgetUrl = `${baseUrl}/widget/${token}`;
   const isUrlValid = isValidWebAppUrl(widgetUrl);

@@ -51,6 +51,12 @@ const TIMETABLE_STORAGE_CHANNEL_ID = env('TIMETABLE_STORAGE_CHANNEL_ID') ||
   env('CHANNEL_ID') ||
   env('STORAGE_CHANNEL_ID') ||
   env('TIMETABLE_CHANNEL_ID', '');
+const APP_URL = env('APP_URL') ||
+  env('WEBAPP_URL') ||
+  env('SERVER_URL') ||
+  env('BASE_URL') ||
+  env('NF_PUBLIC_URL') ||
+  'https://p01--quiz-bot-nodejs--hqhlj8nqhyp9.code.run';
 
 if (!BOT_TOKEN) {
   throw new Error(
@@ -77,4 +83,5 @@ module.exports = {
   CARD_NUMBER,
   GEMINI_API_KEY,
   TIMETABLE_STORAGE_CHANNEL_ID,
+  APP_URL,
 };
