@@ -120,16 +120,21 @@ async function testUserReportedFlashcardIssue() {
   assert(!payload.html.includes('&quot;Nominal'), 'HTML initialData must not have raw &quot; entities');
   assert(payload.html.includes('min-height: 290px'), 'HTML must declare min-height for full question visibility');
   assert(payload.html.includes('overflow-y: auto'), 'q-text must have overflow-y auto to prevent question truncation');
+  assert(payload.html.includes('rotateY(180deg)'), 'HTML must feature smooth 3D flip transform');
+  assert(payload.html.includes('triggerAction'), 'HTML must feature instant micro-interaction swipe transition');
 
-  // Verify reply_markup compactness (< 400 bytes, no oversized URLs)
+  // Verify reply_markup compactness (< 400 bytes, no oversized URLs, no duplicate known/repeat buttons)
   assert(payload.reply_markup, 'sendWidget payload must include reply_markup keyboard');
   const markupJson = JSON.stringify(payload.reply_markup);
   const markupBytes = Buffer.byteLength(markupJson, 'utf8');
   console.log(`  reply_markup JSON size: ${markupBytes} bytes (Limit: 1024, Target: <= 300)`);
   assert(markupBytes <= 350, `reply_markup must be compact (was ${markupBytes} bytes) to avoid 'reply markup is too long' error`);
   assert(!markupJson.includes('web_app'), 'reply_markup for native sendWidget should not contain heavy WebApp URLs');
+  assert(!markupJson.includes('Qiyin'), 'reply_markup must not duplicate Qiyin button already present in widget');
+  assert(!markupJson.includes('known'), 'reply_markup must not duplicate Bilib oldim button already present in widget');
+  assert(markupJson.includes('cram_blitz') && markupJson.includes('cram_exit'), 'reply_markup must contain utility actions blitz and exit');
 
-  console.log('  ✅ [PASS] sendWidget payload cleanly displays widget without duplicate text caption.\n');
+  console.log('  ✅ [PASS] sendWidget payload cleanly displays widget without duplicate buttons or captions.\n');
 
   // ─── TEST 4: Elimination of WebApp button in all flashcard keyboards ───
   console.log('[Test 4] Testing elimination of WebApp button in all flashcard keyboards...');

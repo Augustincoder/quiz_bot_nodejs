@@ -373,72 +373,79 @@ function buildInlineFlashcardWidgetHtml(viewData = {}) {
   }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><style>
-* { box-sizing: border-box; margin: 0; padding: 0; user-select: none; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+* { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
 html, body { width: 100%; height: auto; min-height: 290px; background: var(--tg-theme-bg-color, #17212b); color: var(--tg-theme-text-color, #fff); overflow-x: hidden; }
-.widget-wrap { padding: 10px 12px; min-height: 290px; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; }
-.top-bar { display: flex; justify-content: space-between; font-size: 12px; opacity: 0.85; margin-bottom: 2px; font-weight: 600; color: var(--tg-theme-hint-color, #90caf9); }
-.bar-wrap { background: rgba(255,255,255,0.12); height: 5px; border-radius: 3px; margin: 4px 0 8px; overflow: hidden; }
-.bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #2481cc, #4caf50); border-radius: 3px; transition: width 0.3s; }
-.card-box { flex: 1; display: flex; align-items: stretch; justify-content: center; min-height: 180px; margin-bottom: 8px; }
-.card { width: 100%; min-height: 180px; position: relative; border-radius: 12px; padding: 14px 12px; cursor: pointer; border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 4px 14px rgba(0,0,0,0.25); display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; transition: transform 0.2s ease, background 0.2s ease; background: var(--tg-theme-secondary-bg-color, #233446); color: var(--tg-theme-text-color, #fff); }
-.card:active { transform: scale(0.98); }
-.card.flipped { background: var(--tg-theme-bg-color, #182533); border-color: rgba(76, 175, 80, 0.45); }
-.face { width: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; }
-.face.back { display: none; }
-.card.flipped .face.front { display: none; }
-.card.flipped .face.back { display: flex; }
+.wrap { padding: 10px 12px; min-height: 290px; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; }
+.top-bar { display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--tg-theme-hint-color, #90caf9); opacity: 0.9; }
+.bar-wrap { background: rgba(255,255,255,0.12); height: 5px; border-radius: 3px; margin: 5px 0 8px; overflow: hidden; }
+.bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #2481cc, #4caf50); border-radius: 3px; transition: width 0.3s ease; }
+.card-box { flex: 1; display: flex; align-items: stretch; justify-content: center; min-height: 180px; margin-bottom: 8px; perspective: 900px; touch-action: pan-y; }
+.card { width: 100%; min-height: 180px; position: relative; border-radius: 14px; cursor: pointer; transform-style: preserve-3d; transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); will-change: transform, opacity; }
+.card.flipped { transform: rotateY(180deg); }
+.face { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 14px; padding: 14px 12px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; backface-visibility: hidden; -webkit-backface-visibility: hidden; box-shadow: 0 6px 20px rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.12); background: var(--tg-theme-secondary-bg-color, #233446); }
+.face.back { transform: rotateY(180deg); background: var(--tg-theme-bg-color, #182533); border-color: rgba(76, 175, 80, 0.4); }
 .tag { font-size: 10px; font-weight: 700; letter-spacing: 0.8px; opacity: 0.85; margin-bottom: 6px; text-transform: uppercase; }
 .front .tag { color: var(--tg-theme-link-color, #64b5f6); }
 .back .tag { color: #81c784; }
 .q-text { font-size: 15px; font-weight: 500; line-height: 1.45; word-break: break-word; max-height: 130px; overflow-y: auto; padding: 0 4px; }
 .a-text { font-size: 16px; font-weight: 700; line-height: 1.45; color: #a5d6a7; word-break: break-word; max-height: 130px; overflow-y: auto; padding: 0 4px; }
-.flip-hint { margin-top: 8px; font-size: 11px; opacity: 0.6; }
+.hint { margin-top: 8px; font-size: 11px; opacity: 0.6; }
 .actions { display: flex; gap: 8px; margin-top: 4px; }
-.btn { flex: 1; padding: 9px 12px; border-radius: 9px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; color: #fff; transition: opacity 0.2s; display: flex; align-items: center; justify-content: center; gap: 6px; }
-.btn:active { opacity: 0.7; }
-.btn-repeat { background: var(--tg-theme-destructive-text-color, #c62828); }
+.btn { flex: 1; padding: 10px 14px; border-radius: 10px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; color: #fff; transition: transform 0.1s ease, opacity 0.2s ease; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.btn:active { transform: scale(0.96); opacity: 0.85; }
+.btn-repeat { background: #d32f2f; }
 .btn-known { background: #2e7d32; }
 </style></head><body>
-<div class="widget-wrap">
+<div class="wrap">
   <div class="top-bar"><span id="title">⚡ 3D Flashcard</span><span id="prog">0 / 0</span></div>
   <div class="bar-wrap"><div class="bar-fill" id="bar"></div></div>
   <div class="card-box">
-    <div class="card" id="card" onclick="flip()">
+    <div class="card" id="card">
       <div class="face front">
         <div class="tag">SAVOL (YODLASH)</div>
         <div class="q-text" id="q-text">Savol yuklanmoqda...</div>
-        <div class="flip-hint">💡 Javobni ko'rish uchun bosing 👆</div>
+        <div class="hint">💡 Javobni ko'rish uchun bosing 👆</div>
       </div>
       <div class="face back">
         <div class="tag">TO'G'RI JAVOB</div>
         <div class="a-text" id="a-text">Javob yuklanmoqda...</div>
-        <div class="flip-hint">🔄 Qaytadan aylantirish uchun bosing</div>
+        <div class="hint">🔄 Qaytadan aylantirish uchun bosing</div>
       </div>
     </div>
   </div>
   <div class="actions">
-    <button class="btn btn-repeat" onclick="sendAction('repeat')">👈 Qaytarish</button>
-    <button class="btn btn-known" onclick="sendAction('known')">👉 Bilib oldim</button>
+    <button class="btn btn-repeat" id="btn-rep" onclick="triggerAction('left','repeat')">👈 Qaytarish</button>
+    <button class="btn btn-known" id="btn-kno" onclick="triggerAction('right','known')">👉 Bilib oldim</button>
   </div>
 </div>
 <script>
 var W = window.TelegramWidget || window.Telegram && window.Telegram.WebApp || {};
 var card = document.getElementById('card');
+var isAnim = false;
+
 function clean(s) {
   if (!s) return '';
   return String(s).replace(/&quot;/g, '"').replace(/&#34;/g, '"').replace(/&apos;/g, "'").replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 }
+
 function flip() {
+  if (isAnim) return;
   card.classList.toggle('flipped');
   if (W.HapticFeedback && typeof W.HapticFeedback.selectionChanged === 'function') {
     W.HapticFeedback.selectionChanged();
   }
 }
+
+card.onclick = function(e) {
+  if (isAnim) return;
+  flip();
+};
+
 function render(dataStr) {
   try {
     var d = typeof dataStr === 'string' ? JSON.parse(dataStr) : (dataStr || {});
     if (d.isFinished) {
-      document.getElementById('card').innerHTML = '<div class="face front"><div class="tag" style="color:#81c784">TABRIKLAYMIZ! 🎉</div><div class="q-text" style="color:#a5d6a7;font-weight:700">Barcha kartochkalarni muvaffaqiyatli o‘zlashtirdingiz!</div></div>';
+      document.querySelector('.card-box').innerHTML = '<div class="face front" style="position:relative;width:100%"><div class="tag" style="color:#81c784">TABRIKLAYMIZ! 🎉</div><div class="q-text" style="color:#a5d6a7;font-weight:700">Barcha kartochkalarni muvaffaqiyatli o‘zlashtirdingiz!</div></div>';
       var actions = document.querySelector('.actions');
       if (actions) actions.style.display = 'none';
       return;
@@ -451,27 +458,113 @@ function render(dataStr) {
       document.getElementById('prog').textContent = (d.learned || 0) + ' / ' + d.total + ' (' + p + '%)';
       document.getElementById('bar').style.width = p + '%';
     }
-    card.classList.remove('flipped');
   } catch(e) {}
 }
-function sendAction(act) {
+
+function triggerAction(direction, act) {
+  if (isAnim) return;
+  isAnim = true;
+
   if (W.HapticFeedback && typeof W.HapticFeedback.impactOccurred === 'function') {
     W.HapticFeedback.impactOccurred('medium');
   }
+
+  // Instant swipe-out transition (0ms perceived lag)
+  var transX = direction === 'right' ? '125%' : '-125%';
+  var rot = direction === 'right' ? '14deg' : '-14deg';
+  var isFlipped = card.classList.contains('flipped');
+  card.style.transition = 'transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease';
+  card.style.transform = (isFlipped ? 'rotateY(180deg) ' : '') + 'translateX(' + transX + ') rotate(' + rot + ')';
+  card.style.opacity = '0';
+
   if (typeof W.request === 'function') {
     W.request(act).then(function(res) {
-      if (res && res.result) render(res.result);
-    }).catch(function() {});
+      if (res && res.result) {
+        animateIn(res.result);
+      } else {
+        resetCard();
+      }
+    }).catch(function() {
+      resetCard();
+    });
   } else if (typeof W.sendQuery === 'function') {
     W.sendQuery(act);
+    setTimeout(resetCard, 300);
+  } else {
+    setTimeout(resetCard, 300);
   }
 }
+
+function animateIn(newData) {
+  render(newData);
+  card.style.transition = 'none';
+  card.classList.remove('flipped');
+  card.style.transform = 'translateY(16px) scale(0.92)';
+  card.style.opacity = '0';
+
+  void card.offsetWidth;
+
+  card.style.transition = 'transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease';
+  card.style.transform = 'translate(0, 0) scale(1)';
+  card.style.opacity = '1';
+
+  setTimeout(function() {
+    isAnim = false;
+    card.style.transition = '';
+    card.style.transform = '';
+  }, 280);
+}
+
+function resetCard() {
+  card.style.transition = 'transform 0.2s ease, opacity 0.2s ease';
+  card.style.transform = card.classList.contains('flipped') ? 'rotateY(180deg)' : '';
+  card.style.opacity = '1';
+  isAnim = false;
+}
+
+// Touch swipe gestures
+var startX = 0, startY = 0, curX = 0, isDragging = false;
+card.addEventListener('touchstart', function(e) {
+  if (isAnim) return;
+  var t = e.touches[0];
+  startX = t.clientX;
+  startY = t.clientY;
+  curX = 0;
+  isDragging = true;
+}, { passive: true });
+
+card.addEventListener('touchmove', function(e) {
+  if (!isDragging || isAnim) return;
+  var t = e.touches[0];
+  var dx = t.clientX - startX;
+  var dy = t.clientY - startY;
+  if (Math.abs(dx) > Math.abs(dy)) {
+    curX = dx;
+    var base = card.classList.contains('flipped') ? 'rotateY(180deg) ' : '';
+    card.style.transition = 'none';
+    card.style.transform = base + 'translateX(' + dx + 'px) rotate(' + (dx * 0.05) + 'deg)';
+  }
+}, { passive: true });
+
+card.addEventListener('touchend', function(e) {
+  if (!isDragging || isAnim) return;
+  isDragging = false;
+  if (curX > 65) {
+    triggerAction('right', 'known');
+  } else if (curX < -65) {
+    triggerAction('left', 'repeat');
+  } else if (Math.abs(curX) > 5) {
+    card.style.transition = 'transform 0.22s cubic-bezier(0.18, 0.89, 0.32, 1.28)';
+    card.style.transform = card.classList.contains('flipped') ? 'rotateY(180deg)' : '';
+  }
+}, { passive: true });
+
 var lastData = '';
 function checkData() {
   var pd = W.chatData || W.publicData;
   if (pd && pd !== lastData) {
     lastData = pd;
-    render(pd);
+    animateIn(pd);
   }
 }
 setInterval(checkData, 300);

@@ -244,20 +244,14 @@ function buildFlashcardViewData(deck, subjectName = '', blockName = '') {
 }
 
 /**
- * Builds compact, lightweight action keyboard for native sendWidget messages.
- * Does not include heavy WebApp URLs because sendWidget already renders the native widget in-chat.
- * Strictly guarantees reply_markup <= 256 bytes to prevent 'reply markup is too long'.
+ * Builds compact utility keyboard for native sendWidget messages.
+ * Does not duplicate 'Qaytarish' or 'Bilib oldim' because those actions
+ * are already rendered directly inside the interactive HTML widget itself.
  *
- * @param {number|null} cardIdx
  * @returns {object} Telegraf inline keyboard markup
  */
-function getWidgetInlineKeyboard(cardIdx) {
-  const safeIdx = cardIdx !== null && cardIdx !== undefined ? cardIdx : 0;
+function getWidgetInlineKeyboard() {
   return Markup.inlineKeyboard([
-    [
-      Markup.button.callback('👈 Qiyin (Qaytarish)', safeCallbackData(`cram_repeat_${safeIdx}`)),
-      Markup.button.callback('👉 Bilib oldim', safeCallbackData(`cram_known_${safeIdx}`)),
-    ],
     [
       Markup.button.callback('⚡ 5-daqiqalik Blitz', safeCallbackData('cram_blitz')),
       Markup.button.callback('🏁 Chiqish', 'cram_exit'),
