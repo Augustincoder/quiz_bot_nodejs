@@ -80,6 +80,11 @@ async function testUserReportedFlashcardIssue() {
       answer: '(1 + i) = (1 + r)(1 + π)',
       options: ['(1 + i) = (1 + r)(1 + π)', 'i = r + π', 'i = r - π'],
     },
+    {
+      question: '2-savol: Pul agregatlari qaysilar?',
+      answer: 'M0, M1, M2, M3',
+      options: ['M0, M1, M2, M3', 'Faqat M1'],
+    },
   ];
 
   await cramReviewHandler.launchFlashcardReview(
@@ -95,9 +100,8 @@ async function testUserReportedFlashcardIssue() {
 
   assert.strictEqual(payload.chat_id, 2014973670);
   assert(typeof payload.html === 'string' && payload.html.length > 0, 'Must have HTML code');
-  assert(payload.caption, 'Must provide caption for unsupported clients and notifications');
-  assert.strictEqual(payload.parse_mode, 'HTML', 'Caption parse_mode must be HTML');
-  assert(!payload.caption.includes('&quot;'), 'Caption must not contain &quot;');
+  // Problem 1 Fix: caption must be omitted so plain-text question doesn't cover or clutter the widget
+  assert.strictEqual(payload.caption, undefined, 'Caption must be omitted so the widget appears cleanly without redundant text');
   assert(payload.is_shared === true, 'is_shared must be true');
   assert(payload.allow_queries === true, 'allow_queries must be true');
 
@@ -123,10 +127,46 @@ async function testUserReportedFlashcardIssue() {
   assert(markupBytes <= 350, `reply_markup must be compact (was ${markupBytes} bytes) to avoid 'reply markup is too long' error`);
   assert(!markupJson.includes('web_app'), 'reply_markup for native sendWidget should not contain heavy WebApp URLs');
 
-  console.log('  ✅ [PASS] sendWidget payload strictly satisfies Telegram Bot API specifications.\n');
+  console.log('  ✅ [PASS] sendWidget payload cleanly displays widget without duplicate text caption.\n');
 
-  // ─── TEST 4: isValidWebAppUrl bounds and safeEdit recovery ───
-  console.log('[Test 4] Testing isValidWebAppUrl bounds and safeEdit error recovery...');
+  // ─── TEST 4: Elimination of WebApp button in all flashcard keyboards ───
+  console.log('[Test 4] Testing elimination of WebApp button in all flashcard keyboards...');
+  const fallbackKb = cramReviewHandler.getFlashcardFallbackKeyboard(0, false);
+  const fallbackKbJson = JSON.stringify(fallbackKb);
+  assert(!fallbackKbJson.includes('web_app'), 'Fallback keyboard must NEVER contain web_app button');
+  assert(!fallbackKbJson.includes('Web App'), 'Fallback keyboard must not have Web App label');
+  console.log('  ✅ [PASS] WebApp button completely eliminated from flashcard mode.\n');
+
+  // ─── TEST 5: Subsequent card transitions via editMessageWidgetData ───
+  console.log('[Test 5] Testing in-place card updates via editMessageWidgetData...');
+  const widgetEditCalls = [];
+  const testCtx = {
+    from: { id: 2014973670 },
+    chat: { id: 2014973670, type: 'private' },
+    callbackQuery: {
+      data: 'cram_known_0',
+      message: { message_id: 777 },
+    },
+    telegram: {
+      callApi: async (method, data) => {
+        if (method === 'editMessageWidgetData') {
+          widgetEditCalls.push(data);
+          return true;
+        }
+        return { ok: true };
+      },
+    },
+    answerCbQuery: async () => true,
+  };
+
+  await cramReviewHandler.cbCramKnown(testCtx);
+  assert.strictEqual(widgetEditCalls.length, 1, 'cbCramKnown on widget session must update widget in-place via editMessageWidgetData');
+  assert.strictEqual(widgetEditCalls[0].message_id, 777);
+  assert(widgetEditCalls[0].public_data, 'Must send updated public_data');
+  console.log('  ✅ [PASS] In-place widget transition preserves widget format across subsequent cards.\n');
+
+  // ─── TEST 6: isValidWebAppUrl bounds and safeEdit recovery ───
+  console.log('[Test 6] Testing isValidWebAppUrl bounds and safeEdit error recovery...');
   const { isValidWebAppUrl } = require('../src/services/widgetService');
   const validUrl = 'https://example.com/widget?card=1';
   const oversizedUrl = 'https://example.com/widget?data=' + 'x'.repeat(2500);

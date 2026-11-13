@@ -274,10 +274,9 @@ function getWidgetInlineKeyboard(cardIdx) {
  *
  * @param {number|null} cardIdx - Current card index
  * @param {boolean} [isRevealed=false] - Whether the answer is currently revealed
- * @param {string} [webAppUrl=null] - Optional WebApp URL for 3D gesture widget
  * @returns {object} Telegraf inline keyboard markup
  */
-function getFlashcardFallbackKeyboard(cardIdx, isRevealed = false, webAppUrl = null) {
+function getFlashcardFallbackKeyboard(cardIdx, isRevealed = false) {
   const safeIdx = cardIdx !== null && cardIdx !== undefined ? cardIdx : 0;
 
   const row1 = [
@@ -296,15 +295,7 @@ function getFlashcardFallbackKeyboard(cardIdx, isRevealed = false, webAppUrl = n
     Markup.button.callback('🏁 Chiqish', 'cram_exit'),
   ];
 
-  const rows = [];
-  if (webAppUrl && isValidWebAppUrl(webAppUrl) && webAppUrl.length <= 2048) {
-    rows.push([
-      Markup.button.webApp('🎴 3D Kartochka (Web App)', webAppUrl),
-    ]);
-  }
-  rows.push(row1, row2, row3);
-
-  return Markup.inlineKeyboard(rows);
+  return Markup.inlineKeyboard([row1, row2, row3]);
 }
 
 /**
@@ -493,38 +484,7 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
   // 3. Build view data & widget message
   const viewData = buildFlashcardViewData(deck, subjectName, blockName);
   const fallbackText = formatFlashcardMessage(viewData, false);
-
-  // Generate signed WebApp widget URL using configured Northflank host
-  let webAppUrl = null;
-  try {
-    const rawHost = process.env.APP_URL ||
-      process.env.WEBAPP_URL ||
-      process.env.SERVER_URL ||
-      process.env.BASE_URL ||
-      process.env.NF_PUBLIC_URL ||
-      'https://p01--quiz-bot-nodejs--hqhlj8nqhyp9.code.run';
-    // Pass compact payload to avoid multi-KB URL bloating in reply_markup
-    const compactPayload = {
-      subjectName,
-      blockName,
-      question: viewData.question,
-      answer: viewData.answer,
-      total: viewData.total,
-      learnedCount: viewData.learnedCount,
-      percent: viewData.percent,
-      cardIdx: viewData.cardIdx,
-      title: viewData.title,
-    };
-    const widgetMsg = buildWidgetMessage('flashcard', compactPayload, fallbackText, null, {
-      userId,
-      baseUrl: rawHost,
-    });
-    if (widgetMsg?.url && isValidWebAppUrl(widgetMsg.url)) {
-      webAppUrl = widgetMsg.url;
-    }
-  } catch {}
-
-  const safeFallbackKeyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, webAppUrl);
+  const safeFallbackKeyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false);
 
   const chatId = ctx.chat?.id || ctx.from?.id;
   let widgetSent = false;
@@ -540,7 +500,7 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
     deck,
     isRevealed: false,
     blitzMode: !!options.blitzMode,
-    webAppUrl,
+    isWidget: false,
     messageId: ctx.callbackQuery?.message?.message_id,
     widgetId: null,
   };
@@ -557,11 +517,11 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
         cardIdx: viewData.cardIdx || 0,
       });
 
+      // Widget payload: caption is intentionally omitted so the widget appears cleanly
+      // without duplicate plain-text question text underneath
       const widgetPayload = {
         chat_id: chatId,
         html: inlineWidgetHtml,
-        caption: fallbackText.slice(0, 1024),
-        parse_mode: 'HTML',
         public_data: safePublicData,
         chat_data: safeChatData,
         is_shared: true,
@@ -579,6 +539,7 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
 
       if (widgetRes && widgetRes.message_id) {
         widgetSent = true;
+        session.isWidget = true;
         session.messageId = widgetRes.message_id;
         session.widgetId = widgetRes.widget?.id || null;
         cramSessions.set(userKey, session);
@@ -636,7 +597,7 @@ async function cbCramReveal(ctx) {
 
   const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
   const text = formatFlashcardMessage(viewData, true);
-  const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, true, session.webAppUrl);
+  const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, true);
   await safeEdit(ctx, text, { parse_mode: 'HTML', ...keyboard });
   await ctx.answerCbQuery().catch(() => {});
 }
@@ -657,7 +618,7 @@ async function cbCramHide(ctx) {
 
   const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
   const text = formatFlashcardMessage(viewData, false);
-  const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, session.webAppUrl);
+  const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false);
 
   await safeEdit(ctx, text, { parse_mode: 'HTML', ...keyboard });
   await ctx.answerCbQuery().catch(() => {});
@@ -687,9 +648,43 @@ async function cbCramKnown(ctx) {
 
   if (viewData.isFinished) {
     const finishKeyboard = getCramFinishedKeyboard(session.subjectKey, session.testId);
-    await safeEdit(ctx, text, { parse_mode: 'HTML', ...finishKeyboard });
+    if (session.isWidget) {
+      if (typeof ctx.deleteMessage === 'function') {
+        await ctx.deleteMessage().catch(() => {});
+      } else if (ctx.chat?.id && session.messageId && typeof ctx.telegram?.deleteMessage === 'function') {
+        await ctx.telegram.deleteMessage(ctx.chat.id, session.messageId).catch(() => {});
+      }
+      if (typeof ctx.reply === 'function') {
+        await ctx.reply(text, { parse_mode: 'HTML', ...finishKeyboard }).catch(() => {});
+      }
+    } else {
+      await safeEdit(ctx, text, { parse_mode: 'HTML', ...finishKeyboard });
+    }
+    return ctx.answerCbQuery('👉 Bilib oldim!').catch(() => {});
+  }
+
+  if (session.isWidget && session.messageId) {
+    const newPublicData = makeSafeWidgetPublicData(viewData, session.subjectName, session.blockName);
+    const widgetKeyboard = getWidgetInlineKeyboard(viewData.cardIdx);
+    let updated = false;
+    try {
+      await ctx.telegram.callApi('editMessageWidgetData', {
+        chat_id: session.chatId || ctx.chat?.id,
+        message_id: session.messageId,
+        public_data: newPublicData,
+        chat_data: JSON.stringify({ cardIdx: viewData.cardIdx }),
+        reply_markup: widgetKeyboard.reply_markup,
+      });
+      updated = true;
+    } catch (err) {
+      logger.debug('editMessageWidgetData failed from cbCramKnown:', err.message);
+    }
+    if (!updated) {
+      const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false);
+      await safeEdit(ctx, text, { parse_mode: 'HTML', ...keyboard });
+    }
   } else {
-    const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, session.webAppUrl);
+    const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false);
     await safeEdit(ctx, text, { parse_mode: 'HTML', ...keyboard });
   }
 
@@ -717,9 +712,49 @@ async function cbCramRepeat(ctx) {
 
   const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
   const text = formatFlashcardMessage(viewData, false);
-  const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false, session.webAppUrl);
 
-  await safeEdit(ctx, text, { parse_mode: 'HTML', ...keyboard });
+  if (viewData.isFinished) {
+    const finishKeyboard = getCramFinishedKeyboard(session.subjectKey, session.testId);
+    if (session.isWidget) {
+      if (typeof ctx.deleteMessage === 'function') {
+        await ctx.deleteMessage().catch(() => {});
+      } else if (ctx.chat?.id && session.messageId && typeof ctx.telegram?.deleteMessage === 'function') {
+        await ctx.telegram.deleteMessage(ctx.chat.id, session.messageId).catch(() => {});
+      }
+      if (typeof ctx.reply === 'function') {
+        await ctx.reply(text, { parse_mode: 'HTML', ...finishKeyboard });
+      }
+    } else {
+      await safeEdit(ctx, text, { parse_mode: 'HTML', ...finishKeyboard });
+    }
+    return ctx.answerCbQuery('👈 Kartochka oxiriga qaytarildi').catch(() => {});
+  }
+
+  if (session.isWidget && session.messageId) {
+    const newPublicData = makeSafeWidgetPublicData(viewData, session.subjectName, session.blockName);
+    const widgetKeyboard = getWidgetInlineKeyboard(viewData.cardIdx);
+    let updated = false;
+    try {
+      await ctx.telegram.callApi('editMessageWidgetData', {
+        chat_id: session.chatId || ctx.chat?.id,
+        message_id: session.messageId,
+        public_data: newPublicData,
+        chat_data: JSON.stringify({ cardIdx: viewData.cardIdx }),
+        reply_markup: widgetKeyboard.reply_markup,
+      });
+      updated = true;
+    } catch (err) {
+      logger.debug('editMessageWidgetData failed from cbCramRepeat:', err.message);
+    }
+    if (!updated) {
+      const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false);
+      await safeEdit(ctx, text, { parse_mode: 'HTML', ...keyboard });
+    }
+  } else {
+    const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false);
+    await safeEdit(ctx, text, { parse_mode: 'HTML', ...keyboard });
+  }
+
   await ctx.answerCbQuery('👈 Kartochka oxiriga qaytarildi').catch(() => {});
 }
 
@@ -768,7 +803,16 @@ async function cbCramExit(ctx) {
     ],
   ]);
 
-  await safeEdit(ctx, exitText, { parse_mode: 'HTML', ...exitKeyboard });
+  if (session?.isWidget) {
+    if (typeof ctx.deleteMessage === 'function') {
+      await ctx.deleteMessage().catch(() => {});
+    }
+    if (typeof ctx.reply === 'function') {
+      await ctx.reply(exitText, { parse_mode: 'HTML', ...exitKeyboard });
+    }
+  } else {
+    await safeEdit(ctx, exitText, { parse_mode: 'HTML', ...exitKeyboard });
+  }
   await ctx.answerCbQuery().catch(() => {});
 }
 
@@ -814,11 +858,13 @@ async function handleWidgetQuery(ctx, query) {
     const messageId = query.message_id;
 
     if (chatId && messageId) {
+      const widgetKeyboard = getWidgetInlineKeyboard(viewData.cardIdx);
       await ctx.telegram.callApi('editMessageWidgetData', {
         chat_id: chatId,
         message_id: messageId,
         public_data: newPublicDataStr,
         chat_data: JSON.stringify({ cardIdx: viewData.cardIdx }),
+        reply_markup: widgetKeyboard?.reply_markup,
       }).catch(err => logger.debug('editMessageWidgetData error:', err.message));
     }
   }

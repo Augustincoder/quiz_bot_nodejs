@@ -434,6 +434,12 @@ function flip() {
 function render(dataStr) {
   try {
     var d = typeof dataStr === 'string' ? JSON.parse(dataStr) : (dataStr || {});
+    if (d.isFinished) {
+      document.getElementById('card').innerHTML = '<div class="face front"><div class="tag" style="color:#81c784">TABRIKLAYMIZ! 🎉</div><div class="q-text" style="color:#a5d6a7;font-weight:700">Barcha kartochkalarni muvaffaqiyatli o‘zlashtirdingiz!</div></div>';
+      var actions = document.querySelector('.actions');
+      if (actions) actions.style.display = 'none';
+      return;
+    }
     if (d.q) document.getElementById('q-text').textContent = clean(d.q);
     if (d.a) document.getElementById('a-text').textContent = clean(d.a);
     if (d.title) document.getElementById('title').textContent = clean(d.title);
@@ -457,9 +463,18 @@ function sendAction(act) {
     W.sendQuery(act);
   }
 }
+var lastData = '';
+function checkData() {
+  var pd = W.publicData;
+  if (pd && pd !== lastData) {
+    lastData = pd;
+    render(pd);
+  }
+}
+setInterval(checkData, 400);
 if (W.onEvent) {
-  W.onEvent('publicDataChanged', function() { render(W.publicData); });
-  W.onEvent('chatDataChanged', function() { render(W.chatData); });
+  W.onEvent('publicDataChanged', function() { checkData(); });
+  W.onEvent('chatDataChanged', function() { checkData(); });
 }
 if (typeof W.ready === 'function') { W.ready(); }
 render(${initialData});
