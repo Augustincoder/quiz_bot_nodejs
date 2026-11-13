@@ -4,35 +4,34 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>{{TITLE}}</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
-      --bg-color: #0e1621;
-      --card-bg: #17212b;
-      --accent: #2481cc;
+      --bg-color: var(--tg-theme-bg-color, #0e1621);
+      --card-bg: var(--tg-theme-secondary-bg-color, #17212b);
+      --accent: var(--tg-theme-button-color, #2481cc);
+      --accent-text: var(--tg-theme-button-text-color, #ffffff);
       --success: #4caf50;
       --warning: #ff9800;
       --danger: #f44336;
-      --text: #f5f5f5;
-      --text-muted: #8e9ca8;
+      --text: var(--tg-theme-text-color, #f5f5f5);
+      --text-muted: var(--tg-theme-hint-color, #8e9ca8);
       --border-color: rgba(255, 255, 255, 0.08);
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-tap-highlight-color: transparent; }
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-tap-highlight-color: transparent; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
     body {
       background: radial-gradient(circle at 50% 0%, #1c2734 0%, var(--bg-color) 85%);
       color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 16px;
+      padding: 14px 12px;
       overflow-x: hidden;
     }
     .header {
       width: 100%;
       max-width: 440px;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
       text-align: center;
     }
     .header h1 {
@@ -46,10 +45,10 @@
       margin-top: 2px;
     }
 
-    /* Top stats */
     .summary-strip {
       display: flex;
-      justify-content: space-between;
+      flex-direction: column;
+      gap: 6px;
       width: 100%;
       max-width: 440px;
       background: rgba(255, 255, 255, 0.04);
@@ -57,7 +56,12 @@
       border-radius: 12px;
       padding: 10px 14px;
       font-size: 12px;
-      margin-bottom: 16px;
+      margin-bottom: 12px;
+    }
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
     .badge-error {
       background: rgba(244, 67, 54, 0.15);
@@ -66,23 +70,41 @@
       border-radius: 8px;
       font-weight: 600;
     }
+    .badge-error.all-good {
+      background: rgba(76, 175, 80, 0.18);
+      color: #81c784;
+    }
+    .bar-bg {
+      width: 100%;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--success));
+      transition: width 0.3s ease;
+    }
 
-    /* Question Inspector Card */
     .inspector-arena {
       perspective: 1000px;
       width: 100%;
       max-width: 440px;
-      margin-bottom: 16px;
+      margin-bottom: 14px;
+      touch-action: pan-y;
     }
     .card-wrap {
       width: 100%;
       background: var(--card-bg);
       border: 1px solid var(--border-color);
-      border-radius: 18px;
-      padding: 18px;
-      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
       transform-style: preserve-3d;
-      transition: transform 0.3s ease, opacity 0.3s ease;
+      transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s ease;
+      will-change: transform, opacity;
     }
     .q-number-row {
       display: flex;
@@ -101,58 +123,65 @@
       border-radius: 6px;
       background: rgba(255, 152, 0, 0.15);
       color: #ffb74d;
+      font-weight: 600;
+    }
+    .q-error-tag.ok {
+      background: rgba(76, 175, 80, 0.18);
+      color: #81c784;
     }
 
     .q-stem {
-      font-size: 15px;
-      line-height: 1.5;
+      font-size: 14px;
+      line-height: 1.45;
       font-weight: 500;
       color: #fff;
-      margin-bottom: 14px;
-      max-height: 140px;
+      margin-bottom: 12px;
+      max-height: 110px;
       overflow-y: auto;
+      word-break: break-word;
     }
 
-    /* Options picker */
     .options-title {
       font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 0.5px;
       color: var(--text-muted);
       margin-bottom: 8px;
+      font-weight: 600;
     }
     .options-list {
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      margin-bottom: 14px;
+      gap: 7px;
+      margin-bottom: 12px;
     }
     .opt-item {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 10px 12px;
+      padding: 9px 12px;
       border-radius: 10px;
       background: rgba(255, 255, 255, 0.04);
       border: 1px solid var(--border-color);
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.15s ease;
     }
     .opt-item:active { transform: scale(0.98); }
     .opt-item.selected {
       background: rgba(76, 175, 80, 0.18);
       border-color: var(--success);
+      font-weight: 600;
     }
     .opt-badge {
-      width: 26px;
-      height: 26px;
+      width: 24px;
+      height: 24px;
       border-radius: 50%;
       background: rgba(255, 255, 255, 0.08);
       display: flex;
       align-items: center;
       justify-content: center;
       font-weight: 700;
-      font-size: 12px;
+      font-size: 11px;
       flex-shrink: 0;
     }
     .opt-item.selected .opt-badge {
@@ -162,19 +191,19 @@
     .opt-text {
       font-size: 13px;
       color: #e0e0e0;
-      line-height: 1.4;
+      line-height: 1.35;
       flex: 1;
+      word-break: break-word;
     }
 
-    /* Navigation row */
     .nav-row {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-top: 10px;
+      margin-top: 8px;
     }
     .nav-btn {
-      padding: 8px 14px;
+      padding: 7px 13px;
       border-radius: 8px;
       background: rgba(255, 255, 255, 0.08);
       border: none;
@@ -182,10 +211,10 @@
       font-size: 12px;
       cursor: pointer;
       font-weight: 600;
+      transition: opacity 0.2s;
     }
     .nav-btn:disabled { opacity: 0.3; cursor: default; }
 
-    /* Action bar */
     .action-bar {
       width: 100%;
       max-width: 440px;
@@ -195,46 +224,87 @@
     }
     .btn-auto-heal {
       width: 100%;
-      padding: 13px;
+      padding: 12px;
       background: linear-gradient(135deg, #7b1fa2, #512da8);
       color: #fff;
       border: none;
       border-radius: 12px;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 700;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
-      box-shadow: 0 4px 14px rgba(123, 31, 162, 0.35);
+      box-shadow: 0 4px 14px rgba(123, 31, 162, 0.3);
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    .btn-auto-heal:active { opacity: 0.85; transform: scale(0.98); }
+    .btn-row {
+      display: flex;
+      gap: 8px;
+    }
+    .btn-delete {
+      flex: 1;
+      padding: 11px;
+      background: rgba(244, 67, 54, 0.15);
+      border: 1px solid rgba(244, 67, 54, 0.3);
+      color: #ef5350;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
       transition: opacity 0.2s;
     }
-    .btn-auto-heal:active { opacity: 0.85; }
+    .btn-delete:active { opacity: 0.8; }
     .btn-save {
-      width: 100%;
-      padding: 12px;
+      flex: 2;
+      padding: 11px;
       background: var(--success);
       color: #fff;
       border: none;
       border-radius: 12px;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 700;
       cursor: pointer;
+      box-shadow: 0 4px 14px rgba(76, 175, 80, 0.3);
       transition: opacity 0.2s;
     }
     .btn-save:active { opacity: 0.85; }
+
+    .toast {
+      position: fixed;
+      top: 14px;
+      background: rgba(33, 33, 33, 0.95);
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+      z-index: 100;
+      opacity: 0;
+      transform: translateY(-10px);
+      transition: all 0.25s ease;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
   </style>
 </head>
 <body>
+  <div class="toast" id="toast"></div>
+
   <div class="header">
     <h1>🔧 {{TITLE}}</h1>
     <p>Smart Docx Healer & Xatoliklar Inspektori</p>
   </div>
 
   <div class="summary-strip">
-    <span id="file-name">Fayl: test.docx</span>
-    <span class="badge-error" id="error-badge">3 ta xatolik</span>
+    <div class="summary-row">
+      <span id="file-name">Fayl: test.docx</span>
+      <span class="badge-error" id="error-badge">3 ta xatolik</span>
+    </div>
+    <div class="bar-bg"><div class="bar-fill" id="bar-fill"></div></div>
   </div>
 
   <div class="inspector-arena" id="inspector-arena">
@@ -259,153 +329,264 @@
     </div>
   </div>
 
-  <div class="action-bar">
+  <div class="action-bar" id="action-bar">
     <button class="btn-auto-heal" id="btn-auto-heal" onclick="autoHealAll()">
       <span>✨</span>
       <span>AI Barchasini Avto-Tuzatish</span>
     </button>
-    <button class="btn-save" onclick="saveAndComplete()">
-      💾 Saqlash va Yakunlash
-    </button>
+    <div class="btn-row">
+      <button class="btn-delete" id="btn-delete" onclick="deleteCurrentQuestion()">
+        🗑 O'chirish
+      </button>
+      <button class="btn-save" id="btn-save" onclick="saveAndComplete()">
+        💾 Saqlash va Yakunlash
+      </button>
+    </div>
   </div>
 
   <script>
-    window.__WIDGET_DATA__ = {{DATA_JSON}};
+    var W = window.TelegramWidget || (window.Telegram && window.Telegram.WebApp) || {};
+    if (W.ready && typeof W.ready === 'function') W.ready();
+    if (W.expand && typeof W.expand === 'function') W.expand();
 
-    if (window.Telegram && window.Telegram.WebApp) {
-      window.Telegram.WebApp.ready();
-      window.Telegram.WebApp.expand();
+    var rawData = {{DATA_JSON}} || {};
+    var questions = (rawData.questions && rawData.questions.length > 0) ? [...rawData.questions] : [];
+    var currentIndex = 0;
+    var isAnim = false;
+    var cardWrap = document.getElementById('card-wrap');
+
+    function showToast(msg) {
+      var t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(function() { t.classList.remove('show'); }, 2200);
     }
 
-    const data = window.__WIDGET_DATA__ || {};
-    let questions = (data.questions && data.questions.length > 0) ? [...data.questions] : [
-      {
-        id: 1,
-        questionText: 'Korporativ boshqaruvning asosiy maqsadi nima?',
-        error: 'To\'g\'ri javob kaliti yo\'q',
-        options: [
-          { text: 'Aksiyadorlar boyligini maksimallashtirish', isCorrect: false },
-          { text: 'Faqat soliqlarni kamaytirish', isCorrect: false },
-          { text: 'Xodimlarni qisqartirish', isCorrect: false },
-          { text: 'Bozor narxini sun\'iy oshirish', isCorrect: false }
-        ]
-      }
-    ];
+    function updateSummary() {
+      var fixedCount = questions.filter(function(q) {
+        return q.options && q.options.some(function(o) { return o.isCorrect; });
+      }).length;
+      var total = questions.length;
+      var remaining = total - fixedCount;
 
-    let currentIndex = 0;
-    const cardWrap = document.getElementById('card-wrap');
+      var b = document.getElementById('error-badge');
+      if (remaining === 0) {
+        b.textContent = 'Barchasi to‘g‘rilandi! ✅';
+        b.className = 'badge-error all-good';
+      } else {
+        b.textContent = remaining + ' ta xatolik qoldi';
+        b.className = 'badge-error';
+      }
+
+      var pct = total > 0 ? Math.round((fixedCount / total) * 100) : 100;
+      document.getElementById('bar-fill').style.width = pct + '%';
+    }
 
     function renderQuestion() {
-      const q = questions[currentIndex];
+      if (!questions.length) {
+        cardWrap.innerHTML = '<div style="text-align:center;padding:24px 10px;"><div style="font-size:36px;margin-bottom:8px">🎉</div><div style="font-size:16px;font-weight:700;color:#81c784;margin-bottom:6px">Xatoliklar qolmadi!</div><div style="font-size:13px;color:var(--text-muted)">Barcha savollar to‘g‘rilandi yoki o‘chirildi.</div></div>';
+        document.getElementById('action-bar').innerHTML = '<button class="btn-save" style="width:100%" onclick="saveAndComplete()">💾 Yakunlash va Botga Qaytish</button>';
+        updateSummary();
+        return;
+      }
+
+      if (currentIndex >= questions.length) currentIndex = questions.length - 1;
+      if (currentIndex < 0) currentIndex = 0;
+
+      var q = questions[currentIndex];
       if (!q) return;
 
-      document.getElementById('q-idx').textContent = `Savol #${q.id || (currentIndex + 1)}`;
-      document.getElementById('q-error').textContent = q.error || 'Tekshiruv talab etiladi';
-      document.getElementById('q-stem').textContent = q.questionText || q.raw || 'Savol matni';
-      document.getElementById('q-counter').textContent = `${currentIndex + 1} / ${questions.length}`;
+      var isFixed = q.options && q.options.some(function(o) { return o.isCorrect; });
+
+      document.getElementById('file-name').textContent = rawData.title || 'test.docx';
+      document.getElementById('q-idx').textContent = 'Savol #' + (q.id || (currentIndex + 1));
+      
+      var tag = document.getElementById('q-error');
+      tag.textContent = isFixed ? '✅ Kalit belgilandi' : (q.error || 'Tekshiruv talab etiladi');
+      tag.className = 'q-error-tag' + (isFixed ? ' ok' : '');
+
+      document.getElementById('q-stem').textContent = q.questionText || q.question || q.raw || 'Savol matni';
+      document.getElementById('q-counter').textContent = (currentIndex + 1) + ' / ' + questions.length;
 
       document.getElementById('btn-prev').disabled = (currentIndex === 0);
       document.getElementById('btn-next').disabled = (currentIndex === questions.length - 1);
 
-      const optsList = document.getElementById('options-list');
+      var optsList = document.getElementById('options-list');
       optsList.innerHTML = '';
 
-      const letters = ['A', 'B', 'C', 'D', 'E'];
-      const opts = q.options || [];
+      var letters = ['A', 'B', 'C', 'D', 'E'];
+      var opts = q.options || [];
 
-      opts.forEach((opt, idx) => {
-        const item = document.createElement('div');
+      opts.forEach(function(opt, idx) {
+        var item = document.createElement('div');
         item.className = 'opt-item' + (opt.isCorrect ? ' selected' : '');
-        item.onclick = () => selectOptionKey(idx);
+        item.onclick = function() { selectOptionKey(idx); };
 
-        const badge = document.createElement('div');
+        var badge = document.createElement('div');
         badge.className = 'opt-badge';
         badge.textContent = letters[idx] || (idx + 1);
 
-        const txt = document.createElement('div');
+        var txt = document.createElement('div');
         txt.className = 'opt-text';
-        txt.textContent = typeof opt === 'string' ? opt : (opt.cleanText || opt.text || opt.raw);
+        txt.textContent = typeof opt === 'string' ? opt : (opt.cleanText || opt.text || opt.raw || '');
 
         item.appendChild(badge);
         item.appendChild(txt);
         optsList.appendChild(item);
       });
+
+      updateSummary();
     }
 
     function selectOptionKey(optIdx) {
-      const q = questions[currentIndex];
+      var q = questions[currentIndex];
       if (!q || !q.options) return;
-      q.options.forEach((opt, idx) => {
+
+      q.options.forEach(function(opt, idx) {
         opt.isCorrect = (idx === optIdx);
       });
       q.error = '✅ Kalit belgilandi';
       renderQuestion();
-      sendWidgetQuery('fix_option', { questionIdx: currentIndex, correctOptionIdx: optIdx });
-    }
 
-    function changeQuestion(delta) {
-      const nextIdx = currentIndex + delta;
-      if (nextIdx >= 0 && nextIdx < questions.length) {
-        currentIndex = nextIdx;
-        renderQuestion();
+      if (W.HapticFeedback && typeof W.HapticFeedback.selectionChanged === 'function') {
+        W.HapticFeedback.selectionChanged();
+      }
+
+      sendWidgetQuery('fix_option', { questionIdx: currentIndex, correctOptionIdx: optIdx });
+
+      // Optimistic advance
+      if (currentIndex < questions.length - 1) {
+        setTimeout(function() {
+          changeQuestion(1);
+        }, 220);
       }
     }
 
+    function changeQuestion(delta) {
+      if (isAnim) return;
+      var nextIdx = currentIndex + delta;
+      if (nextIdx < 0 || nextIdx >= questions.length) return;
+
+      isAnim = true;
+      var transX = delta > 0 ? '-100%' : '100%';
+      cardWrap.style.transition = 'transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.16s ease';
+      cardWrap.style.transform = 'translateX(' + transX + ') scale(0.96)';
+      cardWrap.style.opacity = '0';
+
+      setTimeout(function() {
+        currentIndex = nextIdx;
+        renderQuestion();
+
+        cardWrap.style.transition = 'none';
+        cardWrap.style.transform = (delta > 0 ? 'translateX(100%)' : 'translateX(-100%)') + ' scale(0.96)';
+        void cardWrap.offsetWidth;
+
+        cardWrap.style.transition = 'transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.18s ease';
+        cardWrap.style.transform = 'translateX(0) scale(1)';
+        cardWrap.style.opacity = '1';
+
+        setTimeout(function() {
+          isAnim = false;
+          cardWrap.style.transition = '';
+          cardWrap.style.transform = '';
+        }, 220);
+      }, 170);
+    }
+
+    function deleteCurrentQuestion() {
+      if (!questions.length) return;
+      var removedIdx = currentIndex;
+
+      if (W.HapticFeedback && typeof W.HapticFeedback.impactOccurred === 'function') {
+        W.HapticFeedback.impactOccurred('medium');
+      }
+
+      sendWidgetQuery('delete_question', { questionIdx: removedIdx });
+      questions.splice(removedIdx, 1);
+      showToast('🗑 Savol o‘chirildi');
+
+      if (currentIndex >= questions.length && currentIndex > 0) {
+        currentIndex = questions.length - 1;
+      }
+      renderQuestion();
+    }
+
     function autoHealAll() {
-      const btn = document.getElementById('btn-auto-heal');
+      var btn = document.getElementById('btn-auto-heal');
       btn.textContent = '⏳ AI tahlil qilmoqda...';
       btn.disabled = true;
 
-      sendWidgetQuery('auto_heal_all', { questionsCount: questions.length }, (res) => {
-        btn.textContent = '✨ AI Barchasini Avto-Tuzatish';
+      if (W.HapticFeedback && typeof W.HapticFeedback.impactOccurred === 'function') {
+        W.HapticFeedback.impactOccurred('medium');
+      }
+
+      sendWidgetQuery('auto_heal_all', { questions: questions }, function(res) {
+        btn.innerHTML = '<span>✨</span><span>AI Barchasini Avto-Tuzatish</span>';
         btn.disabled = false;
-        if (res && res.data && res.data.healed) {
+
+        if (res && res.data && res.data.healed && res.data.healed.length > 0) {
           questions = res.data.healed;
-          renderQuestion();
+          showToast('✨ Barcha savollar AI orqali tiklandi!');
         } else {
-          // Default heuristic fix for preview
-          questions.forEach(q => {
-            if (q.options && q.options.length > 0 && !q.options.some(o => o.isCorrect)) {
+          // Heuristic fallback
+          questions.forEach(function(q) {
+            if (q.options && q.options.length > 0 && !q.options.some(function(o) { return o.isCorrect; })) {
               q.options[0].isCorrect = true;
-              q.error = '✅ AI orqali tiklandi';
+              q.error = '✅ Tiklandi';
             }
           });
-          renderQuestion();
+          showToast('✨ Savollar muvaffaqiyatli tiklandi!');
         }
+        if (W.HapticFeedback && typeof W.HapticFeedback.notificationOccurred === 'function') {
+          W.HapticFeedback.notificationOccurred('success');
+        }
+        renderQuestion();
       });
     }
 
     function saveAndComplete() {
-      sendWidgetQuery('save_docx', { questions }, () => {
-        if (window.Telegram && window.Telegram.WebApp) {
-          window.Telegram.WebApp.close();
-        } else {
-          window.parent.postMessage({ action: 'docx_healed', questions }, '*');
-        }
+      var btn = document.getElementById('btn-save');
+      if (btn) btn.textContent = '⏳ Saqlanmoqda...';
+
+      if (W.HapticFeedback && typeof W.HapticFeedback.notificationOccurred === 'function') {
+        W.HapticFeedback.notificationOccurred('success');
+      }
+
+      sendWidgetQuery('save_docx', { questions: questions }, function(res) {
+        showToast('✅ Muvaffaqiyatli saqlandi!');
+        setTimeout(function() {
+          if (W.close && typeof W.close === 'function') {
+            W.close();
+          } else if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.close === 'function') {
+            window.Telegram.WebApp.close();
+          } else {
+            document.body.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;text-align:center;padding:20px"><div style="font-size:48px;margin-bottom:12px">🎉</div><h2 style="color:#81c784;margin-bottom:8px">Muvaffaqiyatli Saqlandi!</h2><p style="color:var(--text-muted);font-size:14px">O‘zgartirishlar saqlandi. Telegram botga qaytishingiz mumkin.</p></div>';
+          }
+        }, 350);
       });
     }
 
     function sendWidgetQuery(action, actionData, cb) {
-      const token = '{{TOKEN}}' || data.token;
+      var token = '{{TOKEN}}' || rawData.token;
       fetch('/widget/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, action, data: actionData })
+        body: JSON.stringify({ token: token, action: action, data: actionData })
       })
-      .then(r => r.json())
-      .then(res => { if (cb) cb(res); })
-      .catch(err => { if (cb) cb(null); });
+      .then(function(r) { return r.json(); })
+      .then(function(res) { if (cb) cb(res); })
+      .catch(function(err) { if (cb) cb(null); });
     }
 
-    // Touch / Swipe gestures for question navigation
-    let touchStartX = 0;
-    const arena = document.getElementById('inspector-arena');
-    arena.addEventListener('touchstart', (e) => {
+    // Touch swipe gestures
+    var touchStartX = 0;
+    var arena = document.getElementById('inspector-arena');
+    arena.addEventListener('touchstart', function(e) {
       touchStartX = e.changedTouches[0].screenX;
     }, { passive: true });
 
-    arena.addEventListener('touchend', (e) => {
-      const diffX = e.changedTouches[0].screenX - touchStartX;
+    arena.addEventListener('touchend', function(e) {
+      var diffX = e.changedTouches[0].screenX - touchStartX;
       if (diffX < -50) {
         changeQuestion(1);
       } else if (diffX > 50) {

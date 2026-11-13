@@ -50,24 +50,203 @@ async function executeQueryAction(verifiedToken, action, data) {
         status: 'saved',
       };
 
-    case 'fix_option':
+    case 'fix_option': {
+      const questionIdx = typeof data?.questionIdx === 'number' ? data.questionIdx : -1;
+      const correctOptionIdx = typeof data?.correctOptionIdx === 'number' ? data.correctOptionIdx : -1;
+      const userId = verifiedToken.userId;
+
+      if (userId && questionIdx >= 0 && correctOptionIdx >= 0) {
+        try {
+          const redisConnection = require('../services/redisService');
+          const sessionKey = `tg_session:${userId}`;
+          const raw = await redisConnection.get(sessionKey);
+          if (raw) {
+            const session = JSON.parse(raw);
+            if (!session.data) session.data = {};
+            if (!session.data.fixedKeysDraft) session.data.fixedKeysDraft = {};
+            session.data.fixedKeysDraft[questionIdx] = correctOptionIdx;
+            await redisConnection.set(sessionKey, JSON.stringify(session), 'EX', 86400);
+          }
+        } catch (err) {
+          logger.debug('fix_option redis update skipped/offline:', err?.message);
+        }
+      }
+
       return {
-        questionIdx: data?.questionIdx,
-        correctOptionIdx: data?.correctOptionIdx,
+        questionIdx,
+        correctOptionIdx,
         status: 'updated',
       };
+    }
 
-    case 'auto_heal_all':
-      return {
-        status: 'auto_healed',
-        healed: verifiedToken.payload?.questions || [],
-      };
+    case 'auto_heal_all': {
+      const rawQuestions = (data?.questions && Array.isArray(data.questions) && data.questions.length > 0)
+        ? data.questions
+        : (verifiedToken.payload?.questions || []);
 
-    case 'save_docx':
+      try {
+        const aiDocxHealer = require('../services/aiDocxHealer');
+        const { extractQuestionCandidates } = require('../validators/testValidators');
+        const apiKey = process.env.GEMINI_API_KEY || null;
+
+        const rawTexts = rawQuestions.map(q => {
+          if (typeof q === 'string') return q;
+          return q.raw || q.questionText || q.question || '';
+        }).filter(Boolean);
+
+        const healResult = await aiDocxHealer.batchAutoHeal(rawTexts, apiKey);
+
+        const healedList = (healResult.healed || []).map((h, i) => ({
+          id: i + 1,
+          questionText: h.question,
+          raw: h.raw || h.question,
+          options: (h.options || []).map((opt, oi) => ({
+            text: typeof opt === 'string' ? opt : (opt.cleanText || opt.text || ''),
+            cleanText: typeof opt === 'string' ? opt : (opt.cleanText || opt.text || ''),
+            isCorrect: oi === h.correct_index,
+          })),
+          error: '✅ AI orqali tiklandi',
+        }));
+
+        const remainingList = (healResult.remainingInvalid || []).map((r, i) => {
+          const cand = extractQuestionCandidates(r);
+          return {
+            id: healedList.length + i + 1,
+            questionText: cand.questionText || r,
+            raw: r,
+            options: (cand.options || []).map(o => ({
+              text: o.cleanText || o.text,
+              cleanText: o.cleanText || o.text,
+              isCorrect: false,
+            })),
+            error: '⚠️ Qo‘lda tanlash talab etiladi',
+          };
+        });
+
+        const fullList = [...healedList, ...remainingList];
+        return {
+          status: 'auto_healed',
+          healedCount: healedList.length,
+          remainingCount: remainingList.length,
+          healed: fullList.length > 0 ? fullList : rawQuestions,
+        };
+      } catch (err) {
+        logger.warn('auto_heal_all error in widgetServer, using heuristic fallback:', err?.message);
+        const heuristic = rawQuestions.map((q, i) => {
+          const cand = typeof q === 'string'
+            ? require('../validators/testValidators').extractQuestionCandidates(q)
+            : q;
+          const opts = (cand.options || []).map((o, oi) => ({
+            text: typeof o === 'string' ? o : (o.cleanText || o.text || ''),
+            isCorrect: oi === 0,
+          }));
+          return {
+            id: i + 1,
+            questionText: cand.questionText || cand.raw || 'Savol',
+            raw: cand.raw || cand.questionText || '',
+            options: opts,
+            error: '✅ Tiklandi',
+          };
+        });
+        return {
+          status: 'auto_healed',
+          healedCount: heuristic.length,
+          remainingCount: 0,
+          healed: heuristic,
+        };
+      }
+    }
+
+    case 'save_docx': {
+      const questionsInput = data?.questions || verifiedToken.payload?.questions || [];
+      const userId = verifiedToken.userId;
+
+      const validQuestionsToAdd = [];
+      const remainingInvalid = [];
+
+      for (const q of questionsInput) {
+        const opts = (q.options || []).map(o => typeof o === 'string' ? o : (o.cleanText || o.text || ''));
+        const correctIdx = (q.options || []).findIndex(o => Boolean(o.isCorrect));
+
+        if (opts.length >= 2 && correctIdx >= 0) {
+          validQuestionsToAdd.push({
+            question: q.questionText || q.question || (typeof q.raw === 'string' ? q.raw.split('\n')[0] : 'Savol'),
+            options: opts,
+            correct_index: correctIdx,
+          });
+        } else {
+          remainingInvalid.push(typeof q.raw === 'string' ? q.raw : (q.questionText || 'Xato savol'));
+        }
+      }
+
+      let totalValid = validQuestionsToAdd.length;
+      if (userId) {
+        try {
+          const redisConnection = require('../services/redisService');
+          const sessionKey = `tg_session:${userId}`;
+          const rawSession = await redisConnection.get(sessionKey);
+          let session = rawSession ? JSON.parse(rawSession) : null;
+
+          if (!session) session = { data: {} };
+          if (!session.data) session.data = {};
+
+          const existingValid = session.data.questions || [];
+          const updatedQuestions = [...existingValid, ...validQuestionsToAdd];
+
+          session.data.questions = updatedQuestions;
+          session.data.invalidQs = remainingInvalid;
+          session.data.fixing_error_index = undefined;
+          if (session.data.fixedKeysDraft) delete session.data.fixedKeysDraft;
+
+          if (session.data.is_auto_docx) {
+            const chunks = [];
+            for (let i = 0; i < updatedQuestions.length; i += 25) {
+              chunks.push(updatedQuestions.slice(i, i + 25));
+            }
+            session.data.chunks = chunks;
+          }
+
+          totalValid = updatedQuestions.length;
+          await redisConnection.set(sessionKey, JSON.stringify(session), 'EX', 86400);
+        } catch (err) {
+          logger.warn('save_docx session update in redis failed/offline:', err?.message);
+        }
+      }
+
       return {
         status: 'completed',
-        savedCount: data?.questions?.length || 0,
+        savedCount: validQuestionsToAdd.length,
+        remainingCount: remainingInvalid.length,
+        totalValid,
       };
+    }
+
+    case 'delete_question': {
+      const qIdx = typeof data?.questionIdx === 'number' ? data.questionIdx : -1;
+      const userId = verifiedToken.userId;
+
+      if (qIdx >= 0 && userId) {
+        try {
+          const redisConnection = require('../services/redisService');
+          const sessionKey = `tg_session:${userId}`;
+          const raw = await redisConnection.get(sessionKey);
+          if (raw) {
+            const session = JSON.parse(raw);
+            if (session?.data?.invalidQs && session.data.invalidQs.length > qIdx) {
+              session.data.invalidQs.splice(qIdx, 1);
+              await redisConnection.set(sessionKey, JSON.stringify(session), 'EX', 86400);
+            }
+          }
+        } catch (err) {
+          logger.warn('delete_question redis update skipped/offline:', err?.message);
+        }
+      }
+
+      return {
+        status: 'deleted',
+        questionIdx: qIdx,
+      };
+    }
 
     default:
       return {

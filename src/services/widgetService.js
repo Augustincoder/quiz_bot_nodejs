@@ -580,6 +580,311 @@ render(${initialData});
 </script></body></html>`;
 }
 
+/**
+ * Builds self-contained, inline HTML for Telegram Bot API 10.4 `sendWidget` (Docx Healer).
+ * Conforms to QuickJS sandbox, Profile 1 CSS/JS, zero external requests, and <= 4096 bytes zlib compressed.
+ * Spec: https://core.telegram.org/bots/api#sendwidget and https://core.telegram.org/bots/widgets
+ *
+ * @param {object} viewData
+ * @returns {string} Fully standalone inline HTML
+ */
+function buildInlineDocxHealerWidgetHtml(viewData = {}) {
+  const rawQuestions = Array.isArray(viewData.questions) && viewData.questions.length > 0
+    ? viewData.questions
+    : [
+        {
+          id: 1,
+          questionText: 'Savol matni?',
+          raw: 'Savol matni?',
+          options: [
+            { text: 'Variant A', cleanText: 'Variant A', isCorrect: false },
+            { text: 'Variant B', cleanText: 'Variant B', isCorrect: false },
+          ],
+          error: "To'g'ri javob kaliti belgilanmagan",
+        },
+      ];
+
+  const initialData = JSON.stringify({
+    title: decodeHtmlEntities(viewData.fileName || viewData.title || 'Docx Healer'),
+    total: rawQuestions.length,
+    curIdx: typeof viewData.currentIndex === 'number' ? viewData.currentIndex : 0,
+    questions: rawQuestions.map((q, i) => {
+      const qText = q.questionText || q.question || q.raw || 'Savol';
+      return {
+        id: q.id || (i + 1),
+        q: decodeHtmlEntities(typeof qText === 'string' ? qText : 'Savol'),
+        err: decodeHtmlEntities(q.error || 'Tekshirish talab etiladi'),
+        opts: (q.options || []).map((o) => {
+          const t = typeof o === 'string' ? o : (o.cleanText || o.text || '');
+          const isOk = typeof o === 'object' ? Boolean(o.isCorrect) : false;
+          return {
+            t: decodeHtmlEntities(t),
+            ok: isOk,
+          };
+        }),
+      };
+    }),
+  }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><style>
+* { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+html, body { width: 100%; min-height: 300px; background: var(--tg-theme-bg-color, #17212b); color: var(--tg-theme-text-color, #fff); overflow-x: hidden; }
+.wrap { padding: 10px 12px; min-height: 300px; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; }
+.top-bar { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 700; color: var(--tg-theme-link-color, #64b5f6); }
+.badge { font-size: 10px; padding: 2px 8px; border-radius: 6px; background: rgba(255, 152, 0, 0.2); color: #ffb74d; font-weight: 600; }
+.badge.ok { background: rgba(76, 175, 80, 0.2); color: #81c784; }
+.bar-wrap { background: rgba(255,255,255,0.12); height: 4px; border-radius: 2px; margin: 5px 0 8px; overflow: hidden; }
+.bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #2481cc, #4caf50); transition: width 0.3s; }
+.card-box { flex: 1; display: flex; flex-direction: column; min-height: 195px; background: var(--tg-theme-secondary-bg-color, #233446); border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; padding: 12px; margin-bottom: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); position: relative; transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s; will-change: transform, opacity; }
+.q-title { font-size: 11px; text-transform: uppercase; color: var(--tg-theme-hint-color, #8e9ca8); margin-bottom: 4px; font-weight: 700; }
+.q-text { font-size: 14px; font-weight: 500; line-height: 1.4; max-height: 60px; overflow-y: auto; margin-bottom: 8px; word-break: break-word; color: #fff; }
+.opts { display: flex; flex-direction: column; gap: 6px; }
+.opt { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); cursor: pointer; transition: all 0.15s; font-size: 13px; line-height: 1.3; }
+.opt:active { transform: scale(0.98); }
+.opt.sel { background: rgba(76, 175, 80, 0.22); border-color: #4caf50; font-weight: 600; }
+.opt-l { width: 22px; height: 22px; border-radius: 50%; background: rgba(255,255,255,0.12); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+.opt.sel .opt-l { background: #4caf50; color: #fff; }
+.opt-t { flex: 1; word-break: break-word; color: #e0e0e0; }
+.actions { display: flex; gap: 6px; }
+.btn { flex: 1; padding: 9px 12px; border-radius: 10px; border: none; font-size: 12px; font-weight: 600; cursor: pointer; color: #fff; background: rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; gap: 4px; transition: opacity 0.2s; }
+.btn:active { opacity: 0.8; }
+.btn:disabled { opacity: 0.3; cursor: default; }
+.btn-heal { background: linear-gradient(135deg, #7b1fa2, #512da8); }
+.btn-save { background: #2e7d32; }
+</style></head><body>
+<div class="wrap">
+  <div class="top-bar"><span id="title">🔧 Docx Healer</span><span class="badge" id="badge">Xato #1</span></div>
+  <div class="bar-wrap"><div class="bar-fill" id="bar"></div></div>
+  <div class="card-box" id="box">
+    <div class="q-title" id="q-hdr">SAVOL (1 / 3)</div>
+    <div class="q-text" id="q-text">Savol matni yuklanmoqda...</div>
+    <div class="opts" id="opts"></div>
+  </div>
+  <div class="actions">
+    <button class="btn" id="btn-prev" onclick="nav(-1)">◀ Oldingi</button>
+    <button class="btn btn-heal" id="btn-heal" onclick="healAll()">✨ AI Tuzatish</button>
+    <button class="btn" id="btn-next" onclick="nav(1)">Keyingi ▶</button>
+  </div>
+</div>
+<script>
+var W = window.TelegramWidget || (window.Telegram && window.Telegram.WebApp) || {};
+if (W.ready && typeof W.ready === 'function') W.ready();
+if (W.setResizeAnchor && typeof W.setResizeAnchor === 'function') W.setResizeAnchor('top');
+
+var initialData = ${initialData};
+var qs = initialData.questions || [];
+var cur = initialData.curIdx || 0;
+var isAnim = false;
+var box = document.getElementById('box');
+
+function clean(s) {
+  if (!s) return '';
+  return String(s).replace(/&quot;/g, '"').replace(/&#34;/g, '"').replace(/&apos;/g, "'").replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+
+function updateProgress() {
+  if (!qs.length) return;
+  var fixed = qs.filter(function(q) {
+    return q.opts && q.opts.some(function(o) { return o.ok; });
+  }).length;
+  var pct = Math.round((fixed / qs.length) * 100);
+  document.getElementById('bar').style.width = pct + '%';
+}
+
+function render() {
+  if (!qs.length) {
+    box.innerHTML = '<div class="q-title" style="color:#81c784">TABRIKLAYMIZ! 🎉</div><div class="q-text" style="color:#a5d6a7;font-weight:700">Barcha xatoliklar muvaffaqiyatli to‘g‘rilandi!</div>';
+    var acts = document.querySelector('.actions');
+    if (acts) acts.style.display = 'none';
+    return;
+  }
+  var q = qs[cur];
+  if (!q) return;
+
+  var letters = ['A', 'B', 'C', 'D', 'E'];
+  var isFixed = q.opts && q.opts.some(function(o) { return o.ok; });
+
+  document.getElementById('title').textContent = initialData.title || '🔧 Docx Healer';
+  var badge = document.getElementById('badge');
+  badge.textContent = isFixed ? '✅ Kalit belgilandi' : clean(q.err || 'To‘g‘ri javob yo‘q');
+  badge.className = 'badge' + (isFixed ? ' ok' : '');
+
+  document.getElementById('q-hdr').textContent = 'SAVOL (' + (cur + 1) + ' / ' + qs.length + ')';
+  document.getElementById('q-text').textContent = clean(q.q || 'Savol matni');
+
+  document.getElementById('btn-prev').disabled = (cur === 0);
+  document.getElementById('btn-next').disabled = (cur === qs.length - 1);
+
+  var optsBox = document.getElementById('opts');
+  optsBox.innerHTML = '';
+
+  (q.opts || []).forEach(function(opt, idx) {
+    var div = document.createElement('div');
+    div.className = 'opt' + (opt.ok ? ' sel' : '');
+    div.onclick = function() { pickKey(idx); };
+
+    var l = document.createElement('div');
+    l.className = 'opt-l';
+    l.textContent = letters[idx] || (idx + 1);
+
+    var t = document.createElement('div');
+    t.className = 'opt-t';
+    t.textContent = clean(opt.t);
+
+    div.appendChild(l);
+    div.appendChild(t);
+    optsBox.appendChild(div);
+  });
+
+  updateProgress();
+}
+
+function pickKey(optIdx) {
+  if (isAnim) return;
+  var q = qs[cur];
+  if (!q || !q.opts) return;
+
+  q.opts.forEach(function(o, i) {
+    o.ok = (i === optIdx);
+  });
+  render();
+
+  if (W.HapticFeedback && typeof W.HapticFeedback.selectionChanged === 'function') {
+    W.HapticFeedback.selectionChanged();
+  }
+
+  var payload = { action: 'docx_pick', qIdx: cur, optIdx: optIdx };
+  if (typeof W.request === 'function') {
+    W.request(JSON.stringify(payload)).catch(function() {});
+  } else if (typeof W.sendQuery === 'function') {
+    W.sendQuery(JSON.stringify(payload));
+  }
+
+  // Optimistic transition to next question if not on last
+  if (cur < qs.length - 1) {
+    setTimeout(function() {
+      nav(1);
+    }, 240);
+  }
+}
+
+function nav(delta) {
+  if (isAnim) return;
+  var nextIdx = cur + delta;
+  if (nextIdx < 0 || nextIdx >= qs.length) return;
+
+  isAnim = true;
+  var transX = delta > 0 ? '-100%' : '100%';
+  box.style.transition = 'transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.16s ease';
+  box.style.transform = 'translateX(' + transX + ') scale(0.95)';
+  box.style.opacity = '0';
+
+  setTimeout(function() {
+    cur = nextIdx;
+    render();
+    box.style.transition = 'none';
+    box.style.transform = (delta > 0 ? 'translateX(100%)' : 'translateX(-100%)') + ' scale(0.95)';
+    void box.offsetWidth;
+
+    box.style.transition = 'transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.18s ease';
+    box.style.transform = 'translateX(0) scale(1)';
+    box.style.opacity = '1';
+
+    setTimeout(function() {
+      isAnim = false;
+      box.style.transition = '';
+      box.style.transform = '';
+    }, 230);
+  }, 180);
+}
+
+function healAll() {
+  var btn = document.getElementById('btn-heal');
+  btn.textContent = '⏳ AI...';
+  btn.disabled = true;
+
+  if (W.HapticFeedback && typeof W.HapticFeedback.impactOccurred === 'function') {
+    W.HapticFeedback.impactOccurred('medium');
+  }
+
+  var payload = { action: 'docx_heal_all' };
+  if (typeof W.request === 'function') {
+    W.request(JSON.stringify(payload)).then(function(res) {
+      btn.textContent = '✨ AI Tuzatish';
+      btn.disabled = false;
+      if (res && res.result) {
+        try {
+          var d = typeof res.result === 'string' ? JSON.parse(res.result) : res.result;
+          if (d.questions) qs = d.questions;
+        } catch(e) {}
+      } else {
+        heuristicHeal();
+      }
+      render();
+    }).catch(function() {
+      heuristicHeal();
+      btn.textContent = '✨ AI Tuzatish';
+      btn.disabled = false;
+      render();
+    });
+  } else {
+    heuristicHeal();
+    setTimeout(function() {
+      btn.textContent = '✨ AI Tuzatish';
+      btn.disabled = false;
+      render();
+    }, 300);
+  }
+}
+
+function heuristicHeal() {
+  qs.forEach(function(q) {
+    if (q.opts && q.opts.length > 0 && !q.opts.some(function(o) { return o.ok; })) {
+      q.opts[0].ok = true;
+    }
+  });
+}
+
+// Touch swipe gestures
+var startX = 0, startY = 0, curX = 0, isDragging = false;
+box.addEventListener('touchstart', function(e) {
+  if (isAnim) return;
+  var t = e.touches[0];
+  startX = t.clientX;
+  startY = t.clientY;
+  curX = 0;
+  isDragging = true;
+}, { passive: true });
+
+box.addEventListener('touchmove', function(e) {
+  if (!isDragging || isAnim) return;
+  var t = e.touches[0];
+  var dx = t.clientX - startX;
+  var dy = t.clientY - startY;
+  if (Math.abs(dx) > Math.abs(dy)) {
+    curX = dx;
+    box.style.transition = 'none';
+    box.style.transform = 'translateX(' + (dx * 0.7) + 'px)';
+  }
+}, { passive: true });
+
+box.addEventListener('touchend', function(e) {
+  if (!isDragging || isAnim) return;
+  isDragging = false;
+  if (curX < -50 && cur < qs.length - 1) {
+    nav(1);
+  } else if (curX > 50 && cur > 0) {
+    nav(-1);
+  } else {
+    box.style.transition = 'transform 0.2s ease';
+    box.style.transform = '';
+  }
+}, { passive: true });
+
+render();
+</script></body></html>`;
+}
+
 module.exports = {
   isValidWebAppUrl,
   createWidgetToken,
@@ -591,4 +896,5 @@ module.exports = {
   isWidgetEngineEnabled,
   compressWidgetHtml,
   buildInlineFlashcardWidgetHtml,
+  buildInlineDocxHealerWidgetHtml,
 };

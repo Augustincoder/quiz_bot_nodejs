@@ -2276,6 +2276,64 @@ async function cbOpenInspector(ctx) {
   });
 
   const userId = ctx.from?.id || 0;
+  const isWidgetEngine = featureFlagService.isFeatureEnabledSync('FEATURE_WIDGET_ENGINE', userId);
+  let widgetSent = false;
+
+  // Try native Telegram Bot API 10.4 sendWidget in private chats
+  if (isWidgetEngine && ctx.chat?.type === 'private' && ctx.telegram && typeof ctx.telegram.callApi === 'function') {
+    try {
+      const inlineDocxHtml = widgetService.buildInlineDocxHealerWidgetHtml({
+        questions: widgetQuestions,
+        currentIndex: 0,
+        total: widgetQuestions.length,
+        fileName: data.block_name || 'test.docx',
+      });
+      const safePublicData = JSON.stringify({
+        total: widgetQuestions.length,
+        curIdx: 0,
+        title: data.block_name || 'Docx Healer',
+      });
+      const safeChatData = JSON.stringify({
+        userId,
+        curIdx: 0,
+      });
+
+      const widgetPayload = {
+        chat_id: ctx.chat.id,
+        html: inlineDocxHtml,
+        public_data: safePublicData,
+        chat_data: safeChatData,
+        is_shared: true,
+        allow_queries: true,
+      };
+
+      const widgetKeyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback("✨ AI Avto-Tuzatish", "fix_auto_all"),
+          Markup.button.callback("💾 Yakunlash", "finish_test_creation"),
+        ],
+        [
+          Markup.button.callback("🔙 Menyuga qaytish", data.is_auto_docx ? "show_status_menu" : "back_to_dashboard"),
+        ],
+      ]);
+
+      if (widgetKeyboard?.reply_markup) {
+        widgetPayload.reply_markup = widgetKeyboard.reply_markup;
+      }
+
+      const widgetRes = await ctx.telegram.callApi('sendWidget', widgetPayload);
+      if (widgetRes && widgetRes.message_id) {
+        widgetSent = true;
+        if (ctx.callbackQuery?.message) {
+          await ctx.deleteMessage().catch(() => {});
+        }
+        return;
+      }
+    } catch (err) {
+      logger.warn('sendWidget for docxHealer failed, falling back to WebApp message:', err.message);
+    }
+  }
+
   const widgetMsg = widgetService.buildWidgetMessage(
     'docxHealer',
     {
@@ -2296,6 +2354,134 @@ async function cbOpenInspector(ctx) {
     parse_mode: "HTML",
     reply_markup: widgetMsg.reply_markup,
   });
+}
+
+/**
+ * Handles incoming `widget_query` for Docx Healer from Telegram Bot API 10.4.
+ *
+ * @param {object} ctx - Telegraf context
+ * @param {object} query - widget_query object
+ */
+async function handleDocxWidgetQuery(ctx, query) {
+  if (!query) return;
+
+  const userId = query.from?.id;
+  const rawAction = String(query.data || '').trim();
+
+  let action = 'docx_pick';
+  let qIdx = 0;
+  let optIdx = null;
+
+  try {
+    if (rawAction.startsWith('{')) {
+      const parsed = JSON.parse(rawAction);
+      action = parsed.action || parsed.a || 'docx_pick';
+      qIdx = typeof parsed.qIdx === 'number' ? parsed.qIdx : 0;
+      optIdx = typeof parsed.optIdx === 'number' ? parsed.optIdx : null;
+    } else {
+      action = rawAction;
+    }
+  } catch {}
+
+  const fakeCtx = { from: { id: userId }, chat: { id: query.chat?.id || userId }, session: ctx.session };
+  const data = await getData(fakeCtx);
+  const invalidQs = data.invalidQs || [];
+  const questions = data.questions || [];
+
+  let answerData = 'OK';
+
+  if (action === 'docx_pick' && optIdx !== null && qIdx >= 0 && qIdx < invalidQs.length) {
+    const badText = invalidQs[qIdx];
+    const cand = extractQuestionCandidates(badText);
+    const opts = (cand.options && cand.options.length >= 2)
+      ? cand.options.map(o => o.cleanText || o.text)
+      : [];
+
+    if (opts.length >= 2 && optIdx >= 0 && optIdx < opts.length) {
+      const resolved = {
+        question: cand.questionText || badText.split('\n')[0].replace(/^(\d+[\)\.]|№\s*\d+[\)\.]?)\s*/, '').trim(),
+        options: opts,
+        correct_index: optIdx,
+      };
+      questions.push(resolved);
+      invalidQs.splice(qIdx, 1);
+
+      if (data.is_auto_docx) {
+        const chunks = [];
+        for (let i = 0; i < questions.length; i += 25) {
+          chunks.push(questions.slice(i, i + 25));
+        }
+        await updateData(fakeCtx, { questions, invalidQs, chunks });
+      } else {
+        await updateData(fakeCtx, { questions, invalidQs });
+      }
+    }
+  } else if (action === 'docx_heal_all' && invalidQs.length > 0) {
+    const healRes = await aiDocxHealer.batchAutoHeal(invalidQs, process.env.GEMINI_API_KEY);
+    const healed = healRes.healed || [];
+    const remaining = healRes.remainingInvalid || [];
+
+    if (healed.length > 0) {
+      questions.push(...healed);
+      if (data.is_auto_docx) {
+        const chunks = [];
+        for (let i = 0; i < questions.length; i += 25) {
+          chunks.push(questions.slice(i, i + 25));
+        }
+        await updateData(fakeCtx, { questions, invalidQs: remaining, chunks });
+      } else {
+        await updateData(fakeCtx, { questions, invalidQs: remaining });
+      }
+    }
+  }
+
+  // Build updated widget data
+  const updatedData = await getData(fakeCtx);
+  const remainingInvalid = updatedData.invalidQs || [];
+  const widgetQuestions = remainingInvalid.map((raw, i) => {
+    const cand = extractQuestionCandidates(raw);
+    return {
+      id: i + 1,
+      q: cand.questionText || raw,
+      err: cand.options.length < 2 ? "Variantlar kam" : "To'g'ri javob belgilanmagan",
+      opts: (cand.options || []).map(o => ({
+        t: o.cleanText || o.text,
+        ok: Boolean(o.isCorrect),
+      })),
+    };
+  });
+
+  const nextCurIdx = Math.min(qIdx, Math.max(0, widgetQuestions.length - 1));
+  const newPublicData = JSON.stringify({
+    total: widgetQuestions.length,
+    curIdx: nextCurIdx,
+    questions: widgetQuestions,
+    isFinished: widgetQuestions.length === 0,
+  });
+  answerData = newPublicData;
+
+  const chatId = query.chat?.id || ctx.chat?.id;
+  const messageId = query.message_id;
+
+  if (chatId && messageId && ctx.telegram && typeof ctx.telegram.callApi === 'function') {
+    await ctx.telegram.callApi('editMessageWidgetData', {
+      chat_id: chatId,
+      message_id: messageId,
+      public_data: newPublicData,
+      chat_data: newPublicData,
+    }).catch(err => logger.debug('editMessageWidgetData error (docx):', err.message));
+  }
+
+  if (ctx.telegram && typeof ctx.telegram.callApi === 'function') {
+    await ctx.telegram.callApi('answerWidgetQuery', {
+      widget_query_id: query.id,
+      data: answerData,
+    }).catch(() => {});
+  }
+}
+
+async function handleDocxSharedWidgetQuery(ctx, query) {
+  return handleDocxWidgetQuery(ctx, query);
 }
 
 // Xatoni to'g'rilamasdan, umuman o'chirib yuborish
@@ -2410,5 +2596,7 @@ module.exports = {
   cbFixPickKey,
   cbFixAutoAll,
   cbOpenInspector,
+  handleDocxWidgetQuery,
+  handleDocxSharedWidgetQuery,
   _userTextChunks: userTextChunks,
 };

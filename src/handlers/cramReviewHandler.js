@@ -807,6 +807,16 @@ async function handleWidgetQuery(ctx, query) {
   const userKey = userId ? String(userId) : 'default';
   const session = cramSessions.get(userKey);
 
+  if (!session) {
+    const rawData = String(query.data || '');
+    if (rawData.includes('docx')) {
+      const testCreation = require('./testCreation');
+      if (typeof testCreation.handleDocxSharedWidgetQuery === 'function') {
+        return testCreation.handleDocxSharedWidgetQuery(ctx, query);
+      }
+    }
+  }
+
   let answerData = 'OK';
 
   if (session) {
@@ -864,6 +874,16 @@ async function handleSharedWidgetQuery(ctx, query) {
   const userId = query.from?.id;
   const userKey = userId ? String(userId) : 'default';
   const session = cramSessions.get(userKey);
+
+  if (!session) {
+    const rawData = String(query.data || '');
+    if (rawData.includes('docx')) {
+      const testCreation = require('./testCreation');
+      if (typeof testCreation.handleDocxSharedWidgetQuery === 'function') {
+        return testCreation.handleDocxSharedWidgetQuery(ctx, query);
+      }
+    }
+  }
 
   let answerData = 'OK';
 

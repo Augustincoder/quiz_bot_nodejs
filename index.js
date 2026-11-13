@@ -110,11 +110,25 @@ bot.use(rateLimiterMiddleware());
 
 // Telegram Bot API 10.4 HTML Widget Queries Middleware
 bot.use(async (ctx, next) => {
-  if (ctx.update?.widget_query && handlers.cram?.handleWidgetQuery) {
-    return handlers.cram.handleWidgetQuery(ctx, ctx.update.widget_query);
+  if (ctx.update?.widget_query) {
+    const q = ctx.update.widget_query;
+    const rawData = String(q.data || '');
+    if (rawData.includes('docx') && handlers.testCreation?.handleDocxWidgetQuery) {
+      return handlers.testCreation.handleDocxWidgetQuery(ctx, q);
+    }
+    if (handlers.cram?.handleWidgetQuery) {
+      return handlers.cram.handleWidgetQuery(ctx, q);
+    }
   }
-  if (ctx.update?.shared_widget_query && handlers.cram?.handleSharedWidgetQuery) {
-    return handlers.cram.handleSharedWidgetQuery(ctx, ctx.update.shared_widget_query);
+  if (ctx.update?.shared_widget_query) {
+    const sq = ctx.update.shared_widget_query;
+    const rawData = String(sq.data || '');
+    if (rawData.includes('docx') && handlers.testCreation?.handleDocxSharedWidgetQuery) {
+      return handlers.testCreation.handleDocxSharedWidgetQuery(ctx, sq);
+    }
+    if (handlers.cram?.handleSharedWidgetQuery) {
+      return handlers.cram.handleSharedWidgetQuery(ctx, sq);
+    }
   }
   return next();
 });
