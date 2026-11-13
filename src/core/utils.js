@@ -357,7 +357,11 @@ const safeEdit = async (ctx, text, extra = {}) => {
 
     let cleanExtra = extra;
     const errStr = ((err?.message || '') + ' ' + (err?.description || '')).toUpperCase();
-    if (errStr.includes('BUTTON_URL_INVALID')) {
+    if (
+      errStr.includes('BUTTON_URL_INVALID') ||
+      errStr.includes('REPLY_MARKUP_TOO_LONG') ||
+      errStr.includes('REPLY MARKUP IS TOO LONG')
+    ) {
       cleanExtra = stripWebAppButtons(extra);
       try {
         await ctx.editMessageText(safeText, { parse_mode: 'HTML', ...cleanExtra });
@@ -370,7 +374,11 @@ const safeEdit = async (ctx, text, extra = {}) => {
       return true;
     } catch (e2) {
       const e2Str = ((e2?.message || '') + ' ' + (e2?.description || '')).toUpperCase();
-      if (e2Str.includes('BUTTON_URL_INVALID')) {
+      if (
+        e2Str.includes('BUTTON_URL_INVALID') ||
+        e2Str.includes('REPLY_MARKUP_TOO_LONG') ||
+        e2Str.includes('REPLY MARKUP IS TOO LONG')
+      ) {
         cleanExtra = stripWebAppButtons(cleanExtra);
       }
       try {

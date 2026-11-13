@@ -115,7 +115,26 @@ async function testUserReportedFlashcardIssue() {
   assert(comp.valid, 'HTML must be valid within Telegram Bot API limits');
   assert(!payload.html.includes('&quot;Nominal'), 'HTML initialData must not have raw &quot; entities');
 
+  // Verify reply_markup compactness (< 400 bytes, no oversized URLs)
+  assert(payload.reply_markup, 'sendWidget payload must include reply_markup keyboard');
+  const markupJson = JSON.stringify(payload.reply_markup);
+  const markupBytes = Buffer.byteLength(markupJson, 'utf8');
+  console.log(`  reply_markup JSON size: ${markupBytes} bytes (Limit: 1024, Target: <= 300)`);
+  assert(markupBytes <= 350, `reply_markup must be compact (was ${markupBytes} bytes) to avoid 'reply markup is too long' error`);
+  assert(!markupJson.includes('web_app'), 'reply_markup for native sendWidget should not contain heavy WebApp URLs');
+
   console.log('  ✅ [PASS] sendWidget payload strictly satisfies Telegram Bot API specifications.\n');
+
+  // ─── TEST 4: isValidWebAppUrl bounds and safeEdit recovery ───
+  console.log('[Test 4] Testing isValidWebAppUrl bounds and safeEdit error recovery...');
+  const { isValidWebAppUrl } = require('../src/services/widgetService');
+  const validUrl = 'https://example.com/widget?card=1';
+  const oversizedUrl = 'https://example.com/widget?data=' + 'x'.repeat(2500);
+
+  assert.strictEqual(isValidWebAppUrl(validUrl), true, 'Valid HTTPS URL should return true');
+  assert.strictEqual(isValidWebAppUrl(oversizedUrl), false, 'URL > 2048 bytes must return false');
+  assert.strictEqual(isValidWebAppUrl('http://insecure.com'), false, 'Non-HTTPS URL must return false');
+  console.log('  ✅ [PASS] isValidWebAppUrl correctly enforces HTTPS and 2048-byte limit.\n');
 
   console.log('======================================================');
   console.log('🎉 ALL FLASHCARD & SENDWIDGET TESTS PASSED SUCCESSFULLY! 🚀');

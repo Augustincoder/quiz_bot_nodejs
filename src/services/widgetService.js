@@ -22,6 +22,7 @@ function isValidWebAppUrl(url) {
   if (!url || typeof url !== 'string') return false;
   const trimmed = url.trim();
   if (!trimmed.startsWith('https://')) return false;
+  if (trimmed.length > 2048 || Buffer.byteLength(trimmed, 'utf8') > 2048) return false;
   try {
     const parsed = new URL(trimmed);
     const host = parsed.hostname.toLowerCase();

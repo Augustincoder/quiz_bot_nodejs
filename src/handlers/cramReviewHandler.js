@@ -244,6 +244,28 @@ function buildFlashcardViewData(deck, subjectName = '', blockName = '') {
 }
 
 /**
+ * Builds compact, lightweight action keyboard for native sendWidget messages.
+ * Does not include heavy WebApp URLs because sendWidget already renders the native widget in-chat.
+ * Strictly guarantees reply_markup <= 256 bytes to prevent 'reply markup is too long'.
+ *
+ * @param {number|null} cardIdx
+ * @returns {object} Telegraf inline keyboard markup
+ */
+function getWidgetInlineKeyboard(cardIdx) {
+  const safeIdx = cardIdx !== null && cardIdx !== undefined ? cardIdx : 0;
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback('👈 Qiyin (Qaytarish)', safeCallbackData(`cram_repeat_${safeIdx}`)),
+      Markup.button.callback('👉 Bilib oldim', safeCallbackData(`cram_known_${safeIdx}`)),
+    ],
+    [
+      Markup.button.callback('⚡ 5-daqiqalik Blitz', safeCallbackData('cram_blitz')),
+      Markup.button.callback('🏁 Chiqish', 'cram_exit'),
+    ],
+  ]);
+}
+
+/**
  * Builds dual-mode fallback inline keyboard for Telegram clients.
  *
  * Row 1: [ 👁 Javobni ko'rish ] / [ 🙈 Yashirish ]
@@ -275,7 +297,7 @@ function getFlashcardFallbackKeyboard(cardIdx, isRevealed = false, webAppUrl = n
   ];
 
   const rows = [];
-  if (webAppUrl && isValidWebAppUrl(webAppUrl)) {
+  if (webAppUrl && isValidWebAppUrl(webAppUrl) && webAppUrl.length <= 2048) {
     rows.push([
       Markup.button.webApp('🎴 3D Kartochka (Web App)', webAppUrl),
     ]);
@@ -481,7 +503,19 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
       process.env.BASE_URL ||
       process.env.NF_PUBLIC_URL ||
       'https://p01--quiz-bot-nodejs--hqhlj8nqhyp9.code.run';
-    const widgetMsg = buildWidgetMessage('flashcard', viewData, fallbackText, null, {
+    // Pass compact payload to avoid multi-KB URL bloating in reply_markup
+    const compactPayload = {
+      subjectName,
+      blockName,
+      question: viewData.question,
+      answer: viewData.answer,
+      total: viewData.total,
+      learnedCount: viewData.learnedCount,
+      percent: viewData.percent,
+      cardIdx: viewData.cardIdx,
+      title: viewData.title,
+    };
+    const widgetMsg = buildWidgetMessage('flashcard', compactPayload, fallbackText, null, {
       userId,
       baseUrl: rawHost,
     });
@@ -533,8 +567,12 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
         is_shared: true,
         allow_queries: true,
       };
-      if (safeFallbackKeyboard?.reply_markup) {
-        widgetPayload.reply_markup = safeFallbackKeyboard.reply_markup;
+
+      // Native widget action keyboard (underneath the HTML widget bubble)
+      // Uses lightweight action buttons strictly <= 256 bytes to prevent 'reply markup is too long'
+      const widgetKeyboard = getWidgetInlineKeyboard(viewData.cardIdx);
+      if (widgetKeyboard?.reply_markup) {
+        widgetPayload.reply_markup = widgetKeyboard.reply_markup;
       }
 
       const widgetRes = await ctx.telegram.callApi('sendWidget', widgetPayload);
@@ -882,6 +920,8 @@ module.exports = {
   processCardAction,
   buildFlashcardViewData,
   getFlashcardFallbackKeyboard,
+  getWidgetInlineKeyboard,
+  makeSafeWidgetPublicData,
   getCramFinishedKeyboard,
   formatFlashcardMessage,
   launchFlashcardReview,
