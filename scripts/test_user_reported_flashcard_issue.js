@@ -118,6 +118,8 @@ async function testUserReportedFlashcardIssue() {
   console.log(`  HTML zlib: ${comp.compressedBytes} bytes (Limit: 4096)`);
   assert(comp.valid, 'HTML must be valid within Telegram Bot API limits');
   assert(!payload.html.includes('&quot;Nominal'), 'HTML initialData must not have raw &quot; entities');
+  assert(payload.html.includes('min-height: 290px'), 'HTML must declare min-height for full question visibility');
+  assert(payload.html.includes('overflow-y: auto'), 'q-text must have overflow-y auto to prevent question truncation');
 
   // Verify reply_markup compactness (< 400 bytes, no oversized URLs)
   assert(payload.reply_markup, 'sendWidget payload must include reply_markup keyboard');
@@ -163,6 +165,7 @@ async function testUserReportedFlashcardIssue() {
   assert.strictEqual(widgetEditCalls.length, 1, 'cbCramKnown on widget session must update widget in-place via editMessageWidgetData');
   assert.strictEqual(widgetEditCalls[0].message_id, 777);
   assert(widgetEditCalls[0].public_data, 'Must send updated public_data');
+  assert.strictEqual(widgetEditCalls[0].reply_markup, undefined, 'editMessageWidgetData must NOT include reply_markup parameter');
   console.log('  ✅ [PASS] In-place widget transition preserves widget format across subsequent cards.\n');
 
   // ─── TEST 6: isValidWebAppUrl bounds and safeEdit recovery ───

@@ -372,51 +372,54 @@ function buildInlineFlashcardWidgetHtml(viewData = {}) {
     cardIdx: viewData.cardIdx || 0,
   }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><style>
 * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-body { background: var(--tg-theme-bg-color, #17212b); color: var(--tg-theme-text-color, #fff); padding: 12px; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
-.top-bar { display: flex; justify-content: space-between; font-size: 12px; opacity: 0.85; margin-bottom: 4px; font-weight: 600; color: var(--tg-theme-hint-color, #90caf9); }
-.bar-wrap { background: rgba(255,255,255,0.12); height: 6px; border-radius: 3px; margin: 6px 0 10px; overflow: hidden; }
+html, body { width: 100%; height: auto; min-height: 290px; background: var(--tg-theme-bg-color, #17212b); color: var(--tg-theme-text-color, #fff); overflow-x: hidden; }
+.widget-wrap { padding: 10px 12px; min-height: 290px; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; }
+.top-bar { display: flex; justify-content: space-between; font-size: 12px; opacity: 0.85; margin-bottom: 2px; font-weight: 600; color: var(--tg-theme-hint-color, #90caf9); }
+.bar-wrap { background: rgba(255,255,255,0.12); height: 5px; border-radius: 3px; margin: 4px 0 8px; overflow: hidden; }
 .bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #2481cc, #4caf50); border-radius: 3px; transition: width 0.3s; }
-.card-box { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 200px; touch-action: pan-y; }
-.card { width: 100%; min-height: 200px; position: relative; border-radius: 14px; padding: 16px; cursor: pointer; border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 4px 16px rgba(0,0,0,0.25); display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; transition: transform 0.2s ease, background 0.2s ease; background: var(--tg-theme-secondary-bg-color, #233446); color: var(--tg-theme-text-color, #fff); }
+.card-box { flex: 1; display: flex; align-items: stretch; justify-content: center; min-height: 180px; margin-bottom: 8px; }
+.card { width: 100%; min-height: 180px; position: relative; border-radius: 12px; padding: 14px 12px; cursor: pointer; border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 4px 14px rgba(0,0,0,0.25); display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; transition: transform 0.2s ease, background 0.2s ease; background: var(--tg-theme-secondary-bg-color, #233446); color: var(--tg-theme-text-color, #fff); }
 .card:active { transform: scale(0.98); }
 .card.flipped { background: var(--tg-theme-bg-color, #182533); border-color: rgba(76, 175, 80, 0.45); }
 .face { width: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; }
 .face.back { display: none; }
 .card.flipped .face.front { display: none; }
 .card.flipped .face.back { display: flex; }
-.tag { font-size: 11px; font-weight: 700; letter-spacing: 0.8px; opacity: 0.85; margin-bottom: 8px; text-transform: uppercase; }
+.tag { font-size: 10px; font-weight: 700; letter-spacing: 0.8px; opacity: 0.85; margin-bottom: 6px; text-transform: uppercase; }
 .front .tag { color: var(--tg-theme-link-color, #64b5f6); }
 .back .tag { color: #81c784; }
-.q-text { font-size: 15px; font-weight: 500; line-height: 1.45; overflow: hidden; word-break: break-word; }
-.a-text { font-size: 16px; font-weight: 700; line-height: 1.45; color: #a5d6a7; overflow: hidden; word-break: break-word; }
-.flip-hint { margin-top: 10px; font-size: 11px; opacity: 0.6; }
-.actions { display: flex; gap: 8px; margin-top: 12px; }
-.btn { flex: 1; padding: 10px 14px; border-radius: 10px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; color: #fff; transition: opacity 0.2s; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.q-text { font-size: 15px; font-weight: 500; line-height: 1.45; word-break: break-word; max-height: 130px; overflow-y: auto; padding: 0 4px; }
+.a-text { font-size: 16px; font-weight: 700; line-height: 1.45; color: #a5d6a7; word-break: break-word; max-height: 130px; overflow-y: auto; padding: 0 4px; }
+.flip-hint { margin-top: 8px; font-size: 11px; opacity: 0.6; }
+.actions { display: flex; gap: 8px; margin-top: 4px; }
+.btn { flex: 1; padding: 9px 12px; border-radius: 9px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; color: #fff; transition: opacity 0.2s; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .btn:active { opacity: 0.7; }
 .btn-repeat { background: var(--tg-theme-destructive-text-color, #c62828); }
 .btn-known { background: #2e7d32; }
 </style></head><body>
-<div class="top-bar"><span id="title">⚡ 3D Flashcard</span><span id="prog">0 / 0</span></div>
-<div class="bar-wrap"><div class="bar-fill" id="bar"></div></div>
-<div class="card-box">
-  <div class="card" id="card" onclick="flip()">
-    <div class="face front">
-      <div class="tag">SAVOL (YODLASH)</div>
-      <div class="q-text" id="q-text">Savol yuklanmoqda...</div>
-      <div class="flip-hint">💡 Javobni ko'rish uchun bosing 👆</div>
-    </div>
-    <div class="face back">
-      <div class="tag">TO'G'RI JAVOB</div>
-      <div class="a-text" id="a-text">Javob yuklanmoqda...</div>
-      <div class="flip-hint">🔄 Qaytadan aylantirish uchun bosing</div>
+<div class="widget-wrap">
+  <div class="top-bar"><span id="title">⚡ 3D Flashcard</span><span id="prog">0 / 0</span></div>
+  <div class="bar-wrap"><div class="bar-fill" id="bar"></div></div>
+  <div class="card-box">
+    <div class="card" id="card" onclick="flip()">
+      <div class="face front">
+        <div class="tag">SAVOL (YODLASH)</div>
+        <div class="q-text" id="q-text">Savol yuklanmoqda...</div>
+        <div class="flip-hint">💡 Javobni ko'rish uchun bosing 👆</div>
+      </div>
+      <div class="face back">
+        <div class="tag">TO'G'RI JAVOB</div>
+        <div class="a-text" id="a-text">Javob yuklanmoqda...</div>
+        <div class="flip-hint">🔄 Qaytadan aylantirish uchun bosing</div>
+      </div>
     </div>
   </div>
-</div>
-<div class="actions">
-  <button class="btn btn-repeat" onclick="sendAction('repeat')">👈 Qaytarish</button>
-  <button class="btn btn-known" onclick="sendAction('known')">👉 Bilib oldim</button>
+  <div class="actions">
+    <button class="btn btn-repeat" onclick="sendAction('repeat')">👈 Qaytarish</button>
+    <button class="btn btn-known" onclick="sendAction('known')">👉 Bilib oldim</button>
+  </div>
 </div>
 <script>
 var W = window.TelegramWidget || window.Telegram && window.Telegram.WebApp || {};
@@ -465,16 +468,19 @@ function sendAction(act) {
 }
 var lastData = '';
 function checkData() {
-  var pd = W.publicData;
+  var pd = W.chatData || W.publicData;
   if (pd && pd !== lastData) {
     lastData = pd;
     render(pd);
   }
 }
-setInterval(checkData, 400);
+setInterval(checkData, 300);
 if (W.onEvent) {
-  W.onEvent('publicDataChanged', function() { checkData(); });
   W.onEvent('chatDataChanged', function() { checkData(); });
+  W.onEvent('publicDataChanged', function() { checkData(); });
+}
+if (W.setResizeAnchor) {
+  try { W.setResizeAnchor('top'); } catch(e) {}
 }
 if (typeof W.ready === 'function') { W.ready(); }
 render(${initialData});

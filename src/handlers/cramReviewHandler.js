@@ -665,23 +665,15 @@ async function cbCramKnown(ctx) {
 
   if (session.isWidget && session.messageId) {
     const newPublicData = makeSafeWidgetPublicData(viewData, session.subjectName, session.blockName);
-    const widgetKeyboard = getWidgetInlineKeyboard(viewData.cardIdx);
-    let updated = false;
     try {
       await ctx.telegram.callApi('editMessageWidgetData', {
         chat_id: session.chatId || ctx.chat?.id,
         message_id: session.messageId,
         public_data: newPublicData,
-        chat_data: JSON.stringify({ cardIdx: viewData.cardIdx }),
-        reply_markup: widgetKeyboard.reply_markup,
+        chat_data: newPublicData,
       });
-      updated = true;
     } catch (err) {
-      logger.debug('editMessageWidgetData failed from cbCramKnown:', err.message);
-    }
-    if (!updated) {
-      const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false);
-      await safeEdit(ctx, text, { parse_mode: 'HTML', ...keyboard });
+      logger.warn('editMessageWidgetData failed from cbCramKnown:', err.message);
     }
   } else {
     const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false);
@@ -732,23 +724,15 @@ async function cbCramRepeat(ctx) {
 
   if (session.isWidget && session.messageId) {
     const newPublicData = makeSafeWidgetPublicData(viewData, session.subjectName, session.blockName);
-    const widgetKeyboard = getWidgetInlineKeyboard(viewData.cardIdx);
-    let updated = false;
     try {
       await ctx.telegram.callApi('editMessageWidgetData', {
         chat_id: session.chatId || ctx.chat?.id,
         message_id: session.messageId,
         public_data: newPublicData,
-        chat_data: JSON.stringify({ cardIdx: viewData.cardIdx }),
-        reply_markup: widgetKeyboard.reply_markup,
+        chat_data: newPublicData,
       });
-      updated = true;
     } catch (err) {
-      logger.debug('editMessageWidgetData failed from cbCramRepeat:', err.message);
-    }
-    if (!updated) {
-      const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false);
-      await safeEdit(ctx, text, { parse_mode: 'HTML', ...keyboard });
+      logger.warn('editMessageWidgetData failed from cbCramRepeat:', err.message);
     }
   } else {
     const keyboard = getFlashcardFallbackKeyboard(viewData.cardIdx, false);
@@ -858,13 +842,11 @@ async function handleWidgetQuery(ctx, query) {
     const messageId = query.message_id;
 
     if (chatId && messageId) {
-      const widgetKeyboard = getWidgetInlineKeyboard(viewData.cardIdx);
       await ctx.telegram.callApi('editMessageWidgetData', {
         chat_id: chatId,
         message_id: messageId,
         public_data: newPublicDataStr,
-        chat_data: JSON.stringify({ cardIdx: viewData.cardIdx }),
-        reply_markup: widgetKeyboard?.reply_markup,
+        chat_data: newPublicDataStr,
       }).catch(err => logger.debug('editMessageWidgetData error:', err.message));
     }
   }
