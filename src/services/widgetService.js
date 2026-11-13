@@ -55,6 +55,21 @@ function isWidgetEngineEnabled(userId) {
   return featureFlagService.isFeatureEnabledSync('FEATURE_WIDGET_ENGINE', userId);
 }
 
+// Negative cache for Telegram Bot API 10.4 native in-chat widgets (sendWidget).
+// Telegram Bot API 10.4 HTML Bubbles are in restricted pilot; bots not yet whitelisted
+// by Telegram receive "400 Bad Request: INPUT_MEDIA_WIDGET_NOT_ALLOWED".
+// When encountered, we cache this status (default 1 hour) to eliminate redundant HTTP failures,
+// reduce network latency by 150-300ms, and protect the circuit breaker from false trips.
+let sendWidgetNotAllowedUntil = 0;
+
+function isNativeSendWidgetAllowed() {
+  return Date.now() > sendWidgetNotAllowedUntil;
+}
+
+function markSendWidgetNotAllowed(ttlMs = 60 * 60 * 1000) {
+  sendWidgetNotAllowedUntil = Date.now() + ttlMs;
+}
+
 // HMAC Secret Key derivation (uses WIDGET_SECRET, BOT_TOKEN, or secure fallback)
 const RAW_SECRET = process.env.WIDGET_SECRET || process.env.BOT_TOKEN || 'quiz_bot_widget_hmac_secret_v1';
 const SECRET_KEY = crypto.createHash('sha256').update(RAW_SECRET).digest();
@@ -925,4 +940,6 @@ module.exports = {
   compressWidgetHtml,
   buildInlineFlashcardWidgetHtml,
   buildInlineDocxHealerWidgetHtml,
+  isNativeSendWidgetAllowed,
+  markSendWidgetNotAllowed,
 };

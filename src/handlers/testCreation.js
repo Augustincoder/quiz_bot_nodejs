@@ -2280,7 +2280,8 @@ async function cbOpenInspector(ctx) {
   let widgetSent = false;
 
   // Try native Telegram Bot API 10.4 sendWidget in private chats
-  if (isWidgetEngine && ctx.chat?.type === 'private' && ctx.telegram && typeof ctx.telegram.callApi === 'function') {
+  const isSendWidgetAllowed = typeof widgetService.isNativeSendWidgetAllowed === 'function' ? widgetService.isNativeSendWidgetAllowed() : true;
+  if (isWidgetEngine && isSendWidgetAllowed && ctx.chat?.type === 'private' && ctx.telegram && typeof ctx.telegram.callApi === 'function') {
     try {
       const inlineDocxHtml = widgetService.buildInlineDocxHealerWidgetHtml({
         questions: widgetQuestions,
@@ -2331,11 +2332,19 @@ async function cbOpenInspector(ctx) {
         return;
       }
     } catch (err) {
-      try {
-        const featureFlagService = require('../services/featureFlagService');
-        featureFlagService.recordFeatureError('FEATURE_DOCX_SMART_HEALER', err);
-      } catch {}
-      logger.warn('sendWidget for docxHealer failed, falling back to WebApp message:', err.message);
+      const isNotAllowed = String(err?.message || '').includes('INPUT_MEDIA_WIDGET_NOT_ALLOWED');
+      if (isNotAllowed) {
+        if (typeof widgetService.markSendWidgetNotAllowed === 'function') {
+          widgetService.markSendWidgetNotAllowed(60 * 60 * 1000);
+        }
+        logger.info('Telegram Bot API: native sendWidget is not whitelisted for docxHealer. Seamlessly using WebApp inspector.');
+      } else {
+        try {
+          const featureFlagService = require('../services/featureFlagService');
+          featureFlagService.recordFeatureError('FEATURE_DOCX_SMART_HEALER', err);
+        } catch {}
+        logger.warn('sendWidget for docxHealer failed, falling back to WebApp message:', err.message);
+      }
     }
   }
 

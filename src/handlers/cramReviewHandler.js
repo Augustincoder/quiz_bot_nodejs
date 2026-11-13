@@ -535,8 +535,9 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
   };
   await saveCramSession(userKey, session);
 
-  const { isWidgetEngineEnabled } = require('../services/widgetService');
-  const canUseNativeWidget = isWidgetEngineEnabled(userId);
+  const { isWidgetEngineEnabled, isNativeSendWidgetAllowed, markSendWidgetNotAllowed } = require('../services/widgetService');
+  const isSendWidgetAllowed = typeof isNativeSendWidgetAllowed === 'function' ? isNativeSendWidgetAllowed() : true;
+  const canUseNativeWidget = isWidgetEngineEnabled(userId) && isSendWidgetAllowed;
 
   // 5. Telegram Bot API 10.4 HTML Widget launcher
   // Spec: https://core.telegram.org/bots/api#sendwidget
@@ -578,14 +579,22 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
         }
       }
     } catch (widgetErr) {
-      try {
-        const featureFlagService = require('../services/featureFlagService');
-        featureFlagService.recordFeatureError('FEATURE_WIDGET_ENGINE', widgetErr);
-      } catch {}
-      logger.warn('sendWidget failed, falling back to message text:', {
-        error: widgetErr.message,
-        code: widgetErr.code || widgetErr.error_code,
-      });
+      const isNotAllowed = String(widgetErr?.message || '').includes('INPUT_MEDIA_WIDGET_NOT_ALLOWED');
+      if (isNotAllowed) {
+        if (typeof markSendWidgetNotAllowed === 'function') {
+          markSendWidgetNotAllowed(60 * 60 * 1000);
+        }
+        logger.info('Telegram Bot API: native sendWidget is not whitelisted for this bot account. Seamlessly falling back to interactive message text.');
+      } else {
+        try {
+          const featureFlagService = require('../services/featureFlagService');
+          featureFlagService.recordFeatureError('FEATURE_WIDGET_ENGINE', widgetErr);
+        } catch {}
+        logger.warn('sendWidget failed, falling back to message text:', {
+          error: widgetErr.message,
+          code: widgetErr.code || widgetErr.error_code,
+        });
+      }
     }
   }
 
