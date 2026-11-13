@@ -60,13 +60,32 @@ const SECRET_KEY = crypto.createHash('sha256').update(RAW_SECRET).digest();
 const DEFAULT_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 /**
+ * Decodes HTML entities back to their raw characters to prevent double-escaping.
+ * @param {any} str
+ * @returns {string}
+ */
+function decodeHtmlEntities(str) {
+  if (str === undefined || str === null) return '';
+  return String(str)
+    .replace(/&quot;/g, '"')
+    .replace(/&#34;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&');
+}
+
+/**
  * Escapes HTML entities to prevent XSS.
  * @param {any} str
  * @returns {string}
  */
 function escapeHtml(str) {
   if (str === undefined || str === null) return '';
-  return String(str)
+  const decoded = decodeHtmlEntities(str);
+  return decoded
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -332,16 +351,21 @@ function compressWidgetHtml(html) {
 
 /**
  * Builds self-contained, inline HTML for Telegram Bot API 10.4 `sendWidget`.
- * Conforms to QuickJS sandbox, zero external requests, and <= 4096 bytes zlib compressed.
+ * Conforms to QuickJS sandbox, Profile 1 CSS/JS, zero external requests, and <= 4096 bytes zlib compressed.
+ * Spec: https://core.telegram.org/bots/api#sendwidget and https://core.telegram.org/bots/widgets
  *
  * @param {object} viewData
  * @returns {string} Fully standalone inline HTML
  */
 function buildInlineFlashcardWidgetHtml(viewData = {}) {
+  const qClean = decodeHtmlEntities(viewData.question || 'Savol...');
+  const aClean = decodeHtmlEntities(viewData.answer || 'Javob...');
+  const titleClean = decodeHtmlEntities(viewData.subjectName ? `${viewData.subjectName} • ${viewData.blockName || ''}` : '⚡ 3D Flashcard');
+
   const initialData = JSON.stringify({
-    title: viewData.subjectName ? `${viewData.subjectName} • ${viewData.blockName || ''}` : '⚡ 3D Flashcard',
-    q: viewData.question || 'Savol...',
-    a: viewData.answer || 'Javob...',
+    title: titleClean,
+    q: qClean,
+    a: aClean,
     total: viewData.total || 0,
     learned: viewData.learnedCount || 0,
     cardIdx: viewData.cardIdx || 0,
@@ -349,26 +373,28 @@ function buildInlineFlashcardWidgetHtml(viewData = {}) {
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-body { background: #17212b; color: #fff; padding: 12px; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
-.top-bar { display: flex; justify-content: space-between; font-size: 12px; opacity: 0.85; margin-bottom: 4px; font-weight: 600; }
+body { background: var(--tg-theme-bg-color, #17212b); color: var(--tg-theme-text-color, #fff); padding: 12px; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.top-bar { display: flex; justify-content: space-between; font-size: 12px; opacity: 0.85; margin-bottom: 4px; font-weight: 600; color: var(--tg-theme-hint-color, #90caf9); }
 .bar-wrap { background: rgba(255,255,255,0.12); height: 6px; border-radius: 3px; margin: 6px 0 10px; overflow: hidden; }
 .bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #2481cc, #4caf50); border-radius: 3px; transition: width 0.3s; }
-.card-box { flex: 1; perspective: 900px; display: flex; align-items: center; justify-content: center; min-height: 220px; }
-.card { width: 100%; height: 220px; position: relative; transform-style: preserve-3d; transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1); cursor: pointer; }
-.card.flipped { transform: rotateY(180deg); }
-.face { position: absolute; width: 100%; height: 100%; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: 14px; padding: 16px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
-.front { background: radial-gradient(circle at 50% 0%, #233446 0%, #17212b 100%); }
-.back { background: radial-gradient(circle at 50% 0%, #1a3c5a 0%, #0e1e2d 100%); transform: rotateY(180deg); border-color: rgba(76, 175, 80, 0.4); }
-.tag { font-size: 11px; font-weight: 700; letter-spacing: 0.8px; opacity: 0.75; margin-bottom: 8px; text-transform: uppercase; }
-.front .tag { color: #64b5f6; }
+.card-box { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 200px; touch-action: pan-y; }
+.card { width: 100%; min-height: 200px; position: relative; border-radius: 14px; padding: 16px; cursor: pointer; border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 4px 16px rgba(0,0,0,0.25); display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; transition: transform 0.2s ease, background 0.2s ease; background: var(--tg-theme-secondary-bg-color, #233446); color: var(--tg-theme-text-color, #fff); }
+.card:active { transform: scale(0.98); }
+.card.flipped { background: var(--tg-theme-bg-color, #182533); border-color: rgba(76, 175, 80, 0.45); }
+.face { width: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+.face.back { display: none; }
+.card.flipped .face.front { display: none; }
+.card.flipped .face.back { display: flex; }
+.tag { font-size: 11px; font-weight: 700; letter-spacing: 0.8px; opacity: 0.85; margin-bottom: 8px; text-transform: uppercase; }
+.front .tag { color: var(--tg-theme-link-color, #64b5f6); }
 .back .tag { color: #81c784; }
-.q-text { font-size: 15px; font-weight: 500; line-height: 1.45; max-height: 140px; overflow-y: auto; }
-.a-text { font-size: 16px; font-weight: 700; line-height: 1.45; color: #a5d6a7; max-height: 140px; overflow-y: auto; }
-.flip-hint { margin-top: 10px; font-size: 11px; opacity: 0.5; }
+.q-text { font-size: 15px; font-weight: 500; line-height: 1.45; overflow: hidden; word-break: break-word; }
+.a-text { font-size: 16px; font-weight: 700; line-height: 1.45; color: #a5d6a7; overflow: hidden; word-break: break-word; }
+.flip-hint { margin-top: 10px; font-size: 11px; opacity: 0.6; }
 .actions { display: flex; gap: 8px; margin-top: 12px; }
 .btn { flex: 1; padding: 10px 14px; border-radius: 10px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; color: #fff; transition: opacity 0.2s; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .btn:active { opacity: 0.7; }
-.btn-repeat { background: #c62828; }
+.btn-repeat { background: var(--tg-theme-destructive-text-color, #c62828); }
 .btn-known { background: #2e7d32; }
 </style></head><body>
 <div class="top-bar"><span id="title">⚡ 3D Flashcard</span><span id="prog">0 / 0</span></div>
@@ -392,15 +418,24 @@ body { background: #17212b; color: #fff; padding: 12px; height: 100%; display: f
   <button class="btn btn-known" onclick="sendAction('known')">👉 Bilib oldim</button>
 </div>
 <script>
-var W = window.TelegramWidget || {};
+var W = window.TelegramWidget || window.Telegram && window.Telegram.WebApp || {};
 var card = document.getElementById('card');
-function flip() { card.classList.toggle('flipped'); }
+function clean(s) {
+  if (!s) return '';
+  return String(s).replace(/&quot;/g, '"').replace(/&#34;/g, '"').replace(/&apos;/g, "'").replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+function flip() {
+  card.classList.toggle('flipped');
+  if (W.HapticFeedback && typeof W.HapticFeedback.selectionChanged === 'function') {
+    W.HapticFeedback.selectionChanged();
+  }
+}
 function render(dataStr) {
   try {
     var d = typeof dataStr === 'string' ? JSON.parse(dataStr) : (dataStr || {});
-    if (d.q) document.getElementById('q-text').textContent = d.q;
-    if (d.a) document.getElementById('a-text').textContent = d.a;
-    if (d.title) document.getElementById('title').textContent = d.title;
+    if (d.q) document.getElementById('q-text').textContent = clean(d.q);
+    if (d.a) document.getElementById('a-text').textContent = clean(d.a);
+    if (d.title) document.getElementById('title').textContent = clean(d.title);
     if (d.total) {
       var p = Math.round(((d.learned || 0) / d.total) * 100);
       document.getElementById('prog').textContent = (d.learned || 0) + ' / ' + d.total + ' (' + p + '%)';
@@ -410,12 +445,22 @@ function render(dataStr) {
   } catch(e) {}
 }
 function sendAction(act) {
-  if (W.sendQuery) { W.sendQuery(act); }
+  if (W.HapticFeedback && typeof W.HapticFeedback.impactOccurred === 'function') {
+    W.HapticFeedback.impactOccurred('medium');
+  }
+  if (typeof W.request === 'function') {
+    W.request(act).then(function(res) {
+      if (res && res.result) render(res.result);
+    }).catch(function() {});
+  } else if (typeof W.sendQuery === 'function') {
+    W.sendQuery(act);
+  }
 }
 if (W.onEvent) {
   W.onEvent('publicDataChanged', function() { render(W.publicData); });
   W.onEvent('chatDataChanged', function() { render(W.chatData); });
 }
+if (typeof W.ready === 'function') { W.ready(); }
 render(${initialData});
 </script></body></html>`;
 }
@@ -424,6 +469,7 @@ module.exports = {
   isValidWebAppUrl,
   createWidgetToken,
   verifyWidgetToken,
+  decodeHtmlEntities,
   escapeHtml,
   renderWidgetHtml,
   buildWidgetMessage,

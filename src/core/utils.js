@@ -206,7 +206,37 @@ const STATE_LABELS = {
 };
 
 // ─── Helpers ─────────────────────────────────────────────────
-const escapeHtml = (str) => String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const decodeHtmlEntities = (str) => {
+  if (str === undefined || str === null) return '';
+  return String(str)
+    .replace(/&quot;/g, '"')
+    .replace(/&#34;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&');
+};
+
+const escapeTelegramHtml = (str) => {
+  if (str === undefined || str === null) return '';
+  const decoded = decodeHtmlEntities(str);
+  return decoded
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+};
+
+const escapeHtml = (str) => {
+  if (str === undefined || str === null) return '';
+  const decoded = decodeHtmlEntities(str);
+  return decoded
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+};
 
 const sanitizeForTelegram = (str) => str ? String(str).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\uFFFD]/g, '') : '';
 
@@ -663,7 +693,7 @@ module.exports = {
   navKb, backToMainKb, progressBar, safePercent, grade, parseSuffix,
   safeAnswerCb, safeEdit, safeDelete, stripWebAppButtons,
   getUserName, parseDocxQuestions, parseTextQuestions,
-  escapeHtml, sanitizeForTelegram,
+  escapeHtml, escapeTelegramHtml, decodeHtmlEntities, sanitizeForTelegram,
   truncateText, splitMessage,
   downloadFile, isAdmin, adminGuard, buildUserContext,
   getTashkentDate, getTashkentDayOfWeek,

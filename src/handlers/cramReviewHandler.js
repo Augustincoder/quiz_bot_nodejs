@@ -1,7 +1,7 @@
 'use strict';
 
 const { Markup } = require('telegraf');
-const { TTLMap, escapeHtml, safeCallbackData, safeEdit } = require('../core/utils');
+const { TTLMap, escapeHtml, escapeTelegramHtml, decodeHtmlEntities, safeCallbackData, safeEdit } = require('../core/utils');
 const { buildWidgetMessage, isValidWebAppUrl, buildInlineFlashcardWidgetHtml } = require('../services/widgetService');
 const logger = require('../core/logger');
 
@@ -111,9 +111,11 @@ function initFlashcardDeck(questions = []) {
   }
 
   const cards = questions.map((q, idx) => {
-    const questionText = q.question || q.q || `Savol ${idx + 1}`;
-    const answerText = extractCorrectAnswerText(q);
-    const options = Array.isArray(q.options) ? q.options : [];
+    const rawQuestion = q.question || q.q || `Savol ${idx + 1}`;
+    const questionText = decodeHtmlEntities(rawQuestion);
+    const rawAnswer = extractCorrectAnswerText(q);
+    const answerText = decodeHtmlEntities(rawAnswer);
+    const options = (Array.isArray(q.options) ? q.options : []).map(opt => decodeHtmlEntities(opt));
     return {
       id: q.id !== undefined ? q.id : idx,
       question: questionText,
@@ -300,7 +302,43 @@ function getCramFinishedKeyboard(subjectKey, testId) {
 }
 
 /**
+ * Safely compacts and bounds widget state under Telegram Bot API 1024-byte limits.
+ * Spec: https://core.telegram.org/bots/api#sendwidget and https://core.telegram.org/bots/widgets
+ *
+ * @param {object} viewData
+ * @param {string} subjectName
+ * @param {string} blockName
+ * @returns {string} Compact UTF-8 JSON <= 1000 bytes
+ */
+function makeSafeWidgetPublicData(viewData, subjectName, blockName) {
+  const safeTitle = decodeHtmlEntities(`${subjectName || ''} • ${blockName || ''}`).slice(0, 80);
+  let safeQ = decodeHtmlEntities(viewData.question || '').slice(0, 320);
+  let safeA = decodeHtmlEntities(viewData.answer || '').slice(0, 220);
+
+  const state = {
+    title: safeTitle,
+    q: safeQ,
+    a: safeA,
+    total: viewData.total || 0,
+    learned: viewData.learnedCount || 0,
+    cardIdx: viewData.cardIdx || 0,
+    isFinished: !!viewData.isFinished,
+  };
+
+  let json = JSON.stringify(state);
+  while (Buffer.byteLength(json, 'utf8') > 1000 && (safeQ.length > 30 || safeA.length > 30)) {
+    if (safeQ.length > 80) safeQ = safeQ.slice(0, safeQ.length - 40);
+    else if (safeA.length > 40) safeA = safeA.slice(0, safeA.length - 20);
+    state.q = safeQ;
+    state.a = safeA;
+    json = JSON.stringify(state);
+  }
+  return json;
+}
+
+/**
  * Formats clean message text for Telegram chat fallback.
+ * Uses decodeHtmlEntities + escapeTelegramHtml to prevent double-escaping and preserve natural quotes.
  *
  * @param {object} viewData - Data from buildFlashcardViewData
  * @param {boolean} [isRevealed=false] - Whether answer should be visible
@@ -313,16 +351,16 @@ function formatFlashcardMessage(viewData, isRevealed = false) {
     return [
       `🎉 <b>Tabriklaymiz! Barcha kartochkalar o'rganildi!</b>`,
       ``,
-      `📚 <b>Fan:</b> ${escapeHtml(viewData.subjectName)}`,
-      `📘 <b>Blok:</b> ${escapeHtml(viewData.blockName)}`,
+      `📚 <b>Fan:</b> ${escapeTelegramHtml(viewData.subjectName)}`,
+      `📘 <b>Blok:</b> ${escapeTelegramHtml(viewData.blockName)}`,
       `📊 <b>Natija:</b> ${viewData.total}/${viewData.total} (100% o'zlashtirildi)`,
       ``,
       `<i>Flashcardlarni yana takrorlashingiz yoki yangi blokni tanlashingiz mumkin.</i>`,
     ].join('\n');
   }
 
-  const subj = escapeHtml(viewData.subjectName || 'Fan');
-  const blk = escapeHtml(viewData.blockName || 'Blok');
+  const subj = escapeTelegramHtml(viewData.subjectName || 'Fan');
+  const blk = escapeTelegramHtml(viewData.blockName || 'Blok');
   const progressText = makeProgressBar(viewData.percent);
 
   const lines = [
@@ -332,14 +370,14 @@ function formatFlashcardMessage(viewData, isRevealed = false) {
     `${progressText}`,
     ``,
     `❓ <b>Savol:</b>`,
-    `${escapeHtml(viewData.question)}`,
+    `${escapeTelegramHtml(viewData.question)}`,
   ];
 
   if (isRevealed) {
     lines.push(
       ``,
       `✅ <b>To'g'ri javob:</b>`,
-      `<b>${escapeHtml(viewData.answer)}</b>`,
+      `<b>${escapeTelegramHtml(viewData.answer)}</b>`,
     );
   } else {
     lines.push(
@@ -475,28 +513,23 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
   cramSessions.set(userKey, session);
 
   // 5. Telegram Bot API 10.4 HTML Widget launcher
-  // Native inline message widget with QuickJS sandbox, 3D CSS flip & zero-latency updates
+  // Spec: https://core.telegram.org/bots/api#sendwidget
   if (chatId && ctx.chat?.type === 'private' && ctx.telegram && typeof ctx.telegram.callApi === 'function') {
     try {
       const inlineWidgetHtml = buildInlineFlashcardWidgetHtml(viewData);
-      const publicData = {
-        title: `${subjectName} • ${blockName}`,
-        q: viewData.question,
-        a: viewData.answer,
-        total: viewData.total,
-        learned: viewData.learnedCount,
-        cardIdx: viewData.cardIdx,
-      };
-      const chatData = {
+      const safePublicData = makeSafeWidgetPublicData(viewData, subjectName, blockName);
+      const safeChatData = JSON.stringify({
         userId,
-        cardIdx: viewData.cardIdx,
-      };
+        cardIdx: viewData.cardIdx || 0,
+      });
 
       const widgetPayload = {
         chat_id: chatId,
         html: inlineWidgetHtml,
-        public_data: JSON.stringify(publicData),
-        chat_data: JSON.stringify(chatData),
+        caption: fallbackText.slice(0, 1024),
+        parse_mode: 'HTML',
+        public_data: safePublicData,
+        chat_data: safeChatData,
         is_shared: true,
         allow_queries: true,
       };
@@ -518,7 +551,10 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
         }
       }
     } catch (widgetErr) {
-      logger.debug('sendWidget unavailable or error (falling back to interactive message):', widgetErr.message);
+      logger.warn('sendWidget failed, falling back to message text:', {
+        error: widgetErr.message,
+        code: widgetErr.code || widgetErr.error_code,
+      });
     }
   }
 
@@ -707,56 +743,52 @@ async function cbCramExit(ctx) {
 async function handleWidgetQuery(ctx, query) {
   if (!query) return;
 
-  await ctx.telegram.callApi('answerWidgetQuery', {
-    widget_query_id: query.id,
-    data: 'OK',
-  }).catch(() => {});
-
   const userId = query.from?.id;
   const userKey = userId ? String(userId) : 'default';
   const session = cramSessions.get(userKey);
-  if (!session) return;
 
-  const rawAction = String(query.data || '').trim();
-  let action = 'known';
-  let targetIdx = null;
+  let answerData = 'OK';
 
-  try {
-    if (rawAction.startsWith('{')) {
-      const parsed = JSON.parse(rawAction);
-      action = parsed.a || parsed.action || 'known';
-      targetIdx = parsed.i !== undefined ? parsed.i : null;
-    } else {
-      action = rawAction === 'repeat' ? 'repeat' : 'known';
+  if (session) {
+    const rawAction = String(query.data || '').trim();
+    let action = 'known';
+    let targetIdx = null;
+
+    try {
+      if (rawAction.startsWith('{')) {
+        const parsed = JSON.parse(rawAction);
+        action = parsed.a || parsed.action || 'known';
+        targetIdx = parsed.i !== undefined ? parsed.i : null;
+      } else {
+        action = rawAction === 'repeat' ? 'repeat' : 'known';
+      }
+    } catch {}
+
+    processCardAction(session.deck, action, targetIdx);
+    session.isRevealed = false;
+    cramSessions.set(userKey, session);
+
+    const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
+    const newPublicDataStr = makeSafeWidgetPublicData(viewData, session.subjectName, session.blockName);
+    answerData = newPublicDataStr;
+
+    const chatId = query.chat?.id || ctx.chat?.id;
+    const messageId = query.message_id;
+
+    if (chatId && messageId) {
+      await ctx.telegram.callApi('editMessageWidgetData', {
+        chat_id: chatId,
+        message_id: messageId,
+        public_data: newPublicDataStr,
+        chat_data: JSON.stringify({ cardIdx: viewData.cardIdx }),
+      }).catch(err => logger.debug('editMessageWidgetData error:', err.message));
     }
-  } catch {}
-
-  processCardAction(session.deck, action, targetIdx);
-  session.isRevealed = false;
-  cramSessions.set(userKey, session);
-
-  const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
-  const newPublicData = {
-    title: `${session.subjectName} • ${session.blockName}`,
-    q: viewData.question,
-    a: viewData.answer,
-    total: viewData.total,
-    learned: viewData.learnedCount,
-    cardIdx: viewData.cardIdx,
-    isFinished: viewData.isFinished,
-  };
-
-  const chatId = query.chat?.id || ctx.chat?.id;
-  const messageId = query.message_id;
-
-  if (chatId && messageId) {
-    await ctx.telegram.callApi('editMessageWidgetData', {
-      chat_id: chatId,
-      message_id: messageId,
-      public_data: JSON.stringify(newPublicData),
-      chat_data: JSON.stringify({ cardIdx: viewData.cardIdx }),
-    }).catch(err => logger.debug('editMessageWidgetData error:', err.message));
   }
+
+  await ctx.telegram.callApi('answerWidgetQuery', {
+    widget_query_id: query.id,
+    data: answerData,
+  }).catch(() => {});
 }
 
 /**
@@ -769,52 +801,48 @@ async function handleWidgetQuery(ctx, query) {
 async function handleSharedWidgetQuery(ctx, query) {
   if (!query) return;
 
-  await ctx.telegram.callApi('answerWidgetQuery', {
-    widget_query_id: query.id,
-    data: 'OK',
-  }).catch(() => {});
-
   const userId = query.from?.id;
   const userKey = userId ? String(userId) : 'default';
   const session = cramSessions.get(userKey);
-  if (!session) return;
 
-  const rawAction = String(query.data || '').trim();
-  let action = 'known';
-  let targetIdx = null;
+  let answerData = 'OK';
 
-  try {
-    if (rawAction.startsWith('{')) {
-      const parsed = JSON.parse(rawAction);
-      action = parsed.a || parsed.action || 'known';
-      targetIdx = parsed.i !== undefined ? parsed.i : null;
-    } else {
-      action = rawAction === 'repeat' ? 'repeat' : 'known';
+  if (session) {
+    const rawAction = String(query.data || '').trim();
+    let action = 'known';
+    let targetIdx = null;
+
+    try {
+      if (rawAction.startsWith('{')) {
+        const parsed = JSON.parse(rawAction);
+        action = parsed.a || parsed.action || 'known';
+        targetIdx = parsed.i !== undefined ? parsed.i : null;
+      } else {
+        action = rawAction === 'repeat' ? 'repeat' : 'known';
+      }
+    } catch {}
+
+    processCardAction(session.deck, action, targetIdx);
+    session.isRevealed = false;
+    cramSessions.set(userKey, session);
+
+    const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
+    const newPublicDataStr = makeSafeWidgetPublicData(viewData, session.subjectName, session.blockName);
+    answerData = newPublicDataStr;
+
+    if (query.widget_id) {
+      await ctx.telegram.callApi('editSharedWidgetData', {
+        widget_id: query.widget_id,
+        public_data: newPublicDataStr,
+        cache_time: 5,
+      }).catch(err => logger.debug('editSharedWidgetData error:', err.message));
     }
-  } catch {}
-
-  processCardAction(session.deck, action, targetIdx);
-  session.isRevealed = false;
-  cramSessions.set(userKey, session);
-
-  const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
-  const newPublicData = {
-    title: `${session.subjectName} • ${session.blockName}`,
-    q: viewData.question,
-    a: viewData.answer,
-    total: viewData.total,
-    learned: viewData.learnedCount,
-    cardIdx: viewData.cardIdx,
-    isFinished: viewData.isFinished,
-  };
-
-  if (query.widget_id) {
-    await ctx.telegram.callApi('editSharedWidgetData', {
-      widget_id: query.widget_id,
-      public_data: JSON.stringify(newPublicData),
-      cache_time: 5,
-    }).catch(err => logger.debug('editSharedWidgetData error:', err.message));
   }
+
+  await ctx.telegram.callApi('answerWidgetQuery', {
+    widget_query_id: query.id,
+    data: answerData,
+  }).catch(() => {});
 }
 
 /**
