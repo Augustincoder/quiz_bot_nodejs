@@ -7,366 +7,510 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
-      --bg-color: #0e1621;
-      --card-bg: rgba(23, 33, 43, 0.85);
-      --accent: #2481cc;
-      --text: #f5f5f5;
-      --text-muted: #8e9ca8;
-      --gold: #f5ba31;
-      --silver: #a0aab4;
-      --bronze: #cd7f32;
-      --border-color: rgba(255, 255, 255, 0.08);
+      --bg-canvas: var(--tg-theme-bg-color, #07090E);
+      --surface-1: var(--tg-theme-secondary-bg-color, #0E131F);
+      --surface-2: #151C2C;
+      --text-primary: var(--tg-theme-text-color, #F8FAFC);
+      --text-secondary: var(--tg-theme-hint-color, #94A3B8);
+      --text-muted: #64748B;
+      --accent-blue: #3B82F6;
+      --accent-emerald: #10B981;
+      --border-hairline: rgba(255, 255, 255, 0.08);
+      --specular-top: inset 0 1px 0 0 rgba(255, 255, 255, 0.12);
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-tap-highlight-color: transparent; }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+    }
     body {
-      background: radial-gradient(circle at 50% 0%, #1a2838 0%, var(--bg-color) 80%);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background:
+        radial-gradient(ellipse 85% 45% at 50% -10%, rgba(245, 158, 11, 0.13), transparent),
+        var(--bg-canvas);
+      color: var(--text-primary);
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 16px;
+      padding: 18px 16px 24px;
       overflow-x: hidden;
+      font-variant-numeric: tabular-nums;
     }
     .header {
       width: 100%;
-      max-width: 440px;
+      max-width: 430px;
       text-align: center;
       margin-bottom: 16px;
     }
-    .header h1 {
-      font-size: 20px;
+    .eyebrow {
+      font-size: 10.5px;
       font-weight: 700;
-      color: #fff;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #FBBF24;
+      margin-bottom: 4px;
     }
-    .header p {
-      font-size: 13px;
-      color: var(--text-muted);
-      margin-top: 4px;
+    .header h1 {
+      font-size: 19px;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      color: var(--text-primary);
     }
 
-    /* Tab switcher */
+    /* Segmented Pill Switcher */
     .tabs {
       display: flex;
-      background: rgba(0, 0, 0, 0.3);
+      background: var(--surface-1);
+      border: 1px solid var(--border-hairline);
+      box-shadow: var(--specular-top);
       padding: 4px;
       border-radius: 12px;
       width: 100%;
-      max-width: 440px;
-      margin-bottom: 18px;
+      max-width: 430px;
+      margin-bottom: 16px;
     }
     .tab-btn {
       flex: 1;
-      padding: 8px 12px;
+      padding: 8.5px 12px;
       border: none;
       background: transparent;
-      color: var(--text-muted);
-      font-size: 13px;
+      color: var(--text-secondary);
+      font-size: 12.5px;
       font-weight: 600;
-      border-radius: 8px;
+      border-radius: 9px;
       cursor: pointer;
-      transition: all 0.25s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s ease;
     }
     .tab-btn.active {
-      background: var(--accent);
-      color: #fff;
-      box-shadow: 0 2px 8px rgba(36, 129, 204, 0.4);
+      background: var(--surface-2);
+      color: var(--text-primary);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
     }
 
-    /* Views */
     .view-container {
       width: 100%;
-      max-width: 440px;
+      max-width: 430px;
       position: relative;
     }
     .tab-content {
       display: none;
-      animation: fadeIn 0.3s ease forwards;
+      animation: fadeSlide 0.26s cubic-bezier(0.22, 1, 0.36, 1) forwards;
     }
     .tab-content.active {
       display: block;
     }
-
-    @keyframes fadeIn {
+    @keyframes fadeSlide {
       from { opacity: 0; transform: translateY(6px); }
       to { opacity: 1; transform: translateY(0); }
     }
 
-    /* 3D Podium Arena */
+    /* 3D Architectural Podium Stage */
     .podium-arena {
-      perspective: 1000px;
       width: 100%;
-      padding: 20px 8px;
+      padding: 28px 14px 20px;
       display: flex;
       justify-content: center;
       align-items: flex-end;
       gap: 12px;
-      min-height: 280px;
-      background: var(--card-bg);
-      border-radius: 20px;
-      border: 1px solid var(--border-color);
-      backdrop-filter: blur(12px);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
-      transform-style: preserve-3d;
+      min-height: 310px;
+      background: var(--surface-1);
+      border-radius: 22px;
+      border: 1px solid var(--border-hairline);
+      box-shadow: var(--specular-top), 0 24px 48px -12px rgba(0, 0, 0, 0.7);
     }
     .podium-column {
       display: flex;
       flex-direction: column;
       align-items: center;
       flex: 1;
-      max-width: 120px;
-      transform-style: preserve-3d;
-      transition: transform 0.4s ease;
+      max-width: 124px;
+      animation: columnRise 0.55s cubic-bezier(0.22, 1, 0.36, 1) backwards;
     }
+    .podium-column.silver { animation-delay: 0.06s; }
+    .podium-column.gold { animation-delay: 0.14s; }
+    .podium-column.bronze { animation-delay: 0.22s; }
+
+    @keyframes columnRise {
+      from { opacity: 0; transform: translateY(22px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
     .avatar-wrap {
-      width: 52px;
-      height: 52px;
+      width: 48px;
+      height: 48px;
       border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 24px;
-      background: rgba(255, 255, 255, 0.1);
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      background: var(--surface-2);
+      color: var(--text-primary);
       margin-bottom: 8px;
-      border: 2px solid transparent;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      border: 1.5px solid rgba(255, 255, 255, 0.14);
       position: relative;
     }
     .podium-column.gold .avatar-wrap {
-      border-color: var(--gold);
-      box-shadow: 0 0 16px rgba(245, 186, 49, 0.4);
-      width: 60px;
-      height: 60px;
-      font-size: 28px;
+      width: 58px;
+      height: 58px;
+      font-size: 18px;
+      border-color: #FBBF24;
+      background: radial-gradient(circle at 30% 30%, rgba(251, 191, 36, 0.28), rgba(15, 23, 42, 0.9));
+      box-shadow: 0 0 24px rgba(245, 158, 11, 0.35);
+      color: #FDE68A;
     }
-    .podium-column.silver .avatar-wrap { border-color: var(--silver); }
-    .podium-column.bronze .avatar-wrap { border-color: var(--bronze); }
+    .podium-column.silver .avatar-wrap {
+      border-color: #94A3B8;
+      color: #E2E8F0;
+    }
+    .podium-column.bronze .avatar-wrap {
+      border-color: #D97706;
+      color: #FED7AA;
+    }
+    .crown-badge {
+      position: absolute;
+      top: -12px;
+      color: #FBBF24;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
+    }
 
     .user-name {
-      font-size: 13px;
-      font-weight: 600;
+      font-size: 12.5px;
+      font-weight: 700;
       text-align: center;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
       width: 100%;
-      margin-bottom: 2px;
+      margin-bottom: 3px;
+      color: var(--text-primary);
     }
     .user-meta {
-      font-size: 11px;
+      font-size: 10.5px;
+      font-weight: 600;
       color: var(--text-muted);
-      margin-bottom: 8px;
+      margin-bottom: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
 
-    /* Pedestal block with 3D tilt */
+    /* Anodized Metallic Pedestals */
     .pedestal {
       width: 100%;
-      border-radius: 12px 12px 4px 4px;
+      border-radius: 14px 14px 6px 6px;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: flex-start;
-      padding-top: 12px;
+      justify-content: space-between;
+      padding: 14px 8px 12px;
       font-weight: 800;
-      color: #fff;
-      transform-style: preserve-3d;
-      box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+      color: var(--text-primary);
       position: relative;
-      overflow: hidden;
-    }
-    .pedestal::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0; height: 3px;
-      background: rgba(255, 255, 255, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
     }
     .podium-column.gold .pedestal {
-      height: 140px;
-      background: linear-gradient(180deg, #d49a1d 0%, #875d04 100%);
-      font-size: 32px;
+      height: 148px;
+      background: linear-gradient(180deg, rgba(245, 158, 11, 0.26) 0%, rgba(180, 83, 9, 0.08) 100%);
+      border-color: rgba(245, 158, 11, 0.35);
+      color: #FBBF24;
     }
     .podium-column.silver .pedestal {
-      height: 105px;
-      background: linear-gradient(180deg, #8a96a3 0%, #4f5a64 100%);
-      font-size: 26px;
+      height: 114px;
+      background: linear-gradient(180deg, rgba(148, 163, 184, 0.22) 0%, rgba(51, 65, 85, 0.08) 100%);
+      border-color: rgba(148, 163, 184, 0.28);
+      color: #CBD5E1;
     }
     .podium-column.bronze .pedestal {
-      height: 80px;
-      background: linear-gradient(180deg, #b06927 0%, #5e340d 100%);
-      font-size: 22px;
+      height: 92px;
+      background: linear-gradient(180deg, rgba(217, 119, 6, 0.22) 0%, rgba(120, 53, 15, 0.08) 100%);
+      border-color: rgba(217, 119, 6, 0.3);
+      color: #FDBA74;
+    }
+    .rank-num {
+      font-size: 24px;
+      letter-spacing: -0.03em;
+      line-height: 1;
     }
     .pedestal-score {
-      font-size: 12px;
-      font-weight: 500;
-      margin-top: 4px;
-      opacity: 0.9;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-primary);
+      background: rgba(7, 9, 14, 0.55);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 3px 9px;
+      border-radius: 99px;
     }
 
-    /* Personal Analysis & Radar */
+    /* Telemetry Analysis Card */
     .analysis-card {
-      background: var(--card-bg);
-      border-radius: 20px;
-      border: 1px solid var(--border-color);
+      background: var(--surface-1);
+      border-radius: 22px;
+      border: 1px solid var(--border-hairline);
+      box-shadow: var(--specular-top), 0 24px 48px -12px rgba(0, 0, 0, 0.7);
       padding: 20px;
-      backdrop-filter: blur(12px);
     }
+    .radar-hero {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding-bottom: 16px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border-hairline);
+    }
+    .ring-box {
+      position: relative;
+      width: 74px;
+      height: 74px;
+      flex-shrink: 0;
+    }
+    .ring-svg {
+      width: 74px;
+      height: 74px;
+      transform: rotate(-90deg);
+    }
+    .ring-bg {
+      fill: none;
+      stroke: rgba(255, 255, 255, 0.07);
+      stroke-width: 6.5;
+    }
+    .ring-progress {
+      fill: none;
+      stroke: #10B981;
+      stroke-width: 6.5;
+      stroke-linecap: round;
+      stroke-dasharray: 188.5;
+      stroke-dashoffset: 188.5;
+      transition: stroke-dashoffset 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .ring-label {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--text-primary);
+    }
+    .hero-meta h3 {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+      letter-spacing: -0.015em;
+    }
+    .hero-meta p {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+    }
+
     .stat-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-bottom: 16px;
+      gap: 10px;
+      margin-bottom: 14px;
     }
     .stat-box {
-      background: rgba(255, 255, 255, 0.04);
+      background: var(--surface-2);
       border-radius: 12px;
-      padding: 12px;
-      text-align: center;
-      border: 1px solid rgba(255, 255, 255, 0.04);
-    }
-    .stat-val {
-      font-size: 20px;
-      font-weight: 700;
-      color: #64b5f6;
+      padding: 11px 12px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
     }
     .stat-lbl {
-      font-size: 11px;
+      font-size: 10.5px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
       color: var(--text-muted);
-      margin-top: 4px;
+    }
+    .stat-val {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-top: 3px;
     }
     .coach-box {
-      background: rgba(36, 129, 204, 0.12);
-      border-left: 3px solid var(--accent);
-      border-radius: 8px;
-      padding: 12px;
-      font-size: 13px;
-      line-height: 1.5;
-      color: #e0e0e0;
+      background: rgba(59, 130, 246, 0.08);
+      border: 1px solid rgba(59, 130, 246, 0.22);
+      border-radius: 12px;
+      padding: 13px 14px;
+      font-size: 12.5px;
+      line-height: 1.55;
+      color: #E2E8F0;
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+    .coach-icon {
+      color: #60A5FA;
+      flex-shrink: 0;
+      margin-top: 2px;
     }
 
     .footer-actions {
-      margin-top: 18px;
+      margin-top: 16px;
       width: 100%;
-      max-width: 440px;
-      display: flex;
-      gap: 10px;
+      max-width: 430px;
     }
     .btn {
-      flex: 1;
-      padding: 12px;
-      background: var(--accent);
-      border: none;
-      color: #fff;
+      width: 100%;
+      padding: 13px;
+      background: var(--surface-1);
+      border: 1px solid var(--border-hairline);
+      box-shadow: var(--specular-top);
+      color: var(--text-primary);
       font-weight: 600;
-      font-size: 14px;
-      border-radius: 12px;
+      font-size: 13.5px;
+      border-radius: 14px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
-      transition: opacity 0.2s;
+      gap: 8px;
+      transition: transform 0.12s, background 0.15s;
     }
-    .btn:active { opacity: 0.8; }
+    .btn:active { transform: scale(0.98); background: var(--surface-2); }
   </style>
 </head>
 <body>
   <div class="header">
-    <h1 id="widget-title">🏆 {{TITLE}}</h1>
-    <p id="widget-sub">Guruh viktorinasi natijalari</p>
+    <div class="eyebrow">MUSOBAQA NATIJALARI</div>
+    <h1 id="widget-title">{{TITLE}}</h1>
   </div>
 
   <div class="tabs">
-    <button class="tab-btn active" id="tab-podium-btn" onclick="switchTab('podium')">🥇 Top-3 Shoxsupa</button>
-    <button class="tab-btn" id="tab-analysis-btn" onclick="switchTab('analysis')">📊 Mening Tahlilim</button>
+    <button class="tab-btn active" id="tab-podium-btn" onclick="switchTab('podium')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
+      <span>Top-3 Shohsupa</span>
+    </button>
+    <button class="tab-btn" id="tab-analysis-btn" onclick="switchTab('analysis')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+      <span>Shaxsiy Tahlil</span>
+    </button>
   </div>
 
   <div class="view-container" id="swipe-area">
-    <!-- View 1: Podium -->
+    <!-- View 1: 3D Podium -->
     <div class="tab-content active" id="view-podium">
       <div class="podium-arena" id="podium-arena">
         <!-- 2nd Place -->
         <div class="podium-column silver" id="col-silver">
-          <div class="avatar-wrap">🥈</div>
-          <div class="user-name" id="silver-name">2-o'rin</div>
-          <div class="user-meta" id="silver-time">--:--</div>
+          <div class="avatar-wrap" id="silver-avatar">2</div>
+          <div class="user-name" id="silver-name">—</div>
+          <div class="user-meta" id="silver-time">--</div>
           <div class="pedestal">
-            <span>2</span>
-            <span class="pedestal-score" id="silver-score">- ball</span>
+            <span class="rank-num">2</span>
+            <span class="pedestal-score" id="silver-score">0 ball</span>
           </div>
         </div>
 
-        <!-- 1st Place (Center, Tallest) -->
+        <!-- 1st Place -->
         <div class="podium-column gold" id="col-gold">
-          <div class="avatar-wrap">👑</div>
-          <div class="user-name" id="gold-name">1-o'rin</div>
-          <div class="user-meta" id="gold-time">--:--</div>
+          <div class="avatar-wrap" id="gold-avatar">
+            <svg class="crown-badge" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg>
+            <span id="gold-init">1</span>
+          </div>
+          <div class="user-name" id="gold-name">—</div>
+          <div class="user-meta" id="gold-time">--</div>
           <div class="pedestal">
-            <span>1</span>
-            <span class="pedestal-score" id="gold-score">- ball</span>
+            <span class="rank-num">1</span>
+            <span class="pedestal-score" id="gold-score">0 ball</span>
           </div>
         </div>
 
         <!-- 3rd Place -->
         <div class="podium-column bronze" id="col-bronze">
-          <div class="avatar-wrap">🥉</div>
-          <div class="user-name" id="bronze-name">3-o'rin</div>
-          <div class="user-meta" id="bronze-time">--:--</div>
+          <div class="avatar-wrap" id="bronze-avatar">3</div>
+          <div class="user-name" id="bronze-name">—</div>
+          <div class="user-meta" id="bronze-time">--</div>
           <div class="pedestal">
-            <span>3</span>
-            <span class="pedestal-score" id="bronze-score">- ball</span>
+            <span class="rank-num">3</span>
+            <span class="pedestal-score" id="bronze-score">0 ball</span>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- View 2: Personal Analysis -->
+    <!-- View 2: Personal Telemetry -->
     <div class="tab-content" id="view-analysis">
       <div class="analysis-card">
-        <div class="stat-grid">
-          <div class="stat-box">
-            <div class="stat-val" id="my-rank">-</div>
-            <div class="stat-lbl">Mening o'rnim</div>
+        <div class="radar-hero">
+          <div class="ring-box">
+            <svg class="ring-svg" viewBox="0 0 72 72">
+              <circle class="ring-bg" cx="36" cy="36" r="30"></circle>
+              <circle class="ring-progress" id="accuracy-ring" cx="36" cy="36" r="30"></circle>
+            </svg>
+            <div class="ring-label" id="accuracy-pct">0%</div>
           </div>
-          <div class="stat-box">
-            <div class="stat-val" id="my-percentile">-</div>
-            <div class="stat-lbl">Natija guruhi</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-val" id="my-correct">-</div>
-            <div class="stat-lbl">To'g'ri javoblar</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-val" id="my-time">-</div>
-            <div class="stat-lbl">Sarflangan vaqt</div>
+          <div class="hero-meta">
+            <h3>Aniqlik Ko'rsatkichi</h3>
+            <p>Guruh ishtirokchilari orasidagi individual natijangiz va AI tahlili</p>
           </div>
         </div>
-        <div class="coach-box" id="coach-advice">
-          💡 Tahlil yuklanmoqda...
+
+        <div class="stat-grid">
+          <div class="stat-box">
+            <div class="stat-lbl">Reytingdagi o'rin</div>
+            <div class="stat-val" id="my-rank">-</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-lbl">Kvadrant</div>
+            <div class="stat-val" id="my-percentile">-</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-lbl">To'g'ri javoblar</div>
+            <div class="stat-val" id="my-correct">-</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-lbl">Umumiy vaqt</div>
+            <div class="stat-val" id="my-time">-</div>
+          </div>
+        </div>
+
+        <div class="coach-box">
+          <svg class="coach-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
+          <div id="coach-advice">Tahlil yuklanmoqda...</div>
         </div>
       </div>
     </div>
   </div>
 
   <div class="footer-actions">
-    <button class="btn" onclick="closeWidget()">✅ Yopish</button>
+    <button class="btn" onclick="closeWidget()">Yopish</button>
   </div>
 
   <script>
-    // Injected Data
     window.__WIDGET_DATA__ = {{DATA_JSON}};
 
-    // Telegram WebApp Setup
-    if (window.Telegram && window.Telegram.WebApp) {
-      window.Telegram.WebApp.ready();
-      window.Telegram.WebApp.expand();
+    var tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    if (tg) {
+      tg.ready();
+      tg.expand();
+    }
+
+    function getInitials(name, fallback) {
+      if (!name || typeof name !== 'string') return fallback;
+      const parts = name.trim().split(/\s+/).filter(Boolean);
+      if (!parts.length) return fallback;
+      if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+      return (parts[0][0] + parts[1][0]).toUpperCase();
     }
 
     function switchTab(name) {
+      if (tg && tg.HapticFeedback) {
+        try { tg.HapticFeedback.selectionChanged(); } catch (e) {}
+      }
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
       if (name === 'podium') {
@@ -379,71 +523,77 @@
     }
 
     function closeWidget() {
-      if (window.Telegram && window.Telegram.WebApp) {
-        window.Telegram.WebApp.close();
+      if (tg && typeof tg.close === 'function') {
+        tg.close();
       } else {
         window.parent.postMessage({ action: 'close' }, '*');
       }
     }
 
-    // Touch / Swipe Gesture Listener
     let touchStartX = 0;
-    let touchEndX = 0;
     const swipeArea = document.getElementById('swipe-area');
     swipeArea.addEventListener('touchstart', (e) => {
       touchStartX = e.changedTouches[0].screenX;
     }, { passive: true });
 
     swipeArea.addEventListener('touchend', (e) => {
-      touchEndX = e.changedTouches[0].screenX;
-      handleSwipe();
+      const diff = e.changedTouches[0].screenX - touchStartX;
+      if (diff < -50) switchTab('analysis');
+      else if (diff > 50) switchTab('podium');
     }, { passive: true });
 
-    function handleSwipe() {
-      const diff = touchEndX - touchStartX;
-      if (diff < -50) {
-        // Swipe Left -> Next tab (Analysis)
-        switchTab('analysis');
-      } else if (diff > 50) {
-        // Swipe Right -> Podium
-        switchTab('podium');
-      }
-    }
-
-    // Render Data into DOM
     (function init() {
       const data = window.__WIDGET_DATA__ || {};
       const top3 = data.top3 || [];
 
-      // 1st Place
       if (top3[0]) {
         document.getElementById('gold-name').textContent = top3[0].name || '1-o\'rin';
+        document.getElementById('gold-init').textContent = getInitials(top3[0].name, '1');
         document.getElementById('gold-score').textContent = (top3[0].score || 0) + ' ball';
-        document.getElementById('gold-time').textContent = top3[0].timeFormatted || top3[0].time || '';
+        document.getElementById('gold-time').textContent = top3[0].timeFormatted || top3[0].time || '0.0s';
       }
-      // 2nd Place
       if (top3[1]) {
         document.getElementById('silver-name').textContent = top3[1].name || '2-o\'rin';
+        document.getElementById('silver-avatar').textContent = getInitials(top3[1].name, '2');
         document.getElementById('silver-score').textContent = (top3[1].score || 0) + ' ball';
-        document.getElementById('silver-time').textContent = top3[1].timeFormatted || top3[1].time || '';
+        document.getElementById('silver-time').textContent = top3[1].timeFormatted || top3[1].time || '0.0s';
       }
-      // 3rd Place
       if (top3[2]) {
         document.getElementById('bronze-name').textContent = top3[2].name || '3-o\'rin';
+        document.getElementById('bronze-avatar').textContent = getInitials(top3[2].name, '3');
         document.getElementById('bronze-score').textContent = (top3[2].score || 0) + ' ball';
-        document.getElementById('bronze-time').textContent = top3[2].timeFormatted || top3[2].time || '';
+        document.getElementById('bronze-time').textContent = top3[2].timeFormatted || top3[2].time || '0.0s';
       }
 
-      // Personal Data
       const personal = data.personal || {};
       document.getElementById('my-rank').textContent = personal.rank ? (personal.rank + ' / ' + (personal.total || '-')) : '-';
       document.getElementById('my-percentile').textContent = personal.percentile || 'Top 50%';
       document.getElementById('my-correct').textContent = (personal.correct !== undefined) ? (personal.correct + ' ta') : '-';
       document.getElementById('my-time').textContent = personal.timeFormatted || personal.time || '-';
+
+      const pctVal = personal.accuracy !== undefined
+        ? Number(personal.accuracy)
+        : (personal.correct ? Math.min(100, Number(personal.correct) * 10) : 75);
+      const safePct = Math.max(0, Math.min(100, isNaN(pctVal) ? 0 : pctVal));
+      document.getElementById('accuracy-pct').textContent = safePct + '%';
+      const circumference = 188.5;
+      const offset = circumference - (safePct / 100) * circumference;
+      const ringEl = document.getElementById('accuracy-ring');
+      if (ringEl) {
+        setTimeout(() => { ringEl.style.strokeDashoffset = String(offset); }, 120);
+      }
+
       if (personal.advice) {
-        document.getElementById('coach-advice').textContent = personal.advice;
+        const cleanAdvice = String(personal.advice)
+          .replace(/<\/?(?:b|strong|i|em|code)>/gi, '')
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&amp;/g, '&');
+        document.getElementById('coach-advice').textContent = cleanAdvice;
       } else {
-        document.getElementById('coach-advice').innerHTML = '🎯 <b>Ghost Coach maslahati:</b> Viktorinada faol qatnashib, zaif mavzularingizni takrorlang!';
+        document.getElementById('coach-advice').textContent = 'Ghost Coach maslahati: Viktorinada faol qatnashib, zaif mavzularingizni takrorlang!';
       }
     })();
   </script>

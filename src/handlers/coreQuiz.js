@@ -98,6 +98,25 @@ function resolveTestName(tId, blockName) {
 // ─── TUGMALARNI YASASH FUNKSIYASI (YANGILANGAN) ───
 async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = null) {
   const btns = [];
+  let hasMarathonNextBtn = false;
+
+  // Marafon rejimida keyingi blok tugmasini eng yuqoriga chiqaramiz
+  if (session?.isMarathon && Array.isArray(session.marathonBlocks)) {
+    const nextIdx = (session.currentBlockIdx || 0) + 1;
+    const nextBlock = session.marathonBlocks[nextIdx];
+    if (nextBlock) {
+      hasMarathonNextBtn = true;
+      const nextCb = String(tId).startsWith("ugc_") || session?.subjectId
+        ? safeCallbackData(`ugc_start_${nextBlock.id || nextBlock.test_id}`, 64)
+        : safeCallbackData(`post_start_${subjectKey}_${nextBlock.id || nextBlock.test_id}`, 64);
+      btns.unshift([
+        Markup.button.callback(
+          `🏃‍♂️ Keyingi marafon bloki (${nextBlock.block_name || `${nextIdx + 1}-Blok`})`,
+          nextCb,
+        ),
+      ]);
+    }
+  }
 
   // Agar xatolar bo'lsa, 2 ta tugmani ham chiqaramiz
   if (mistakesCount > 0) {
@@ -155,7 +174,7 @@ async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = 
       }
     }
 
-    if (nextBlock) {
+    if (nextBlock && !hasMarathonNextBtn) {
       btns.push([
         Markup.button.callback(
           `➡️ Keyingi (${nextBlock.block_name})`,
@@ -211,7 +230,7 @@ async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = 
             ),
           ]);
         }
-        if ((memDb[subjectKey] || {})[originalId + 1]) {
+        if (!hasMarathonNextBtn && (memDb[subjectKey] || {})[originalId + 1]) {
           btns.push([
             Markup.button.callback(
               `➡️ Keyingi (${originalId + 1}-Blok)`,
@@ -229,7 +248,7 @@ async function buildFinishButtons(tId, subjectKey, mistakesCount = 0, session = 
       ),
     ]);
     const memDb = require("../core/bot").memoryDb || {};
-    if ((memDb[subjectKey] || {})[tId + 1]) {
+    if (!hasMarathonNextBtn && (memDb[subjectKey] || {})[tId + 1]) {
       btns.push([
         Markup.button.callback(
           `➡️ Keyingi (${tId + 1}-Blok)`,
@@ -639,7 +658,10 @@ function generateGhostCoachAdvice(userData, session, categories) {
 }
 
 function generatePersonalAnalysis(userId, session) {
-  const scores = session?.groupScores || session?.marathonGlobalScores || {};
+  const rawGroupScores = session?.groupScores && Object.keys(session.groupScores).length > 0
+    ? session.groupScores
+    : null;
+  const scores = rawGroupScores || session?.marathonGlobalScores || {};
   const sorted = sortGroupScores(scores);
   const total = sorted.length;
   const userIndex = sorted.findIndex((s) => String(s.userId || s.id) === String(userId));
@@ -655,7 +677,9 @@ function generatePersonalAnalysis(userId, session) {
 
   const rank = userIndex !== -1 ? userIndex + 1 : total + 1;
   const rankStr = `${rank} / ${total || 1}`;
-  const pctRank = total > 0 ? Math.max(1, Math.min(100, Math.round((rank / total) * 100))) : 100;
+  const pctRank = total > 0
+    ? Math.max(1, Math.min(100, Math.round((rank / total) * 100) || 1))
+    : 1;
   const percentile = `Top ${pctRank}%`;
 
   const correct = userData.correct || 0;
@@ -665,30 +689,40 @@ function generatePersonalAnalysis(userId, session) {
   const totalTimeMs = userData.totalTimeMs || 0;
   const timeFormatted = `${(totalTimeMs / 1000).toFixed(1)}s`;
 
-  // Category / topic breakdown
+  // Category / topic breakdown (faqat haqiqiy ishlangan savollar bo'yicha!)
   const categoryStats = {};
   const mistakes = Array.isArray(userData.mistakes) ? userData.mistakes : [];
-  const mistakesQuestions = new Set(mistakes.map((m) => m.question).filter(Boolean));
 
-  if (Array.isArray(session?.sessionQuestions) && session.sessionQuestions.length > 0) {
-    for (const q of session.sessionQuestions) {
-      const cat = q.category || q.topic || session.blockName || session.subjectKey || "Umumiy";
-      if (!categoryStats[cat]) {
-        categoryStats[cat] = { name: cat, correct: 0, wrong: 0, total: 0 };
-      }
-      categoryStats[cat].total++;
-      if (mistakesQuestions.has(q.question)) {
+  if (mistakes.length > 0 && Array.isArray(session?.sessionQuestions) && session.sessionQuestions.length > 0) {
+    const hasCustomCategories = session.sessionQuestions.some(q => q.category || q.topic);
+    if (hasCustomCategories) {
+      for (const m of mistakes) {
+        const cat = m.category || session.blockName || session.subjectKey || "Umumiy";
+        if (!categoryStats[cat]) {
+          categoryStats[cat] = { name: cat, correct: 0, wrong: 0, total: 0 };
+        }
         categoryStats[cat].wrong++;
-      } else {
-        categoryStats[cat].correct++;
+        categoryStats[cat].total++;
       }
+      const firstCat = session.sessionQuestions.find(q => q.category || q.topic);
+      const questionCat = firstCat?.category || firstCat?.topic;
+      const fallbackCat = (Object.keys(categoryStats).length === 1 && Object.keys(categoryStats)[0]) ||
+        questionCat || session.blockName || session.subjectKey || "Umumiy";
+      if (!categoryStats[fallbackCat]) {
+        categoryStats[fallbackCat] = { name: fallbackCat, correct: 0, wrong: 0, total: 0 };
+      }
+      categoryStats[fallbackCat].correct += correct;
+      categoryStats[fallbackCat].total += correct;
+    } else {
+      const cat = session.blockName || session.subjectKey || "Umumiy";
+      categoryStats[cat] = { name: cat, correct, wrong, total: totalAnswered };
     }
   } else {
     const cat = session?.blockName || session?.subjectKey || "Umumiy";
     categoryStats[cat] = {
       name: cat,
-      correct: correct,
-      wrong: wrong,
+      correct,
+      wrong,
       total: totalAnswered,
     };
   }
@@ -774,7 +808,10 @@ async function cbMyGroupQuizResult(ctx, testSession = null) {
       (await getLastGroupQuiz(chatId));
   }
 
-  const scores = session?.groupScores || session?.marathonGlobalScores || {};
+  const rawGroupScores = session?.groupScores && Object.keys(session.groupScores).length > 0
+    ? session.groupScores
+    : null;
+  const scores = rawGroupScores || session?.marathonGlobalScores || {};
   const hasParticipated = Object.entries(scores).some(
     ([k, v]) => String(v.userId || k) === String(userId)
   );

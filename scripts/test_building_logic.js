@@ -1,6 +1,7 @@
 /**
  * Test suite to verify accurate building parsing and ensure "Asosiy bino" is never forcefully added.
  */
+process.env.BOT_TOKEN = process.env.BOT_TOKEN || '123456:TEST_BOT_TOKEN_FOR_BUILDING_TESTS';
 const assert = require('assert');
 const edupage = require('../src/services/edupageService');
 

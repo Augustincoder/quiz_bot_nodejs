@@ -534,11 +534,18 @@ async function startSubjectMockExam(ctx, subjectIdOrKey, isOfficial) {
     subject: data.title,
   };
 
-  const { initAndStartTest, startUgcTest } = require('./quizGame');
+  const { initAndStartTest, startUgcTest, checkActiveTestConflict } = require('./quizGame');
   const chatId = ctx.chat?.id || ctx.from?.id;
+  const mutex = require('../core/mutex');
 
   if (isOfficial) {
-    return initAndStartTest(chatId, ctx.telegram, data.subjectKey, 'mock', testData, ctx.from.id, 'private');
+    const unlock = await mutex.lock(`start_test:${chatId}`);
+    try {
+      if (await checkActiveTestConflict(ctx, chatId)) return;
+      return await initAndStartTest(chatId, ctx.telegram, data.subjectKey, 'mock', testData, ctx.from.id, 'private');
+    } finally {
+      unlock();
+    }
   } else {
     return startUgcTest(ctx, {
       ...testData,
@@ -620,8 +627,9 @@ async function startSubjectMarathon(ctx, subjectIdOrKey, isOfficial) {
     return ctx.reply('❌ Marafon uchun bloklar topilmadi.').catch(() => {});
   }
 
-  const { initAndStartTest, startUgcTest } = require('./quizGame');
+  const { initAndStartTest, startUgcTest, checkActiveTestConflict } = require('./quizGame');
   const chatId = ctx.chat?.id || ctx.from?.id;
+  const mutex = require('../core/mutex');
 
   if (isOfficial) {
     const firstBlock = data.blocks[0];
@@ -632,7 +640,13 @@ async function startSubjectMarathon(ctx, subjectIdOrKey, isOfficial) {
       marathonBlocks: data.blocks,
       currentBlockIdx: 0,
     };
-    return initAndStartTest(chatId, ctx.telegram, data.subjectKey, firstBlock.id, testData, ctx.from.id, 'private');
+    const unlock = await mutex.lock(`start_test:${chatId}`);
+    try {
+      if (await checkActiveTestConflict(ctx, chatId)) return;
+      return await initAndStartTest(chatId, ctx.telegram, data.subjectKey, firstBlock.id, testData, ctx.from.id, 'private');
+    } finally {
+      unlock();
+    }
   } else {
     const firstBlock = data.blocks[0];
     const testDb = {
@@ -825,10 +839,17 @@ async function startSubjectAdaptiveRun(ctx, subjectIdOrKey, isOfficial, count = 
     subject: data.title,
   };
 
-  const { initAndStartTest, startUgcTest } = require('./quizGame');
+  const { initAndStartTest, startUgcTest, checkActiveTestConflict } = require('./quizGame');
+  const mutex = require('../core/mutex');
 
   if (isOfficial) {
-    return initAndStartTest(chatId, ctx.telegram, data.subjectKey, 'adaptive', testData, ctx.from.id, 'private');
+    const unlock = await mutex.lock(`start_test:${chatId}`);
+    try {
+      if (await checkActiveTestConflict(ctx, chatId)) return;
+      return await initAndStartTest(chatId, ctx.telegram, data.subjectKey, 'adaptive', testData, ctx.from.id, 'private');
+    } finally {
+      unlock();
+    }
   } else {
     return startUgcTest(ctx, {
       ...testData,
@@ -915,11 +936,18 @@ function register(bot) {
       const parts = rawId.split('_');
       const testId = parseInt(parts.pop(), 10);
       const subjectKey = parts.join('_');
-      const { initAndStartTest } = require('./quizGame');
+      const { initAndStartTest, checkActiveTestConflict } = require('./quizGame');
+      const mutex = require('../core/mutex');
       const memDb = getMemoryDb();
       const testData = (memDb[subjectKey] || {})[testId];
       if (testData) {
-        return initAndStartTest(ctx.chat.id, ctx.telegram, subjectKey, testId, testData, ctx.from.id, 'private');
+        const unlock = await mutex.lock(`start_test:${ctx.chat.id}`);
+        try {
+          if (await checkActiveTestConflict(ctx, ctx.chat.id)) return;
+          return await initAndStartTest(ctx.chat.id, ctx.telegram, subjectKey, testId, testData, ctx.from.id, 'private');
+        } finally {
+          unlock();
+        }
       }
     } else {
       const { startUgcTest } = require('./quizGame');
@@ -947,9 +975,16 @@ function register(bot) {
       block_name: `${block.blockName} (⚡ 10 Blitz)`,
       subject: block.subjectTitle,
     };
-    const { initAndStartTest, startUgcTest } = require('./quizGame');
+    const { initAndStartTest, startUgcTest, checkActiveTestConflict } = require('./quizGame');
+    const mutex = require('../core/mutex');
     if (block.isOfficial) {
-      return initAndStartTest(ctx.chat.id, ctx.telegram, block.subjectKey, 'blitz', testData, ctx.from.id, 'private');
+      const unlock = await mutex.lock(`start_test:${ctx.chat.id}`);
+      try {
+        if (await checkActiveTestConflict(ctx, ctx.chat.id)) return;
+        return await initAndStartTest(ctx.chat.id, ctx.telegram, block.subjectKey, 'blitz', testData, ctx.from.id, 'private');
+      } finally {
+        unlock();
+      }
     } else {
       return startUgcTest(ctx, { ...testData, id: `blitz_${block.id}` });
     }

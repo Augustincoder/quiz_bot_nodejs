@@ -17,6 +17,7 @@ const crypto = require('crypto');
 const gunzipAsync = util.promisify(zlib.gunzip);
 const inflateAsync = util.promisify(zlib.inflate);
 const logger = require('../core/logger');
+const { escapeHtml, getLevenshteinDistance } = require('../core/utils');
 
 function resolveDiskCachePath() {
   const rootDataPath = path.resolve(__dirname, '../../data/timetable_cache.json');
@@ -396,43 +397,6 @@ try {
   logger.debug('Failed to pre-seed groups from groups.json:', { error: e.message });
 }
 
-function getLevenshteinDistance(a, b) {
-  if (a === b) return 0;
-  if (a.length === 0) return b.length;
-  if (b.length === 0) return a.length;
-
-  if (a.length < b.length) {
-    const tmp = a;
-    a = b;
-    b = tmp;
-  }
-
-  const bLen = b.length;
-  let prevRow = new Int32Array(bLen + 1);
-  let currRow = new Int32Array(bLen + 1);
-
-  for (let j = 0; j <= bLen; j++) {
-    prevRow[j] = j;
-  }
-
-  for (let i = 1; i <= a.length; i++) {
-    currRow[0] = i;
-    const charA = a.charCodeAt(i - 1);
-    for (let j = 1; j <= bLen; j++) {
-      const cost = charA === b.charCodeAt(j - 1) ? 0 : 1;
-      currRow[j] = Math.min(
-        prevRow[j] + 1,
-        currRow[j - 1] + 1,
-        prevRow[j - 1] + cost
-      );
-    }
-    const temp = prevRow;
-    prevRow = currRow;
-    currRow = temp;
-  }
-  return prevRow[bLen];
-}
-
 /**
  * Resolves ANY group input (e.g. "BHA_51K", "bha-51k", "bha 51k", "BHA-51k/24", "MMT-20")
  * to its exact official CANONICAL original appearance ("asli ko'rinishi", e.g. "BHA-51k/24").
@@ -501,18 +465,6 @@ function getCanonicalGroupName(input) {
   if (minDist <= 2) return best;
 
   return null;
-}
-
-/**
- * Escapes characters for Telegram HTML parse_mode
- */
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
 
 /**

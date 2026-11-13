@@ -7,300 +7,552 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
-      --bg-color: #0e1621;
-      --card-bg: #17212b;
-      --accent: #2481cc;
-      --success: #4caf50;
-      --warning: #ff9800;
-      --text: #f5f5f5;
-      --text-muted: #8e9ca8;
-      --border-color: rgba(255, 255, 255, 0.08);
+      --bg-canvas: var(--tg-theme-bg-color, #07090E);
+      --surface-1: var(--tg-theme-secondary-bg-color, #0E131F);
+      --surface-2: #151C2C;
+      --surface-back: #091715;
+      --text-primary: var(--tg-theme-text-color, #F8FAFC);
+      --text-secondary: var(--tg-theme-hint-color, #94A3B8);
+      --text-muted: #64748B;
+      --accent-blue: #3B82F6;
+      --accent-emerald: #10B981;
+      --accent-amber: #F59E0B;
+      --border-hairline: rgba(255, 255, 255, 0.08);
+      --specular-top: inset 0 1px 0 0 rgba(255, 255, 255, 0.12);
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-tap-highlight-color: transparent; }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+    }
     body {
-      background: radial-gradient(circle at 50% 0%, #172b3c 0%, var(--bg-color) 85%);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background:
+        radial-gradient(ellipse 85% 45% at 50% -10%, rgba(59, 130, 246, 0.16), transparent),
+        var(--bg-canvas);
+      color: var(--text-primary);
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 16px;
+      justify-content: space-between;
+      padding: 16px 16px 22px;
       overflow-x: hidden;
-    }
-    .header {
-      width: 100%;
-      max-width: 420px;
-      margin-bottom: 14px;
-      text-align: center;
-    }
-    .header h1 {
-      font-size: 18px;
-      font-weight: 700;
-      color: #fff;
-    }
-    .header p {
-      font-size: 12px;
-      color: var(--text-muted);
-      margin-top: 2px;
+      font-variant-numeric: tabular-nums;
     }
 
-    /* Progress bar */
-    .progress-bar-wrap {
+    /* Top Telemetry Header */
+    .top-shell {
       width: 100%;
       max-width: 420px;
-      background: rgba(255, 255, 255, 0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .nav-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+    .deck-title-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .brand-dot {
+      width: 8px;
       height: 8px;
-      border-radius: 4px;
-      margin-bottom: 18px;
+      border-radius: 50%;
+      background: var(--accent-blue);
+      box-shadow: 0 0 10px var(--accent-blue);
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+      white-space: nowrap;
       overflow: hidden;
-      position: relative;
+      text-overflow: ellipsis;
+    }
+    .icon-pill-btn {
+      background: var(--surface-1);
+      border: 1px solid var(--border-hairline);
+      box-shadow: var(--specular-top);
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 11px;
+      border-radius: 99px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+    .icon-pill-btn:disabled {
+      opacity: 0.32;
+      pointer-events: none;
+    }
+    .icon-pill-btn:active {
+      transform: scale(0.96);
+      background: var(--surface-2);
+    }
+
+    /* Bento Telemetry Strip */
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .metric-card {
+      background: var(--surface-1);
+      border: 1px solid var(--border-hairline);
+      box-shadow: var(--specular-top);
+      border-radius: 12px;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .metric-card .lbl {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .metric-card .val {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-top: 2px;
+    }
+    .metric-card.learned .val { color: #34D399; }
+    .metric-card.remaining .val { color: #60A5FA; }
+
+    /* Precision Laser Progress Bar */
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: -6px;
+    }
+    .progress-track {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.06);
+      height: 5px;
+      border-radius: 99px;
+      overflow: hidden;
     }
     .progress-fill {
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, #2481cc, #4caf50);
-      border-radius: 4px;
-      transition: width 0.3s ease;
-    }
-    .progress-label {
-      display: flex;
-      justify-content: space-between;
-      width: 100%;
-      max-width: 420px;
-      font-size: 12px;
-      color: var(--text-muted);
-      margin-bottom: 8px;
+      background: linear-gradient(90deg, #3B82F6, #10B981);
+      border-radius: 99px;
+      transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
     }
 
-    /* 3D Flashcard Perspective Arena */
+    /* 3D Flashcard Perspective Stage */
     .card-arena {
-      perspective: 1200px;
+      perspective: 1400px;
       width: 100%;
       max-width: 420px;
-      height: 380px;
+      height: 356px;
       position: relative;
-      margin-bottom: 20px;
+      margin: 10px 0;
+      touch-action: pan-y;
     }
+    .drag-stamp {
+      position: absolute;
+      top: 20px;
+      z-index: 25;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      opacity: 0;
+      pointer-events: none;
+      backdrop-filter: blur(8px);
+      transition: opacity 0.12s ease;
+    }
+    .drag-stamp.known {
+      left: 20px;
+      border: 1px solid rgba(16, 185, 129, 0.5);
+      color: #34D399;
+      background: rgba(6, 78, 59, 0.65);
+    }
+    .drag-stamp.repeat {
+      right: 20px;
+      border: 1px solid rgba(245, 158, 11, 0.5);
+      color: #FBBF24;
+      background: rgba(120, 53, 15, 0.65);
+    }
+
     .card-wrapper {
       width: 100%;
       height: 100%;
       position: relative;
       transform-style: preserve-3d;
-      transition: transform 0.6s cubic-bezier(0.2, 0.85, 0.4, 1.2), opacity 0.3s;
+      -webkit-transform-style: preserve-3d;
+      transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
       cursor: pointer;
     }
     .card-wrapper.flipped {
       transform: rotateY(180deg);
+      -webkit-transform: rotateY(180deg);
     }
     .card-wrapper.slide-right {
-      transform: translateX(120%) rotateZ(20deg) rotateY(10deg);
+      transition: transform 0.25s ease, opacity 0.22s ease;
+      transform: translateX(120%) rotateZ(12deg);
       opacity: 0;
     }
     .card-wrapper.slide-left {
-      transform: translateX(-120%) rotateZ(-20deg) rotateY(-10deg);
+      transition: transform 0.25s ease, opacity 0.22s ease;
+      transform: translateX(-120%) rotateZ(-12deg);
       opacity: 0;
     }
 
+    /* Strict Dual-Layer Backface & Visibility Protection */
     .card-face {
       position: absolute;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
+      inset: 0;
+      width: 100%;
+      height: 100%;
       backface-visibility: hidden;
       -webkit-backface-visibility: hidden;
-      background: var(--card-bg);
-      border: 1px solid var(--border-color);
-      border-radius: 20px;
-      padding: 24px 20px;
+      background: var(--surface-1);
+      border: 1px solid var(--border-hairline);
+      border-radius: 22px;
+      padding: 22px;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-      backdrop-filter: blur(10px);
+      box-shadow:
+        var(--specular-top),
+        0 24px 48px -12px rgba(0, 0, 0, 0.75);
     }
     .card-front {
-      border-top: 3px solid var(--accent);
+      z-index: 2;
+      visibility: visible;
+      opacity: 1;
+      transition: opacity 0.15s ease, visibility 0.15s ease;
     }
     .card-back {
       transform: rotateY(180deg);
-      border-top: 3px solid var(--success);
-      background: #142230;
+      -webkit-transform: rotateY(180deg);
+      background: var(--surface-back);
+      border-color: rgba(16, 185, 129, 0.28);
+      box-shadow:
+        inset 0 1px 0 0 rgba(52, 211, 153, 0.2),
+        0 24px 48px -12px rgba(0, 0, 0, 0.75);
+      z-index: 1;
+      visibility: hidden;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s ease, visibility 0.15s ease;
+    }
+    .card-wrapper.flipped .card-front {
+      visibility: hidden;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .card-wrapper.flipped .card-back {
+      visibility: visible;
+      opacity: 1;
+      pointer-events: auto;
+      z-index: 2;
     }
 
+    .face-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+    }
     .card-badge {
-      font-size: 11px;
+      font-size: 10.5px;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: var(--accent);
-      background: rgba(36, 129, 204, 0.15);
+      letter-spacing: 0.08em;
+      color: #60A5FA;
+      background: rgba(59, 130, 246, 0.12);
+      border: 1px solid rgba(59, 130, 246, 0.24);
       padding: 4px 10px;
-      border-radius: 12px;
-      align-self: flex-start;
+      border-radius: 6px;
     }
     .card-back .card-badge {
-      color: var(--success);
-      background: rgba(76, 175, 80, 0.15);
+      color: #34D399;
+      background: rgba(16, 185, 129, 0.14);
+      border-color: rgba(16, 185, 129, 0.28);
+    }
+    .card-index-chip {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text-muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
 
     .card-text {
       font-size: 17px;
-      line-height: 1.6;
-      color: #fff;
-      font-weight: 500;
+      line-height: 1.55;
+      color: var(--text-primary);
+      font-weight: 600;
+      letter-spacing: -0.015em;
       margin: auto 0;
       overflow-y: auto;
-      max-height: 240px;
-    }
-    .card-hint {
-      font-size: 12px;
-      color: var(--text-muted);
+      max-height: 215px;
       text-align: center;
+      padding: 6px 4px;
+      word-break: break-word;
+    }
+    .card-back .card-text {
+      color: #6EE7B7;
+      font-weight: 700;
+      font-size: 17.5px;
+    }
+    .card-footer-hint {
+      font-size: 11.5px;
+      font-weight: 500;
+      color: var(--text-muted);
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
     }
 
-    /* Swipe hint indicators */
-    .swipe-indicators {
-      display: flex;
-      justify-content: space-between;
+    /* Bottom Floating Dock */
+    .dock-container {
       width: 100%;
       max-width: 420px;
-      font-size: 11px;
-      color: var(--text-muted);
-      margin-bottom: 12px;
-      padding: 0 4px;
     }
-
-    /* Control buttons */
     .actions-grid {
       display: grid;
       grid-template-columns: 1fr 1fr 1fr;
       gap: 10px;
       width: 100%;
-      max-width: 420px;
     }
     .btn {
-      padding: 13px 8px;
-      border: none;
+      padding: 13px 10px;
       border-radius: 14px;
-      font-size: 13px;
+      font-size: 12.5px;
       font-weight: 600;
       cursor: pointer;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 4px;
-      transition: transform 0.15s, opacity 0.15s;
+      gap: 6px;
+      background: var(--surface-1);
+      border: 1px solid var(--border-hairline);
+      box-shadow: var(--specular-top);
+      color: var(--text-primary);
+      transition: transform 0.12s ease, background 0.15s ease;
     }
-    .btn:active { transform: scale(0.96); opacity: 0.85; }
+    .btn:active { transform: scale(0.96); }
     .btn-repeat {
-      background: rgba(255, 152, 0, 0.15);
-      color: #ffb74d;
-      border: 1px solid rgba(255, 152, 0, 0.3);
+      color: #FBBF24;
+      border-color: rgba(245, 158, 11, 0.25);
+      background: rgba(245, 158, 11, 0.08);
     }
     .btn-flip {
-      background: rgba(36, 129, 204, 0.18);
-      color: #64b5f6;
-      border: 1px solid rgba(36, 129, 204, 0.3);
+      color: #60A5FA;
+      border-color: rgba(59, 130, 246, 0.25);
+      background: rgba(59, 130, 246, 0.08);
     }
     .btn-known {
-      background: rgba(76, 175, 80, 0.18);
-      color: #81c784;
-      border: 1px solid rgba(76, 175, 80, 0.3);
+      color: #34D399;
+      border-color: rgba(16, 185, 129, 0.28);
+      background: rgba(16, 185, 129, 0.1);
+    }
+    .svg-icon {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 2;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
 
-    /* Finished screen */
+    /* Completion Screen */
     .finish-screen {
       display: none;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       text-align: center;
-      background: var(--card-bg);
-      border: 1px solid var(--border-color);
-      border-radius: 20px;
-      padding: 32px 20px;
+      background: var(--surface-1);
+      border: 1px solid rgba(16, 185, 129, 0.28);
+      box-shadow: var(--specular-top), 0 24px 48px -12px rgba(0, 0, 0, 0.75);
+      border-radius: 22px;
+      padding: 36px 24px;
       width: 100%;
       max-width: 420px;
-      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+      margin: auto 0;
     }
     .finish-screen.active { display: flex; }
-    .finish-icon { font-size: 48px; margin-bottom: 12px; }
-    .finish-title { font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 6px; }
-    .finish-sub { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; line-height: 1.5; }
+    .finish-badge {
+      width: 56px;
+      height: 56px;
+      border-radius: 16px;
+      background: rgba(16, 185, 129, 0.14);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #34D399;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+    .finish-title { font-size: 19px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; letter-spacing: -0.02em; }
+    .finish-sub { font-size: 13px; color: var(--text-secondary); margin-bottom: 24px; line-height: 1.5; }
+    .finish-actions { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+    .btn-row-full {
+      width: 100%;
+      flex-direction: row;
+      padding: 13px 16px;
+      font-size: 13.5px;
+    }
   </style>
 </head>
 <body>
-  <div class="header">
-    <h1 id="subject-title">⚡ {{TITLE}}</h1>
-    <p>3D Blitz-Flashcard Takrorlash</p>
-  </div>
-
-  <div class="progress-label">
-    <span id="progress-text">Kartochka: 1 / 1</span>
-    <span id="percent-text">0%</span>
-  </div>
-  <div class="progress-bar-wrap">
-    <div class="progress-fill" id="progress-fill"></div>
-  </div>
-
-  <div class="swipe-indicators">
-    <span>👈 Qiyin (Qaytarish)</span>
-    <span>Bilib oldim (Surish) 👉</span>
-  </div>
-
-  <!-- 3D Arena -->
-  <div class="card-arena" id="card-arena">
-    <div class="card-wrapper" id="card-element" onclick="flipCard()">
-      <!-- Front -->
-      <div class="card-face card-front">
-        <div class="card-badge">❓ Savol</div>
-        <div class="card-text" id="front-text">Yuklanmoqda...</div>
-        <div class="card-hint">👆 Javobni ko'rish uchun bosing</div>
+  <div class="top-shell header">
+    <div class="nav-bar">
+      <div class="deck-title-group">
+        <span class="brand-dot"></span>
+        <h1 id="subject-title">{{TITLE}}</h1>
       </div>
-      <!-- Back -->
+      <button class="icon-pill-btn" id="undo-btn" onclick="undoLastCard()" disabled>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
+        <span>Ortga</span>
+      </button>
+    </div>
+
+    <div class="telemetry-grid">
+      <div class="metric-card learned">
+        <span class="lbl">O'zlashtirildi</span>
+        <span class="val" id="stat-learned">0</span>
+      </div>
+      <div class="metric-card remaining">
+        <span class="lbl">Navbatda</span>
+        <span class="val" id="stat-remaining">0</span>
+      </div>
+      <div class="metric-card">
+        <span class="lbl">Jami karta</span>
+        <span class="val" id="stat-total">0</span>
+      </div>
+    </div>
+
+    <div class="progress-meta">
+      <span id="progress-text">Jarayon: 0 / 0</span>
+      <span id="percent-text">0%</span>
+    </div>
+    <div class="progress-track">
+      <div class="progress-fill" id="progress-fill"></div>
+    </div>
+  </div>
+
+  <!-- 3D Perspective Stage -->
+  <div class="card-arena" id="card-arena">
+    <div class="drag-stamp known" id="stamp-known">BILIB OLDIM</div>
+    <div class="drag-stamp repeat" id="stamp-repeat">QAYTARISH</div>
+
+    <div class="card-wrapper" id="card-element" onclick="flipCard()">
+      <!-- Front (Question) -->
+      <div class="card-face card-front">
+        <div class="face-header">
+          <div class="card-badge">SAVOL</div>
+          <span class="card-index-chip" id="card-num-front">01</span>
+        </div>
+        <div class="card-text" id="front-text">Yuklanmoqda...</div>
+        <div class="card-footer-hint">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2.1l4 4-4 4"/><path d="M3 12.2v-2a4 4 0 0 1 4-4h12.8M7 21.9l-4-4 4-4"/><path d="M21 11.8v2a4 4 0 0 1-4 4H4.2"/></svg>
+          <span>Javobni ko'rish uchun kartani bosing</span>
+        </div>
+      </div>
+
+      <!-- Back (Answer) -->
       <div class="card-face card-back">
-        <div class="card-badge">✅ To'g'ri Javob</div>
-        <div class="card-text" id="back-text">Yuklanmoqda...</div>
-        <div class="card-hint">👆 Qaytadan savolga o'tish</div>
+        <div class="face-header">
+          <div class="card-badge">TO'G'RI JAVOB</div>
+          <span class="card-index-chip" id="card-num-back">01</span>
+        </div>
+        <div class="card-text" id="back-text"></div>
+        <div class="card-footer-hint">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2.1l4 4-4 4"/><path d="M3 12.2v-2a4 4 0 0 1 4-4h12.8"/></svg>
+          <span>Savolga qaytish uchun bosing</span>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- Finish view -->
+  <!-- Completion View -->
   <div class="finish-screen" id="finish-screen">
-    <div class="finish-icon">🎉</div>
-    <div class="finish-title">Blitz yakunlandi!</div>
-    <div class="finish-sub" id="finish-sub">Barcha kartochkalar muvaffaqiyatli takrorlandi.</div>
-    <button class="btn btn-flip" style="width: 100%; margin-top: 12px;" onclick="restartDeck()">🔄 Qaytadan boshlash</button>
+    <div class="finish-badge">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+    </div>
+    <div class="finish-title">Barcha kartochkalar yakunlandi</div>
+    <div class="finish-sub" id="finish-sub">Ushbu blokdagi barcha savollarni to'liq ko'rib chiqdingiz va o'zlashtirdingiz.</div>
+    <div class="finish-actions">
+      <button class="btn btn-flip btn-row-full" onclick="restartDeck()">
+        <svg class="svg-icon" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+        <span>Qaytadan takrorlash</span>
+      </button>
+      <button class="btn btn-known btn-row-full" onclick="closeWebApp()">
+        <svg class="svg-icon" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+        <span>Yakunlash va qaytish</span>
+      </button>
+    </div>
   </div>
 
-  <!-- Action buttons -->
-  <div class="actions-grid" id="actions-grid">
-    <button class="btn btn-repeat" onclick="handleCardAction('repeat')">
-      <span>👈</span>
-      <span>Qaytarish</span>
-    </button>
-    <button class="btn btn-flip" onclick="flipCard()">
-      <span>🔄</span>
-      <span>Aylantirish</span>
-    </button>
-    <button class="btn btn-known" onclick="handleCardAction('known')">
-      <span>👉</span>
-      <span>Bilib oldim</span>
-    </button>
+  <!-- Bottom Action Dock -->
+  <div class="dock-container" id="actions-grid">
+    <div class="actions-grid">
+      <button class="btn btn-repeat" onclick="handleCardAction('repeat')">
+        <svg class="svg-icon" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+        <span>Qaytarish</span>
+      </button>
+      <button class="btn btn-flip" onclick="flipCard()">
+        <svg class="svg-icon" viewBox="0 0 24 24"><path d="M17 2.1l4 4-4 4"/><path d="M3 12.2v-2a4 4 0 0 1 4-4h12.8M7 21.9l-4-4 4-4"/><path d="M21 11.8v2a4 4 0 0 1-4 4H4.2"/></svg>
+        <span>Aylantirish</span>
+      </button>
+      <button class="btn btn-known" onclick="handleCardAction('known')">
+        <svg class="svg-icon" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+        <span>Bilib oldim</span>
+      </button>
+    </div>
   </div>
 
   <script>
     window.__WIDGET_DATA__ = {{DATA_JSON}};
 
-    if (window.Telegram && window.Telegram.WebApp) {
-      window.Telegram.WebApp.ready();
-      window.Telegram.WebApp.expand();
+    var tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    if (tg) {
+      tg.ready();
+      tg.expand();
+    }
+
+    function haptic(type, style) {
+      if (!tg || !tg.HapticFeedback) return;
+      try {
+        if (type === 'selection') tg.HapticFeedback.selectionChanged();
+        else if (type === 'impact') tg.HapticFeedback.impactOccurred(style || 'light');
+        else if (type === 'notify') tg.HapticFeedback.notificationOccurred(style || 'success');
+      } catch (e) {}
     }
 
     const data = window.__WIDGET_DATA__ || {};
@@ -316,6 +568,8 @@
     let currentIndex = 0;
     let learnedCount = 0;
     const totalCount = cards.length;
+    let historyStack = [];
+    let isAnimating = false;
 
     const cardEl = document.getElementById('card-element');
     const frontText = document.getElementById('front-text');
@@ -323,53 +577,118 @@
     const progressFill = document.getElementById('progress-fill');
     const progressText = document.getElementById('progress-text');
     const percentText = document.getElementById('percent-text');
+    const statLearned = document.getElementById('stat-learned');
+    const statRemaining = document.getElementById('stat-remaining');
+    const statTotal = document.getElementById('stat-total');
+    const undoBtn = document.getElementById('undo-btn');
+    const stampKnown = document.getElementById('stamp-known');
+    const stampRepeat = document.getElementById('stamp-repeat');
+
+    let currentAnswerText = '';
+
+    function pad2(n) {
+      return n < 10 ? '0' + n : String(n);
+    }
 
     function renderCurrentCard() {
       if (currentIndex >= cards.length) {
         showFinish();
         return;
       }
+
+      // Layer 1 & 2 Protection: reset flip without transition and clear answer DOM node
+      cardEl.style.transition = 'none';
       cardEl.className = 'card-wrapper';
+      cardEl.style.transform = '';
+      backText.textContent = '';
+      stampKnown.style.opacity = '0';
+      stampRepeat.style.opacity = '0';
+      void cardEl.offsetWidth;
+      cardEl.style.transition = '';
+
       const c = cards[currentIndex];
       frontText.textContent = c.q || c.question || 'Savol';
-      backText.textContent = c.a || c.answer || 'To\'g\'ri javob';
+      currentAnswerText = c.a || c.answer || 'To\'g\'ri javob';
 
-      const currentNum = Math.min(currentIndex + 1, totalCount);
-      progressText.textContent = `Kartochka: ${currentNum} / ${totalCount}`;
-      const pct = Math.round((learnedCount / totalCount) * 100);
+      const numVal = (c.id !== undefined ? Number(c.id) + 1 : currentIndex + 1);
+      const cardLabel = pad2(numVal) + ' / ' + pad2(totalCount);
+      document.getElementById('card-num-front').textContent = cardLabel;
+      document.getElementById('card-num-back').textContent = cardLabel;
+
+      const remaining = Math.max(0, cards.length - currentIndex);
+      statLearned.textContent = learnedCount;
+      statRemaining.textContent = remaining;
+      statTotal.textContent = totalCount;
+      undoBtn.disabled = historyStack.length === 0;
+
+      progressText.textContent = `O'zlashtirildi: ${learnedCount} / ${totalCount} (Qoldi: ${remaining})`;
+      const pct = totalCount > 0 ? Math.min(100, Math.round((learnedCount / totalCount) * 100)) : 0;
       progressFill.style.width = pct + '%';
       percentText.textContent = pct + '%';
+      isAnimating = false;
     }
 
     function flipCard() {
+      if (isAnimating) return;
+      const willFlip = !cardEl.classList.contains('flipped');
+      if (willFlip) {
+        backText.textContent = currentAnswerText;
+      }
       cardEl.classList.toggle('flipped');
+      haptic('selection');
     }
 
     function handleCardAction(action) {
-      if (currentIndex >= cards.length) return;
+      if (isAnimating || currentIndex >= cards.length) return;
+      isAnimating = true;
+
+      const currentCard = cards[currentIndex];
+      const realCardIdx = currentCard && currentCard.id !== undefined ? currentCard.id : currentIndex;
 
       if (action === 'known') {
+        haptic('impact', 'medium');
+        historyStack.push({ action: 'known', index: currentIndex });
         learnedCount++;
         cardEl.classList.add('slide-right');
-        sendWidgetQuery('card_action', { cardIdx: currentIndex, action: 'known' });
+        sendWidgetQuery('card_action', { cardIdx: realCardIdx, action: 'known' });
         setTimeout(() => {
           currentIndex++;
           renderCurrentCard();
-        }, 300);
+        }, 250);
       } else {
-        // Repeat: append card to back of deck
+        haptic('impact', 'light');
+        historyStack.push({ action: 'repeat', index: currentIndex });
         cardEl.classList.add('slide-left');
-        sendWidgetQuery('card_action', { cardIdx: currentIndex, action: 'repeat' });
+        sendWidgetQuery('card_action', { cardIdx: realCardIdx, action: 'repeat' });
         setTimeout(() => {
-          const currentCard = cards[currentIndex];
           cards.push(currentCard);
           currentIndex++;
           renderCurrentCard();
-        }, 300);
+        }, 250);
       }
     }
 
+    function undoLastCard() {
+      if (isAnimating || historyStack.length === 0) return;
+      const last = historyStack.pop();
+      if (last.action === 'known') {
+        learnedCount = Math.max(0, learnedCount - 1);
+      } else if (last.action === 'repeat') {
+        cards.pop();
+      }
+      currentIndex = last.index;
+      haptic('selection');
+      document.getElementById('card-arena').style.display = 'block';
+      document.getElementById('actions-grid').style.display = 'block';
+      document.getElementById('finish-screen').classList.remove('active');
+      renderCurrentCard();
+    }
+
     function showFinish() {
+      isAnimating = false;
+      haptic('notify', 'success');
+      statLearned.textContent = totalCount;
+      statRemaining.textContent = 0;
       document.getElementById('card-arena').style.display = 'none';
       document.getElementById('actions-grid').style.display = 'none';
       document.getElementById('finish-screen').classList.add('active');
@@ -378,20 +697,27 @@
     }
 
     function restartDeck() {
+      haptic('impact', 'medium');
       currentIndex = 0;
       learnedCount = 0;
+      historyStack = [];
       cards = (deck.cards && deck.cards.length > 0) ? [...deck.cards] : [];
       document.getElementById('card-arena').style.display = 'block';
-      document.getElementById('actions-grid').style.display = 'grid';
+      document.getElementById('actions-grid').style.display = 'block';
       document.getElementById('finish-screen').classList.remove('active');
       renderCurrentCard();
     }
 
+    function closeWebApp() {
+      if (tg && typeof tg.close === 'function') {
+        tg.close();
+      } else {
+        window.close();
+      }
+    }
+
     function sendWidgetQuery(action, actionData) {
       const token = '{{TOKEN}}' || data.token;
-      if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.sendData === 'function') {
-        window.Telegram.WebApp.sendData(JSON.stringify({ action, data: actionData }));
-      }
       fetch('/widget/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -399,26 +725,70 @@
       }).catch(() => {});
     }
 
-    // Touch Event Listeners for Swipe Gestures
+    // Interactive Touch Drag Physics
     let touchStartX = 0;
     let touchStartY = 0;
+    let currentDragX = 0;
+    let isDragging = false;
 
     cardEl.addEventListener('touchstart', (e) => {
-      touchStartX = e.changedTouches[0].screenX;
-      touchStartY = e.changedTouches[0].screenY;
+      if (isAnimating) return;
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+      currentDragX = 0;
+      isDragging = true;
     }, { passive: true });
 
-    cardEl.addEventListener('touchend', (e) => {
-      const diffX = e.changedTouches[0].screenX - touchStartX;
-      const diffY = e.changedTouches[0].screenY - touchStartY;
-      if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 60) {
-        if (diffX > 0) {
-          handleCardAction('known');
+    cardEl.addEventListener('touchmove', (e) => {
+      if (!isDragging || isAnimating) return;
+      const dx = e.touches[0].clientX - touchStartX;
+      const dy = e.touches[0].clientY - touchStartY;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        currentDragX = dx;
+        const baseFlip = cardEl.classList.contains('flipped') ? 'rotateY(180deg) ' : '';
+        cardEl.style.transition = 'none';
+        cardEl.style.transform = `${baseFlip}translateX(${dx}px) rotateZ(${dx * 0.045}deg)`;
+
+        if (dx > 25) {
+          stampKnown.style.opacity = String(Math.min(1, (dx - 25) / 55));
+          stampRepeat.style.opacity = '0';
+        } else if (dx < -25) {
+          stampRepeat.style.opacity = String(Math.min(1, (-dx - 25) / 55));
+          stampKnown.style.opacity = '0';
         } else {
-          handleCardAction('repeat');
+          stampKnown.style.opacity = '0';
+          stampRepeat.style.opacity = '0';
         }
       }
     }, { passive: true });
+
+    cardEl.addEventListener('touchend', () => {
+      if (!isDragging || isAnimating) return;
+      isDragging = false;
+      stampKnown.style.opacity = '0';
+      stampRepeat.style.opacity = '0';
+
+      if (currentDragX > 65) {
+        handleCardAction('known');
+      } else if (currentDragX < -65) {
+        handleCardAction('repeat');
+      } else if (Math.abs(currentDragX) > 4) {
+        cardEl.style.transition = 'transform 0.25s cubic-bezier(0.22, 1, 0.36, 1)';
+        cardEl.style.transform = cardEl.classList.contains('flipped') ? 'rotateY(180deg)' : '';
+      }
+    }, { passive: true });
+
+    // Keyboard Shortcuts
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+        e.preventDefault();
+        flipCard();
+      } else if (e.code === 'ArrowRight') {
+        handleCardAction('known');
+      } else if (e.code === 'ArrowLeft') {
+        handleCardAction('repeat');
+      }
+    });
 
     renderCurrentCard();
   </script>

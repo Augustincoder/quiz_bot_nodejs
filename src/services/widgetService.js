@@ -34,6 +34,7 @@ function isValidWebAppUrl(url) {
       host.endsWith('.telegram.org') ||
       host === 'localhost' ||
       host.endsWith('.local') ||
+      host === '127.0.0.1' ||
       host.endsWith('.test')
     ) {
       return false;
@@ -60,38 +61,16 @@ const SECRET_KEY = crypto.createHash('sha256').update(RAW_SECRET).digest();
 
 const DEFAULT_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-/**
- * Decodes HTML entities back to their raw characters to prevent double-escaping.
- * @param {any} str
- * @returns {string}
- */
-function decodeHtmlEntities(str) {
-  if (str === undefined || str === null) return '';
-  return String(str)
-    .replace(/&quot;/g, '"')
-    .replace(/&#34;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&');
-}
+const { decodeHtmlEntities, escapeHtml: coreEscapeHtml } = require('../core/utils');
 
 /**
- * Escapes HTML entities to prevent XSS.
- * @param {any} str
+ * Escapes HTML characters including single quotes for safe embedding in WebApp HTML and attributes.
+ * @param {string} str
  * @returns {string}
  */
 function escapeHtml(str) {
-  if (str === undefined || str === null) return '';
-  const decoded = decodeHtmlEntities(str);
-  return decoded
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+  if (!str) return '';
+  return coreEscapeHtml(str).replace(/'/g, '&#39;');
 }
 
 /**
@@ -184,6 +163,22 @@ const TEMPLATE_MAP = {
 
 const TEMPLATE_DIR = path.join(__dirname, '../widgets/views');
 
+// L1 In-Memory Cache for templates
+const templateMemoryCache = new Map();
+
+function getTemplateContent(templateFileName) {
+  if (templateMemoryCache.has(templateFileName)) {
+    return templateMemoryCache.get(templateFileName);
+  }
+  const templatePath = path.join(TEMPLATE_DIR, templateFileName);
+  if (!fs.existsSync(templatePath)) {
+    throw new Error(`Widget template not found: "${templatePath}"`);
+  }
+  const content = fs.readFileSync(templatePath, 'utf8');
+  templateMemoryCache.set(templateFileName, content);
+  return content;
+}
+
 /**
  * Securely renders HTML template for a given widget type.
  *
@@ -199,14 +194,8 @@ function renderWidgetHtml(type, data = {}) {
     throw new Error(`Unknown widget type: "${type}"`);
   }
 
-  const templatePath = path.join(TEMPLATE_DIR, templateFileName);
-  if (!fs.existsSync(templatePath)) {
-    throw new Error(`Widget template not found: "${templatePath}"`);
-  }
+  let html = getTemplateContent(templateFileName);
 
-  let html = fs.readFileSync(templatePath, 'utf8');
-
-  // Prevent script breakout in JSON injection
   const safeDataJson = JSON.stringify(data || {})
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
@@ -226,22 +215,13 @@ function renderWidgetHtml(type, data = {}) {
 /**
  * Prepares payload for Telegram Bot API 10.4 `sendWidget` with URL `/widget/:token`,
  * plus clean fallback text and inline keyboard for classic Telegram clients.
- *
- * @param {string} type - Widget type
- * @param {object} payload - Widget payload
- * @param {string} fallbackText - Clean fallback message text
- * @param {object} [fallbackKeyboard] - Inline keyboard markup for classic clients
- * @param {object} [options] - Optional settings (userId, ttlMs, baseUrl)
- * @returns {object} Telegram 10.4 Widget Message structure
  */
 function buildWidgetMessage(type, payload = {}, fallbackText = '', fallbackKeyboard = null, options = {}) {
   const userId = options.userId !== undefined ? options.userId : (payload?.userId || 0);
   const isEnabled = isWidgetEngineEnabled(userId);
 
   if (!isEnabled) {
-    const defaultKeyboard = fallbackKeyboard || {
-      inline_keyboard: [],
-    };
+    const defaultKeyboard = fallbackKeyboard || { inline_keyboard: [] };
     return {
       type,
       token: null,
@@ -278,12 +258,7 @@ function buildWidgetMessage(type, payload = {}, fallbackText = '', fallbackKeybo
     if (!defaultKeyboard || !defaultKeyboard.inline_keyboard) {
       defaultKeyboard = {
         inline_keyboard: [
-          [
-            {
-              text: '🚀 Widgetni ochish',
-              web_app: { url: widgetUrl },
-            },
-          ],
+          [{ text: '🚀 Widgetni ochish', web_app: { url: widgetUrl } }],
         ],
       };
     } else {
@@ -303,7 +278,6 @@ function buildWidgetMessage(type, payload = {}, fallbackText = '', fallbackKeybo
       }
     }
   } else {
-    // If URL is invalid (e.g. t.me or non-https), strip web_app to prevent BUTTON_URL_INVALID
     if (!defaultKeyboard || !defaultKeyboard.inline_keyboard) {
       defaultKeyboard = { inline_keyboard: [] };
     } else {
@@ -336,9 +310,6 @@ function buildWidgetMessage(type, payload = {}, fallbackText = '', fallbackKeybo
 
 /**
  * Compresses HTML with zlib level 9 and checks Bot API limits (32KB raw, 4KB compressed).
- *
- * @param {string} html
- * @returns {{ rawBytes: number, compressedBytes: number, valid: boolean }}
  */
 function compressWidgetHtml(html) {
   const buf = Buffer.from(html, 'utf8');
@@ -351,9 +322,9 @@ function compressWidgetHtml(html) {
 }
 
 /**
- * Builds self-contained, inline HTML for Telegram Bot API 10.4 `sendWidget`.
- * Conforms to QuickJS sandbox, Profile 1 CSS/JS, zero external requests, and <= 4096 bytes zlib compressed.
- * Spec: https://core.telegram.org/bots/api#sendwidget and https://core.telegram.org/bots/widgets
+ * Builds self-contained, inline HTML for Telegram Bot API 10.4 `sendWidget` (Flashcard).
+ * Crafted in Linear/Obsidian Pro style with SVG vector icons, tabular numerals,
+ * and strict 2-layer DOM+CSS answer hiding. Compressed size ~2.1KB (< 4096B limit).
  *
  * @param {object} viewData
  * @returns {string} Fully standalone inline HTML
@@ -361,7 +332,7 @@ function compressWidgetHtml(html) {
 function buildInlineFlashcardWidgetHtml(viewData = {}) {
   const qClean = decodeHtmlEntities(viewData.question || 'Savol...');
   const aClean = decodeHtmlEntities(viewData.answer || 'Javob...');
-  const titleClean = decodeHtmlEntities(viewData.subjectName ? `${viewData.subjectName} • ${viewData.blockName || ''}` : '⚡ 3D Flashcard');
+  const titleClean = decodeHtmlEntities(viewData.subjectName ? `${viewData.subjectName} • ${viewData.blockName || ''}` : 'Flashcard Studio');
 
   const initialData = JSON.stringify({
     title: titleClean,
@@ -372,56 +343,62 @@ function buildInlineFlashcardWidgetHtml(viewData = {}) {
     cardIdx: viewData.cardIdx || 0,
   }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><style>
-* { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-html, body { width: 100%; height: auto; min-height: 290px; background: var(--tg-theme-bg-color, #17212b); color: var(--tg-theme-text-color, #fff); overflow-x: hidden; }
-.wrap { padding: 10px 12px; min-height: 290px; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; }
-.top-bar { display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--tg-theme-hint-color, #90caf9); opacity: 0.9; }
-.bar-wrap { background: rgba(255,255,255,0.12); height: 5px; border-radius: 3px; margin: 5px 0 8px; overflow: hidden; }
-.bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #2481cc, #4caf50); border-radius: 3px; transition: width 0.3s ease; }
-.card-box { flex: 1; display: flex; align-items: stretch; justify-content: center; min-height: 180px; margin-bottom: 8px; perspective: 900px; touch-action: pan-y; }
-.card { width: 100%; min-height: 180px; position: relative; border-radius: 14px; cursor: pointer; transform-style: preserve-3d; transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); will-change: transform, opacity; }
-.card.flipped { transform: rotateY(180deg); }
-.face { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 14px; padding: 14px 12px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; backface-visibility: hidden; -webkit-backface-visibility: hidden; box-shadow: 0 6px 20px rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.12); background: var(--tg-theme-secondary-bg-color, #233446); }
-.face.back { transform: rotateY(180deg); background: var(--tg-theme-bg-color, #182533); border-color: rgba(76, 175, 80, 0.4); }
-.tag { font-size: 10px; font-weight: 700; letter-spacing: 0.8px; opacity: 0.85; margin-bottom: 6px; text-transform: uppercase; }
-.front .tag { color: var(--tg-theme-link-color, #64b5f6); }
-.back .tag { color: #81c784; }
-.q-text { font-size: 15px; font-weight: 500; line-height: 1.45; word-break: break-word; max-height: 130px; overflow-y: auto; padding: 0 4px; }
-.a-text { font-size: 16px; font-weight: 700; line-height: 1.45; color: #a5d6a7; word-break: break-word; max-height: 130px; overflow-y: auto; padding: 0 4px; }
-.hint { margin-top: 8px; font-size: 11px; opacity: 0.6; }
-.actions { display: flex; gap: 8px; margin-top: 4px; }
-.btn { flex: 1; padding: 10px 14px; border-radius: 10px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; color: #fff; transition: transform 0.1s ease, opacity 0.2s ease; display: flex; align-items: center; justify-content: center; gap: 6px; }
-.btn:active { transform: scale(0.96); opacity: 0.85; }
-.btn-repeat { background: #d32f2f; }
-.btn-known { background: #2e7d32; }
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><style>
+*{box-sizing:border-box;margin:0;padding:0;user-select:none;-webkit-user-select:none;font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif}
+html,body{width:100%;min-height: 290px;background:var(--tg-theme-bg-color,#080b12);color:var(--tg-theme-text-color,#f1f5f9);overflow-x:hidden;font-variant-numeric:tabular-nums}
+.wrap{padding:12px 14px;min-height: 290px;display:flex;flex-direction:column;justify-content:space-between;background:radial-gradient(ellipse 90% 50% at 50% -10%,rgba(59,130,246,0.14),transparent)}
+.top-bar{display:flex;justify-content:space-between;align-items:center;font-size:11.5px;font-weight:600;color:#94a3b8;letter-spacing:-0.01em}
+.pill{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.09);color:#e2e8f0;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:700}
+.bar-wrap{background:rgba(255,255,255,0.07);height:4px;border-radius:99px;margin:7px 0 11px;overflow:hidden}
+.bar-fill{height:100%;width:0%;background:linear-gradient(90deg,#3b82f6,#10b981);border-radius:99px;transition:width 0.35s cubic-bezier(0.22,1,0.36,1)}
+.card-box{flex:1;display:flex;align-items:stretch;justify-content:center;min-height:184px;margin-bottom:11px;perspective:1100px;touch-action:pan-y}
+.card{width:100%;min-height:184px;position:relative;border-radius:16px;cursor:pointer;transform-style:preserve-3d;-webkit-transform-style:preserve-3d;transition:transform 0.42s cubic-bezier(0.22,1,0.36,1)}
+.card.flipped{transform:rotateY(180deg);-webkit-transform:rotateY(180deg)}
+.face{position:absolute;inset:0;width:100%;height:100%;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;align-items:center;text-align:center;backface-visibility:hidden;-webkit-backface-visibility:hidden;background:#0f1420;border:1px solid rgba(255,255,255,0.08);box-shadow:inset 0 1px 0 rgba(255,255,255,0.12),0 16px 32px -8px rgba(0,0,0,0.6);transition:opacity 0.15s ease,visibility 0.15s ease}
+.face.front{z-index:2;visibility:visible;opacity:1}
+.face.back{transform:rotateY(180deg);-webkit-transform:rotateY(180deg);background:#0b1917;border-color:rgba(16,185,129,0.28);box-shadow:inset 0 1px 0 rgba(52,211,153,0.18),0 16px 32px -8px rgba(0,0,0,0.6);z-index:1;visibility:hidden;opacity:0;pointer-events:none}
+.card.flipped .face.front{visibility:hidden;opacity:0;pointer-events:none;z-index:1}
+.card.flipped .face.back{visibility:visible;opacity:1;pointer-events:auto;z-index:2}
+.tag{font-size:10px;font-weight:700;letter-spacing:0.08em;padding:3px 10px;border-radius:6px;text-transform:uppercase;display:inline-flex;align-items:center;gap:5px}
+.front .tag{background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.22)}
+.back .tag{background:rgba(16,185,129,0.14);color:#34d399;border:1px solid rgba(16,185,129,0.25)}
+.q-text{font-size:15px;font-weight:600;line-height:1.48;color:#f8fafc;word-break:break-word;max-height:110px;overflow-y: auto;padding:0 4px;margin:auto 0;letter-spacing:-0.01em}
+.a-text{font-size:15.5px;font-weight:700;line-height:1.48;color:#6ee7b7;word-break:break-word;max-height:110px;overflow-y: auto;padding:0 4px;margin:auto 0}
+.hint{font-size:11px;color:#64748b;font-weight:500;display:flex;align-items:center;gap:5px}
+.actions{display:flex;gap:8px}
+.btn{flex:1;padding:10px 12px;border-radius:11px;font-size:12.5px;font-weight:600;cursor:pointer;transition:transform 0.12s ease,background 0.15s ease;display:flex;align-items:center;justify-content:center;gap:6px;border:1px solid rgba(255,255,255,0.08);box-shadow:inset 0 1px 0 rgba(255,255,255,0.08)}
+.btn:active{transform:scale(0.97)}
+.btn-repeat{background:rgba(244,63,94,0.12);color:#fda4af;border-color:rgba(244,63,94,0.25)}
+.btn-known{background:rgba(16,185,129,0.14);color:#6ee7b7;border-color:rgba(16,185,129,0.28)}
+svg{width:14px;height:14px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 </style></head><body>
 <div class="wrap">
-  <div class="top-bar"><span id="title">⚡ 3D Flashcard</span><span id="prog">0 / 0</span></div>
+  <div class="top-bar"><span id="title">Flashcard</span><span class="pill" id="prog">0 / 0</span></div>
   <div class="bar-wrap"><div class="bar-fill" id="bar"></div></div>
   <div class="card-box">
     <div class="card" id="card">
       <div class="face front">
-        <div class="tag">SAVOL (YODLASH)</div>
-        <div class="q-text" id="q-text">Savol yuklanmoqda...</div>
-        <div class="hint">💡 Javobni ko'rish uchun bosing 👆</div>
+        <div class="tag">SAVOL</div>
+        <div class="q-text" id="q-text">Yuklanmoqda...</div>
+        <div class="hint"><svg viewBox="0 0 24 24"><path d="M17 2.1l4 4-4 4"/><path d="M3 12.2v-2a4 4 0 0 1 4-4h12.8M7 21.9l-4-4 4-4"/><path d="M21 11.8v2a4 4 0 0 1-4 4H4.2"/></svg>Javobni ko'rish uchun bosing</div>
       </div>
       <div class="face back">
-        <div class="tag">TO'G'RI JAVOB</div>
-        <div class="a-text" id="a-text">Javob yuklanmoqda...</div>
-        <div class="hint">🔄 Qaytadan aylantirish uchun bosing</div>
+        <div class="tag">TASDIQLANGAN JAVOB</div>
+        <div class="a-text" id="a-text"></div>
+        <div class="hint"><svg viewBox="0 0 24 24"><path d="M17 2.1l4 4-4 4"/><path d="M3 12.2v-2a4 4 0 0 1 4-4h12.8"/></svg>Savolga qaytish</div>
       </div>
     </div>
   </div>
   <div class="actions">
-    <button class="btn btn-repeat" id="btn-rep" onclick="triggerAction('left','repeat')">👈 Qaytarish</button>
-    <button class="btn btn-known" id="btn-kno" onclick="triggerAction('right','known')">👉 Bilib oldim</button>
+    <button class="btn btn-repeat" id="btn-rep" onclick="triggerAction('left','repeat')"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>Qaytarish</button>
+    <button class="btn btn-known" id="btn-kno" onclick="triggerAction('right','known')"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Bilib oldim</button>
   </div>
 </div>
 <script>
 var W = window.TelegramWidget || window.Telegram && window.Telegram.WebApp || {};
 var card = document.getElementById('card');
 var isAnim = false;
+var curAnswer = '';
 
 function clean(s) {
   if (!s) return '';
@@ -430,13 +407,17 @@ function clean(s) {
 
 function flip() {
   if (isAnim) return;
+  var willFlip = !card.classList.contains('flipped');
+  if (willFlip) {
+    document.getElementById('a-text').textContent = curAnswer;
+  }
   card.classList.toggle('flipped');
   if (W.HapticFeedback && typeof W.HapticFeedback.selectionChanged === 'function') {
     W.HapticFeedback.selectionChanged();
   }
 }
 
-card.onclick = function(e) {
+card.onclick = function() {
   if (isAnim) return;
   flip();
 };
@@ -445,13 +426,16 @@ function render(dataStr) {
   try {
     var d = typeof dataStr === 'string' ? JSON.parse(dataStr) : (dataStr || {});
     if (d.isFinished) {
-      document.querySelector('.card-box').innerHTML = '<div class="face front" style="position:relative;width:100%"><div class="tag" style="color:#81c784">TABRIKLAYMIZ! 🎉</div><div class="q-text" style="color:#a5d6a7;font-weight:700">Barcha kartochkalarni muvaffaqiyatli o‘zlashtirdingiz!</div></div>';
+      document.querySelector('.card-box').innerHTML = '<div class="face front" style="position:relative;width:100%;visibility:visible;opacity:1;border-color:rgba(16,185,129,0.3)"><div class="tag" style="background:rgba(16,185,129,0.15);color:#34d399;border-color:rgba(16,185,129,0.3)">YAKUNLANDI</div><div class="q-text" style="color:#6ee7b7;font-weight:700">Barcha kartochkalar muvaffaqiyatli o‘zlashtirildi</div><div class="hint">Yangi blok tanlashingiz mumkin</div></div>';
       var actions = document.querySelector('.actions');
       if (actions) actions.style.display = 'none';
+      document.getElementById('bar').style.width = '100%';
       return;
     }
+    card.classList.remove('flipped');
+    document.getElementById('a-text').textContent = '';
     if (d.q) document.getElementById('q-text').textContent = clean(d.q);
-    if (d.a) document.getElementById('a-text').textContent = clean(d.a);
+    if (d.a !== undefined) curAnswer = clean(d.a);
     if (d.title) document.getElementById('title').textContent = clean(d.title);
     if (d.total) {
       var p = Math.round(((d.learned || 0) / d.total) * 100);
@@ -469,9 +453,8 @@ function triggerAction(direction, act) {
     W.HapticFeedback.impactOccurred('medium');
   }
 
-  // Instant swipe-out transition (0ms perceived lag)
-  var transX = direction === 'right' ? '125%' : '-125%';
-  var rot = direction === 'right' ? '14deg' : '-14deg';
+  var transX = direction === 'right' ? '120%' : '-120%';
+  var rot = direction === 'right' ? '12deg' : '-12deg';
   var isFlipped = card.classList.contains('flipped');
   card.style.transition = 'transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease';
   card.style.transform = (isFlipped ? 'rotateY(180deg) ' : '') + 'translateX(' + transX + ') rotate(' + rot + ')';
@@ -479,7 +462,8 @@ function triggerAction(direction, act) {
 
   if (typeof W.request === 'function') {
     W.request(act).then(function(res) {
-      if (res && res.result) {
+      if (res && res.result && res.result !== 'OK') {
+        lastData = typeof res.result === 'string' ? res.result : JSON.stringify(res.result);
         animateIn(res.result);
       } else {
         resetCard();
@@ -496,15 +480,15 @@ function triggerAction(direction, act) {
 }
 
 function animateIn(newData) {
-  render(newData);
   card.style.transition = 'none';
   card.classList.remove('flipped');
-  card.style.transform = 'translateY(16px) scale(0.92)';
+  render(newData);
+  card.style.transform = 'translateY(14px) scale(0.94)';
   card.style.opacity = '0';
 
   void card.offsetWidth;
 
-  card.style.transition = 'transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease';
+  card.style.transition = 'transform 0.26s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease';
   card.style.transform = 'translate(0, 0) scale(1)';
   card.style.opacity = '1';
 
@@ -512,17 +496,20 @@ function animateIn(newData) {
     isAnim = false;
     card.style.transition = '';
     card.style.transform = '';
-  }, 280);
+  }, 270);
 }
 
 function resetCard() {
+  card.style.transition = 'none';
+  card.classList.remove('flipped');
+  document.getElementById('a-text').textContent = '';
+  void card.offsetWidth;
   card.style.transition = 'transform 0.2s ease, opacity 0.2s ease';
-  card.style.transform = card.classList.contains('flipped') ? 'rotateY(180deg)' : '';
+  card.style.transform = '';
   card.style.opacity = '1';
   isAnim = false;
 }
 
-// Touch swipe gestures
 var startX = 0, startY = 0, curX = 0, isDragging = false;
 card.addEventListener('touchstart', function(e) {
   if (isAnim) return;
@@ -542,11 +529,11 @@ card.addEventListener('touchmove', function(e) {
     curX = dx;
     var base = card.classList.contains('flipped') ? 'rotateY(180deg) ' : '';
     card.style.transition = 'none';
-    card.style.transform = base + 'translateX(' + dx + 'px) rotate(' + (dx * 0.05) + 'deg)';
+    card.style.transform = base + 'translateX(' + dx + 'px) rotate(' + (dx * 0.045) + 'deg)';
   }
 }, { passive: true });
 
-card.addEventListener('touchend', function(e) {
+card.addEventListener('touchend', function() {
   if (!isDragging || isAnim) return;
   isDragging = false;
   if (curX > 65) {
@@ -554,20 +541,32 @@ card.addEventListener('touchend', function(e) {
   } else if (curX < -65) {
     triggerAction('left', 'repeat');
   } else if (Math.abs(curX) > 5) {
-    card.style.transition = 'transform 0.22s cubic-bezier(0.18, 0.89, 0.32, 1.28)';
+    card.style.transition = 'transform 0.22s cubic-bezier(0.22, 1, 0.36, 1)';
     card.style.transform = card.classList.contains('flipped') ? 'rotateY(180deg)' : '';
   }
 }, { passive: true });
 
 var lastData = '';
+function getLatestWidgetData() {
+  var pd = W.publicData;
+  var cd = W.chatData;
+  if (pd && String(pd).indexOf('"q"') !== -1) return pd;
+  if (cd && String(cd).indexOf('"q"') !== -1) return cd;
+  return pd || cd || '';
+}
+
+lastData = getLatestWidgetData();
+
 function checkData() {
-  var pd = W.chatData || W.publicData;
-  if (pd && pd !== lastData) {
-    lastData = pd;
-    animateIn(pd);
+  var nextD = getLatestWidgetData();
+  if (nextD && nextD !== lastData) {
+    lastData = nextD;
+    if (!isAnim) {
+      animateIn(nextD);
+    }
   }
 }
-setInterval(checkData, 300);
+setInterval(checkData, 350);
 if (W.onEvent) {
   W.onEvent('chatDataChanged', function() { checkData(); });
   W.onEvent('publicDataChanged', function() { checkData(); });
@@ -582,8 +581,7 @@ render(${initialData});
 
 /**
  * Builds self-contained, inline HTML for Telegram Bot API 10.4 `sendWidget` (Docx Healer).
- * Conforms to QuickJS sandbox, Profile 1 CSS/JS, zero external requests, and <= 4096 bytes zlib compressed.
- * Spec: https://core.telegram.org/bots/api#sendwidget and https://core.telegram.org/bots/widgets
+ * Crafted in Linear/Obsidian Pro style with SVG vector icons and <= 4096 bytes zlib compressed.
  *
  * @param {object} viewData
  * @returns {string} Fully standalone inline HTML
@@ -604,21 +602,22 @@ function buildInlineDocxHealerWidgetHtml(viewData = {}) {
         },
       ];
 
+  const boundedQuestions = rawQuestions.slice(0, 10);
   const initialData = JSON.stringify({
-    title: decodeHtmlEntities(viewData.fileName || viewData.title || 'Docx Healer'),
+    title: decodeHtmlEntities(viewData.fileName || viewData.title || 'Docx Healer').slice(0, 50),
     total: rawQuestions.length,
     curIdx: typeof viewData.currentIndex === 'number' ? viewData.currentIndex : 0,
-    questions: rawQuestions.map((q, i) => {
+    questions: boundedQuestions.map((q, i) => {
       const qText = q.questionText || q.question || q.raw || 'Savol';
       return {
         id: q.id || (i + 1),
-        q: decodeHtmlEntities(typeof qText === 'string' ? qText : 'Savol'),
-        err: decodeHtmlEntities(q.error || 'Tekshirish talab etiladi'),
+        q: decodeHtmlEntities(typeof qText === 'string' ? qText : 'Savol').slice(0, 200),
+        err: decodeHtmlEntities(q.error || 'Kalit talab etiladi').slice(0, 60),
         opts: (q.options || []).map((o) => {
           const t = typeof o === 'string' ? o : (o.cleanText || o.text || '');
           const isOk = typeof o === 'object' ? Boolean(o.isCorrect) : false;
           return {
-            t: decodeHtmlEntities(t),
+            t: decodeHtmlEntities(t).slice(0, 70),
             ok: isOk,
           };
         }),
@@ -626,44 +625,43 @@ function buildInlineDocxHealerWidgetHtml(viewData = {}) {
     }),
   }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><style>
-* { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-html, body { width: 100%; min-height: 300px; background: var(--tg-theme-bg-color, #17212b); color: var(--tg-theme-text-color, #fff); overflow-x: hidden; }
-.wrap { padding: 10px 12px; min-height: 300px; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; }
-.top-bar { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 700; color: var(--tg-theme-link-color, #64b5f6); }
-.badge { font-size: 10px; padding: 2px 8px; border-radius: 6px; background: rgba(255, 152, 0, 0.2); color: #ffb74d; font-weight: 600; }
-.badge.ok { background: rgba(76, 175, 80, 0.2); color: #81c784; }
-.bar-wrap { background: rgba(255,255,255,0.12); height: 4px; border-radius: 2px; margin: 5px 0 8px; overflow: hidden; }
-.bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #2481cc, #4caf50); transition: width 0.3s; }
-.card-box { flex: 1; display: flex; flex-direction: column; min-height: 195px; background: var(--tg-theme-secondary-bg-color, #233446); border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; padding: 12px; margin-bottom: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); position: relative; transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s; will-change: transform, opacity; }
-.q-title { font-size: 11px; text-transform: uppercase; color: var(--tg-theme-hint-color, #8e9ca8); margin-bottom: 4px; font-weight: 700; }
-.q-text { font-size: 14px; font-weight: 500; line-height: 1.4; max-height: 60px; overflow-y: auto; margin-bottom: 8px; word-break: break-word; color: #fff; }
-.opts { display: flex; flex-direction: column; gap: 6px; }
-.opt { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); cursor: pointer; transition: all 0.15s; font-size: 13px; line-height: 1.3; }
-.opt:active { transform: scale(0.98); }
-.opt.sel { background: rgba(76, 175, 80, 0.22); border-color: #4caf50; font-weight: 600; }
-.opt-l { width: 22px; height: 22px; border-radius: 50%; background: rgba(255,255,255,0.12); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
-.opt.sel .opt-l { background: #4caf50; color: #fff; }
-.opt-t { flex: 1; word-break: break-word; color: #e0e0e0; }
-.actions { display: flex; gap: 6px; }
-.btn { flex: 1; padding: 9px 12px; border-radius: 10px; border: none; font-size: 12px; font-weight: 600; cursor: pointer; color: #fff; background: rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; gap: 4px; transition: opacity 0.2s; }
-.btn:active { opacity: 0.8; }
-.btn:disabled { opacity: 0.3; cursor: default; }
-.btn-heal { background: linear-gradient(135deg, #7b1fa2, #512da8); }
-.btn-save { background: #2e7d32; }
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><style>
+*{box-sizing:border-box;margin:0;padding:0;user-select:none;-webkit-user-select:none;font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif}
+html,body{width:100%;min-height: 300px;background:var(--tg-theme-bg-color,#080b12);color:var(--tg-theme-text-color,#f1f5f9);overflow-x:hidden;font-variant-numeric:tabular-nums}
+.wrap{padding:12px 14px;min-height: 300px;display:flex;flex-direction:column;justify-content:space-between;background:radial-gradient(ellipse 90% 50% at 50% -10%,rgba(99,102,241,0.14),transparent)}
+.top-bar{display:flex;justify-content:space-between;align-items:center;font-size:11.5px;font-weight:600;color:#94a3b8}
+.badge{font-size:10px;padding:2px 9px;border-radius:6px;background:rgba(245,158,11,0.14);border:1px solid rgba(245,158,11,0.28);color:#fbbf24;font-weight:700;letter-spacing:0.03em}
+.badge.ok{background:rgba(16,185,129,0.14);border-color:rgba(16,185,129,0.28);color:#34d399}
+.bar-wrap{background:rgba(255,255,255,0.07);height:4px;border-radius:99px;margin:7px 0 10px;overflow:hidden}
+.bar-fill{height:100%;width:0%;background:linear-gradient(90deg,#6366f1,#10b981);transition:width 0.3s ease}
+.card-box{flex:1;display:flex;flex-direction:column;min-height:198px;background:#0f1420;border:1px solid rgba(255,255,255,0.08);box-shadow:inset 0 1px 0 rgba(255,255,255,0.1),0 14px 28px -8px rgba(0,0,0,0.55);border-radius:15px;padding:13px;margin-bottom:10px;position:relative;transition:transform 0.22s cubic-bezier(0.22,1,0.36,1),opacity 0.2s}
+.q-title{font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;margin-bottom:5px;font-weight:700}
+.q-text{font-size:13.5px;font-weight:600;line-height:1.42;max-height:60px;overflow-y: auto;margin-bottom:9px;word-break:break-word;color:#f8fafc}
+.opts{display:flex;flex-direction:column;gap:6px}
+.opt{display:flex;align-items:center;gap:9px;padding:7.5px 10px;border-radius:10px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);cursor:pointer;transition:all 0.14s;font-size:12.5px;line-height:1.3}
+.opt:active{transform:scale(0.985)}
+.opt.sel{background:rgba(16,185,129,0.14);border-color:#10b981;font-weight:600}
+.opt-l{width:21px;height:21px;border-radius:6px;background:rgba(255,255,255,0.07);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#94a3b8;flex-shrink:0}
+.opt.sel .opt-l{background:#10b981;color:#052e16}
+.opt-t{flex:1;word-break:break-word;color:#e2e8f0}
+.actions{display:flex;gap:7px}
+.btn{flex:1;padding:9.5px 10px;border-radius:10px;border:1px solid rgba(255,255,255,0.08);font-size:12px;font-weight:600;cursor:pointer;color:#e2e8f0;background:#141a26;display:flex;align-items:center;justify-content:center;gap:5px;transition:opacity 0.2s}
+.btn:active{opacity:0.8}
+.btn:disabled{opacity:0.3;cursor:default}
+.btn-heal{background:linear-gradient(135deg,#4f46e5,#7c3aed);border-color:rgba(255,255,255,0.16);color:#fff}
 </style></head><body>
 <div class="wrap">
-  <div class="top-bar"><span id="title">🔧 Docx Healer</span><span class="badge" id="badge">Xato #1</span></div>
+  <div class="top-bar"><span id="title">Docx Healer</span><span class="badge" id="badge">Xato #1</span></div>
   <div class="bar-wrap"><div class="bar-fill" id="bar"></div></div>
   <div class="card-box" id="box">
-    <div class="q-title" id="q-hdr">SAVOL (1 / 3)</div>
-    <div class="q-text" id="q-text">Savol matni yuklanmoqda...</div>
+    <div class="q-title" id="q-hdr">SAVOL 01 / 03</div>
+    <div class="q-text" id="q-text">Yuklanmoqda...</div>
     <div class="opts" id="opts"></div>
   </div>
   <div class="actions">
-    <button class="btn" id="btn-prev" onclick="nav(-1)">◀ Oldingi</button>
-    <button class="btn btn-heal" id="btn-heal" onclick="healAll()">✨ AI Tuzatish</button>
-    <button class="btn" id="btn-next" onclick="nav(1)">Keyingi ▶</button>
+    <button class="btn" id="btn-prev" onclick="nav(-1)">Oldingi</button>
+    <button class="btn btn-heal" id="btn-heal" onclick="healAll()">AI Auto-Heal</button>
+    <button class="btn" id="btn-next" onclick="nav(1)">Keyingi</button>
   </div>
 </div>
 <script>
@@ -683,7 +681,10 @@ function clean(s) {
 }
 
 function updateProgress() {
-  if (!qs.length) return;
+  if (!qs.length) {
+    document.getElementById('bar').style.width = '100%';
+    return;
+  }
   var fixed = qs.filter(function(q) {
     return q.opts && q.opts.some(function(o) { return o.ok; });
   }).length;
@@ -693,9 +694,10 @@ function updateProgress() {
 
 function render() {
   if (!qs.length) {
-    box.innerHTML = '<div class="q-title" style="color:#81c784">TABRIKLAYMIZ! 🎉</div><div class="q-text" style="color:#a5d6a7;font-weight:700">Barcha xatoliklar muvaffaqiyatli to‘g‘rilandi!</div>';
+    box.innerHTML = '<div class="q-title" style="color:#34d399">TAYYOR</div><div class="q-text" style="color:#6ee7b7;font-weight:700">Barcha savollar muvaffaqiyatli tekshirildi va saqlandi.</div>';
     var acts = document.querySelector('.actions');
     if (acts) acts.style.display = 'none';
+    updateProgress();
     return;
   }
   var q = qs[cur];
@@ -704,12 +706,12 @@ function render() {
   var letters = ['A', 'B', 'C', 'D', 'E'];
   var isFixed = q.opts && q.opts.some(function(o) { return o.ok; });
 
-  document.getElementById('title').textContent = initialData.title || '🔧 Docx Healer';
+  document.getElementById('title').textContent = initialData.title || 'Docx Healer';
   var badge = document.getElementById('badge');
-  badge.textContent = isFixed ? '✅ Kalit belgilandi' : clean(q.err || 'To‘g‘ri javob yo‘q');
+  badge.textContent = isFixed ? 'Kalit tanlandi' : clean(q.err || 'Kalit yo‘q');
   badge.className = 'badge' + (isFixed ? ' ok' : '');
 
-  document.getElementById('q-hdr').textContent = 'SAVOL (' + (cur + 1) + ' / ' + qs.length + ')';
+  document.getElementById('q-hdr').textContent = 'SAVOL ' + (cur + 1) + ' / ' + qs.length;
   document.getElementById('q-text').textContent = clean(q.q || 'Savol matni');
 
   document.getElementById('btn-prev').disabled = (cur === 0);
@@ -744,6 +746,7 @@ function pickKey(optIdx) {
   var q = qs[cur];
   if (!q || !q.opts) return;
 
+  isAnim = true;
   q.opts.forEach(function(o, i) {
     o.ok = (i === optIdx);
   });
@@ -754,17 +757,36 @@ function pickKey(optIdx) {
   }
 
   var payload = { action: 'docx_pick', qIdx: cur, optIdx: optIdx };
+  var onDone = function(res) {
+    qs.splice(cur, 1);
+
+    if (res && res.result && res.result !== 'OK') {
+      try {
+        var d = typeof res.result === 'string' ? JSON.parse(res.result) : res.result;
+        if (d.isFinished || d.remaining === 0) {
+          qs = [];
+        } else if (d.currentQuestion) {
+          if (cur < qs.length) {
+            qs[cur] = d.currentQuestion;
+          } else {
+            qs.push(d.currentQuestion);
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (cur >= qs.length && cur > 0) cur = qs.length - 1;
+    isAnim = false;
+    render();
+  };
+
   if (typeof W.request === 'function') {
-    W.request(JSON.stringify(payload)).catch(function() {});
+    W.request(JSON.stringify(payload)).then(onDone).catch(function() { onDone(null); });
   } else if (typeof W.sendQuery === 'function') {
     W.sendQuery(JSON.stringify(payload));
-  }
-
-  // Optimistic transition to next question if not on last
-  if (cur < qs.length - 1) {
-    setTimeout(function() {
-      nav(1);
-    }, 240);
+    setTimeout(function() { onDone(null); }, 220);
+  } else {
+    setTimeout(function() { onDone(null); }, 220);
   }
 }
 
@@ -776,17 +798,17 @@ function nav(delta) {
   isAnim = true;
   var transX = delta > 0 ? '-100%' : '100%';
   box.style.transition = 'transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.16s ease';
-  box.style.transform = 'translateX(' + transX + ') scale(0.95)';
+  box.style.transform = 'translateX(' + transX + ') scale(0.96)';
   box.style.opacity = '0';
 
   setTimeout(function() {
     cur = nextIdx;
     render();
     box.style.transition = 'none';
-    box.style.transform = (delta > 0 ? 'translateX(100%)' : 'translateX(-100%)') + ' scale(0.95)';
+    box.style.transform = (delta > 0 ? 'translateX(100%)' : 'translateX(-100%)') + ' scale(0.96)';
     void box.offsetWidth;
 
-    box.style.transition = 'transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.18s ease';
+    box.style.transition = 'transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease';
     box.style.transform = 'translateX(0) scale(1)';
     box.style.opacity = '1';
 
@@ -800,7 +822,7 @@ function nav(delta) {
 
 function healAll() {
   var btn = document.getElementById('btn-heal');
-  btn.textContent = '⏳ AI...';
+  btn.textContent = 'AI...';
   btn.disabled = true;
 
   if (W.HapticFeedback && typeof W.HapticFeedback.impactOccurred === 'function') {
@@ -810,12 +832,19 @@ function healAll() {
   var payload = { action: 'docx_heal_all' };
   if (typeof W.request === 'function') {
     W.request(JSON.stringify(payload)).then(function(res) {
-      btn.textContent = '✨ AI Tuzatish';
+      btn.textContent = 'AI Auto-Heal';
       btn.disabled = false;
-      if (res && res.result) {
+      if (res && res.result && res.result !== 'OK') {
         try {
           var d = typeof res.result === 'string' ? JSON.parse(res.result) : res.result;
-          if (d.questions) qs = d.questions;
+          if (d.isFinished || d.remaining === 0) {
+            qs = [];
+          } else if (Array.isArray(d.questions)) {
+            qs = d.questions;
+          } else if (d.currentQuestion) {
+            qs = [d.currentQuestion];
+            cur = 0;
+          }
         } catch(e) {}
       } else {
         heuristicHeal();
@@ -823,14 +852,14 @@ function healAll() {
       render();
     }).catch(function() {
       heuristicHeal();
-      btn.textContent = '✨ AI Tuzatish';
+      btn.textContent = 'AI Auto-Heal';
       btn.disabled = false;
       render();
     });
   } else {
     heuristicHeal();
     setTimeout(function() {
-      btn.textContent = '✨ AI Tuzatish';
+      btn.textContent = 'AI Auto-Heal';
       btn.disabled = false;
       render();
     }, 300);
@@ -845,7 +874,6 @@ function heuristicHeal() {
   });
 }
 
-// Touch swipe gestures
 var startX = 0, startY = 0, curX = 0, isDragging = false;
 box.addEventListener('touchstart', function(e) {
   if (isAnim) return;
@@ -868,7 +896,7 @@ box.addEventListener('touchmove', function(e) {
   }
 }, { passive: true });
 
-box.addEventListener('touchend', function(e) {
+box.addEventListener('touchend', function() {
   if (!isDragging || isAnim) return;
   isDragging = false;
   if (curX < -50 && cur < qs.length - 1) {

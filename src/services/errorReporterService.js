@@ -50,12 +50,17 @@ class ErrorReporterService {
    * Escape HTML entities for Telegram parse_mode: 'HTML'
    */
   escapeHtml(str) {
-    if (!str) return '';
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+    if (str === undefined || str === null) return '';
+    try {
+      const { escapeHtml } = require('../core/utils');
+      return escapeHtml(str);
+    } catch {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
   }
 
   /**

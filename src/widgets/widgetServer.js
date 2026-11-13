@@ -3,8 +3,25 @@
 const express = require('express');
 const widgetService = require('../services/widgetService');
 const logger = require('../core/logger');
+const mutex = require('../core/mutex');
+const { TTLMap } = require('../core/utils');
 
 const router = express.Router();
+
+const widgetIpLimiter = new TTLMap(60 * 1000, 5000);
+const widgetAiHealLimiter = new TTLMap(60 * 1000, 2000);
+
+function widgetRateLimiter(req, res, next) {
+  const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+  const count = (widgetIpLimiter.get(ip) || 0) + 1;
+  widgetIpLimiter.set(ip, count);
+  if (count > 90) {
+    return res.status(429).json({ ok: false, error: 'Too many requests. Please slow down.' });
+  }
+  next();
+}
+
+router.use(widgetRateLimiter);
 
 // Registry for custom widget action handlers
 const queryHandlers = new Map();
@@ -28,12 +45,10 @@ function registerQueryHandler(actionName, handlerFn) {
  * @returns {Promise<any>}
  */
 async function executeQueryAction(verifiedToken, action, data) {
-  // Check if a specific handler was registered
   if (action && queryHandlers.has(action)) {
     return await queryHandlers.get(action)(verifiedToken, action, data);
   }
 
-  // Built-in handlers
   switch (action) {
     case 'my_analysis':
       return {
@@ -42,13 +57,38 @@ async function executeQueryAction(verifiedToken, action, data) {
         status: 'ok',
       };
 
-    case 'card_action':
+    case 'card_action': {
+      const userId = verifiedToken.userId;
+      const cardAct = data?.action === 'repeat' ? 'repeat' : 'known';
+      const cardIdx = typeof data?.cardIdx === 'number' ? data.cardIdx : null;
+
+      if (userId) {
+        try {
+          const cramHandler = require('../handlers/cramReviewHandler');
+          const userKey = String(userId);
+          const session = cramHandler.cramSessions?.get(userKey);
+          if (session && session.deck) {
+            cramHandler.processCardAction(session.deck, cardAct, cardIdx);
+            cramHandler.cramSessions.set(userKey, session);
+            try {
+              const redis = require('../services/redisService');
+              if (redis && typeof redis.set === 'function') {
+                await redis.set(`cram_session:${userKey}`, JSON.stringify(session), 'EX', 7200);
+              }
+            } catch {}
+          }
+        } catch (err) {
+          logger.debug('card_action cram session sync skipped:', err?.message);
+        }
+      }
+
       return {
         action: data?.action,
         cardIdx: data?.cardIdx,
         timestamp: Date.now(),
         status: 'saved',
       };
+    }
 
     case 'fix_option': {
       const questionIdx = typeof data?.questionIdx === 'number' ? data.questionIdx : -1;
@@ -80,6 +120,13 @@ async function executeQueryAction(verifiedToken, action, data) {
     }
 
     case 'auto_heal_all': {
+      const uidKey = String(verifiedToken.userId || 'anon');
+      const aiCount = (widgetAiHealLimiter.get(uidKey) || 0) + 1;
+      widgetAiHealLimiter.set(uidKey, aiCount);
+      if (aiCount > 5) {
+        throw new Error('AI avto-tuzatish limiti: daqiqasiga ko\'pi bilan 5 marta urinish mumkin.');
+      }
+
       const rawQuestions = (data?.questions && Array.isArray(data.questions) && data.questions.length > 0)
         ? data.questions
         : (verifiedToken.payload?.questions || []);
@@ -105,7 +152,7 @@ async function executeQueryAction(verifiedToken, action, data) {
             cleanText: typeof opt === 'string' ? opt : (opt.cleanText || opt.text || ''),
             isCorrect: oi === h.correct_index,
           })),
-          error: '✅ AI orqali tiklandi',
+          error: 'AI orqali tiklandi',
         }));
 
         const remainingList = (healResult.remainingInvalid || []).map((r, i) => {
@@ -119,7 +166,7 @@ async function executeQueryAction(verifiedToken, action, data) {
               cleanText: o.cleanText || o.text,
               isCorrect: false,
             })),
-            error: '⚠️ Qo‘lda tanlash talab etiladi',
+            error: 'Qo‘lda tanlash talab etiladi',
           };
         });
 
@@ -145,7 +192,7 @@ async function executeQueryAction(verifiedToken, action, data) {
             questionText: cand.questionText || cand.raw || 'Savol',
             raw: cand.raw || cand.questionText || '',
             options: opts,
-            error: '✅ Tiklandi',
+            error: 'Tiklandi',
           };
         });
         return {
@@ -158,67 +205,71 @@ async function executeQueryAction(verifiedToken, action, data) {
     }
 
     case 'save_docx': {
-      const questionsInput = data?.questions || verifiedToken.payload?.questions || [];
       const userId = verifiedToken.userId;
+      return await mutex.runExclusive(`widget_save_docx:${userId}`, async () => {
+        const questionsInput = data?.questions || verifiedToken.payload?.questions || [];
+        const validQuestionsToAdd = [];
+        const remainingInvalid = [];
 
-      const validQuestionsToAdd = [];
-      const remainingInvalid = [];
+        for (const q of questionsInput) {
+          const opts = (q.options || []).map(o => typeof o === 'string' ? o : (o.cleanText || o.text || ''));
+          const correctIdx = (q.options || []).findIndex(o => Boolean(o.isCorrect));
 
-      for (const q of questionsInput) {
-        const opts = (q.options || []).map(o => typeof o === 'string' ? o : (o.cleanText || o.text || ''));
-        const correctIdx = (q.options || []).findIndex(o => Boolean(o.isCorrect));
-
-        if (opts.length >= 2 && correctIdx >= 0) {
-          validQuestionsToAdd.push({
-            question: q.questionText || q.question || (typeof q.raw === 'string' ? q.raw.split('\n')[0] : 'Savol'),
-            options: opts,
-            correct_index: correctIdx,
-          });
-        } else {
-          remainingInvalid.push(typeof q.raw === 'string' ? q.raw : (q.questionText || 'Xato savol'));
-        }
-      }
-
-      let totalValid = validQuestionsToAdd.length;
-      if (userId) {
-        try {
-          const redisConnection = require('../services/redisService');
-          const sessionKey = `tg_session:${userId}`;
-          const rawSession = await redisConnection.get(sessionKey);
-          let session = rawSession ? JSON.parse(rawSession) : null;
-
-          if (!session) session = { data: {} };
-          if (!session.data) session.data = {};
-
-          const existingValid = session.data.questions || [];
-          const updatedQuestions = [...existingValid, ...validQuestionsToAdd];
-
-          session.data.questions = updatedQuestions;
-          session.data.invalidQs = remainingInvalid;
-          session.data.fixing_error_index = undefined;
-          if (session.data.fixedKeysDraft) delete session.data.fixedKeysDraft;
-
-          if (session.data.is_auto_docx) {
-            const chunks = [];
-            for (let i = 0; i < updatedQuestions.length; i += 25) {
-              chunks.push(updatedQuestions.slice(i, i + 25));
-            }
-            session.data.chunks = chunks;
+          if (opts.length >= 2 && correctIdx >= 0) {
+            validQuestionsToAdd.push({
+              question: q.questionText || q.question || (typeof q.raw === 'string' ? q.raw.split('\n')[0] : 'Savol'),
+              options: opts,
+              correct_index: correctIdx,
+            });
+          } else {
+            remainingInvalid.push(typeof q.raw === 'string' ? q.raw : (q.questionText || 'Xato savol'));
           }
-
-          totalValid = updatedQuestions.length;
-          await redisConnection.set(sessionKey, JSON.stringify(session), 'EX', 86400);
-        } catch (err) {
-          logger.warn('save_docx session update in redis failed/offline:', err?.message);
         }
-      }
 
-      return {
-        status: 'completed',
-        savedCount: validQuestionsToAdd.length,
-        remainingCount: remainingInvalid.length,
-        totalValid,
-      };
+        let totalValid = validQuestionsToAdd.length;
+        if (userId) {
+          try {
+            const redisConnection = require('../services/redisService');
+            const sessionKey = `tg_session:${userId}`;
+            const rawSession = await redisConnection.get(sessionKey);
+            let session = rawSession ? JSON.parse(rawSession) : { data: {} };
+            if (!session) session = { data: {} };
+            if (!session.data) session.data = {};
+
+            const existingValid = Array.isArray(session.data.questions) ? session.data.questions : [];
+            const existingSet = new Set(existingValid.map(item => `${item.question}::${(item.options || []).join('|')}`));
+            const deduplicatedNew = validQuestionsToAdd.filter(
+              item => !existingSet.has(`${item.question}::${(item.options || []).join('|')}`)
+            );
+
+            const updatedQuestions = [...existingValid, ...deduplicatedNew];
+            session.data.questions = updatedQuestions;
+            session.data.invalidQs = remainingInvalid;
+            session.data.fixing_error_index = undefined;
+            if (session.data.fixedKeysDraft) delete session.data.fixedKeysDraft;
+
+            if (session.data.is_auto_docx) {
+              const chunks = [];
+              for (let i = 0; i < updatedQuestions.length; i += 25) {
+                chunks.push(updatedQuestions.slice(i, i + 25));
+              }
+              session.data.chunks = chunks;
+            }
+
+            totalValid = updatedQuestions.length;
+            await redisConnection.set(sessionKey, JSON.stringify(session), 'EX', 86400);
+          } catch (err) {
+            logger.warn('save_docx session update in redis failed/offline:', err?.message);
+          }
+        }
+
+        return {
+          status: 'completed',
+          savedCount: validQuestionsToAdd.length,
+          remainingCount: remainingInvalid.length,
+          totalValid,
+        };
+      });
     }
 
     case 'delete_question': {
@@ -259,46 +310,82 @@ async function executeQueryAction(verifiedToken, action, data) {
 }
 
 /**
- * Generates a clean, friendly responsive HTML error page.
+ * Generates a clean Obsidian Glass responsive HTML error page.
  */
 function renderErrorPage(title, message) {
   return `<!DOCTYPE html>
 <html lang="uz">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>${widgetService.escapeHtml(title)}</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
+    :root {
+      --bg: #07090E;
+      --surface: #0E131F;
+      --text: #F8FAFC;
+      --muted: #94A3B8;
+      --accent: #3B82F6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background: #0e1621;
-      color: #f5f5f5;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(ellipse 80% 50% at 50% -15%, rgba(245, 158, 11, 0.12), transparent), var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 16px;
-      margin: 0;
+      padding: 20px;
     }
     .card {
-      background: #17212b;
+      background: var(--surface);
       border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 18px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 24px 48px -12px rgba(0, 0, 0, 0.7);
+      border-radius: 20px;
       padding: 32px 24px;
       text-align: center;
       max-width: 380px;
-      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+      width: 100%;
     }
-    .icon { font-size: 48px; margin-bottom: 16px; }
-    h2 { font-size: 18px; font-weight: 700; margin-bottom: 8px; color: #ff9800; }
-    p { font-size: 13px; color: #8e9ca8; line-height: 1.5; margin: 0; }
+    .icon-ring {
+      width: 56px;
+      height: 56px;
+      border-radius: 14px;
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.25);
+      color: #FBBF24;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 18px;
+    }
+    h2 { font-size: 17px; font-weight: 700; margin-bottom: 8px; color: #F8FAFC; letter-spacing: -0.02em; }
+    p { font-size: 13px; color: var(--muted); line-height: 1.55; margin-bottom: 24px; }
+    .btn {
+      width: 100%;
+      padding: 12px 16px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: #161E2E;
+      color: #F8FAFC;
+      font-size: 13.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn:active { background: #1E293B; }
   </style>
 </head>
 <body>
   <div class="card">
-    <div class="icon">⏳</div>
+    <div class="icon-ring">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    </div>
     <h2>${widgetService.escapeHtml(title)}</h2>
     <p>${widgetService.escapeHtml(message)}</p>
+    <button class="btn" onclick="if(window.Telegram&&window.Telegram.WebApp){window.Telegram.WebApp.close();}else{window.close();}">Yopish</button>
   </div>
 </body>
 </html>`;
@@ -315,14 +402,13 @@ router.get(['/:token', '/widget/:token'], (req, res) => {
   if (!verified) {
     return res.status(403).send(
       renderErrorPage(
-        'Havola muddati tugagan yoki yaroqsiz',
-        'Xavfsizlik yuzasidan widget tokeni tekshiruvdan o\'tmadi yoki 1 soatlik yaroqlilik muddati tugagan.'
+        'Havola muddati tugagan',
+        'Xavfsizlik yuzasidan ushbu vidjet seansi yakunlangan. Bot orqali yangi oynani oching.'
       )
     );
   }
 
   try {
-    // Security headers: allow iframe embedding in Telegram WebApp while maintaining strict CSP
     res.removeHeader('X-Frame-Options');
     res.setHeader(
       'Content-Security-Policy',
@@ -341,7 +427,7 @@ router.get(['/:token', '/widget/:token'], (req, res) => {
     return res.send(html);
   } catch (err) {
     logger.error('Widget render error:', { error: err.message, stack: err.stack });
-    return res.status(500).send(renderErrorPage('Xatolik', 'Widgetni yuklashda xatolik yuz berdi.'));
+    return res.status(500).send(renderErrorPage('Xatolik', 'Vidjetni yuklashda texnik xatolik yuz berdi.'));
   }
 });
 

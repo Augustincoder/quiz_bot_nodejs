@@ -189,20 +189,7 @@ async function cbBackToMain(ctx) {
   await safeEdit(ctx, welcomeText, { parse_mode: 'HTML', ...getMainKeyboard() });
 }
 
-async function canManageLobbyOrGame(ctx, chatId, userId, initiatorId) {
-  if (userId === initiatorId) return true;
-  const config = require('../config/config');
-  if (config.ADMIN_IDS && config.ADMIN_IDS.map(Number).includes(Number(userId))) return true;
-  if (ctx.chat?.type !== 'private') {
-    try {
-      const member = await ctx.telegram.getChatMember(chatId, userId);
-      if (member && (member.status === 'creator' || member.status === 'administrator')) {
-        return true;
-      }
-    } catch {}
-  }
-  return false;
-}
+const { canManageLobbyOrGame } = require('./groupQuizLogic');
 
 async function cmdStop(ctx) {
   await resetUserFlows(ctx.from?.id, ctx);

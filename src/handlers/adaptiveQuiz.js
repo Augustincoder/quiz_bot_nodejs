@@ -91,30 +91,10 @@ async function cbAdaptiveRun(ctx) {
   }
   const chatId     = ctx.chat.id;
 
+  const { checkActiveTestConflict } = require('./quizGame');
   const unlock = await mutex.lock(`start_test:${chatId}`);
   try {
-    const existing = await sessionService.getActiveTest(chatId);
-    if (existing) {
-      if (existing.status === 'preparing') {
-        await sessionService.deleteActiveTest(chatId);
-      } else {
-        const kb = existing.status === 'paused'
-          ? Markup.inlineKeyboard([
-              [Markup.button.callback("▶️ Davom etish", "resume_test")],
-              [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
-            ])
-          : Markup.inlineKeyboard([
-              [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
-            ]);
-        return ctx.reply(
-          "⚠️ <b>Sizda tugallanmagan test bor.</b>\n\nYangi adaptiv test boshlashdan oldin uni davom ettirishingiz yoki to'xtatishingiz kerak:",
-          {
-            parse_mode: "HTML",
-            ...kb,
-          }
-        );
-      }
-    }
+    if (await checkActiveTestConflict(ctx, chatId)) return;
 
     const stats    = await dbService.getUserStats(ctx.from.id);
     const mistakes = (stats.history || [])

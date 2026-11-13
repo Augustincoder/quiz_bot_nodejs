@@ -2324,12 +2324,17 @@ async function cbOpenInspector(ctx) {
       const widgetRes = await ctx.telegram.callApi('sendWidget', widgetPayload);
       if (widgetRes && widgetRes.message_id) {
         widgetSent = true;
+        await updateData(ctx, { docx_widget_msg_id: widgetRes.message_id });
         if (ctx.callbackQuery?.message) {
           await ctx.deleteMessage().catch(() => {});
         }
         return;
       }
     } catch (err) {
+      try {
+        const featureFlagService = require('../services/featureFlagService');
+        featureFlagService.recordFeatureError('FEATURE_DOCX_SMART_HEALER', err);
+      } catch {}
       logger.warn('sendWidget for docxHealer failed, falling back to WebApp message:', err.message);
     }
   }
@@ -2357,6 +2362,40 @@ async function cbOpenInspector(ctx) {
 }
 
 /**
+ * Creates safe, compact widget public data strictly bounded under 1024 bytes
+ * to satisfy Telegram Bot API 10.4 sendWidget / editMessageWidgetData limits.
+ */
+function makeSafeDocxWidgetPublicData(remainingInvalid, curIdx = 0, blockName = 'Docx Healer') {
+  const total = Array.isArray(remainingInvalid) ? remainingInvalid.length : 0;
+  const safeIdx = Math.min(Math.max(0, curIdx), Math.max(0, total - 1));
+  let currentQuestion = null;
+
+  if (total > 0 && remainingInvalid[safeIdx]) {
+    const raw = remainingInvalid[safeIdx];
+    const cand = extractQuestionCandidates(raw);
+    currentQuestion = {
+      id: safeIdx + 1,
+      q: String(cand.questionText || raw).slice(0, 240),
+      err: cand.options.length < 2 ? "Variantlar kam" : "To'g'ri javob belgilanmagan",
+      opts: (cand.options || []).slice(0, 6).map(o => ({
+        t: String(o.cleanText || o.text || '').slice(0, 75),
+        ok: Boolean(o.isCorrect),
+      })),
+    };
+  }
+
+  const payload = {
+    title: String(blockName || 'Docx Healer').slice(0, 50),
+    remaining: total,
+    curIdx: safeIdx,
+    isFinished: total === 0,
+    currentQuestion,
+  };
+
+  return JSON.stringify(payload);
+}
+
+/**
  * Handles incoming `widget_query` for Docx Healer from Telegram Bot API 10.4.
  *
  * @param {object} ctx - Telegraf context
@@ -2365,7 +2404,7 @@ async function cbOpenInspector(ctx) {
 async function handleDocxWidgetQuery(ctx, query) {
   if (!query) return;
 
-  const userId = query.from?.id;
+  const userId = query.from?.id || ctx.from?.id;
   const rawAction = String(query.data || '').trim();
 
   let action = 'docx_pick';
@@ -2383,12 +2422,10 @@ async function handleDocxWidgetQuery(ctx, query) {
     }
   } catch {}
 
-  const fakeCtx = { from: { id: userId }, chat: { id: query.chat?.id || userId }, session: ctx.session };
+  const fakeCtx = { from: { id: userId }, chat: { id: query.chat?.id || ctx.chat?.id || userId }, session: ctx.session };
   const data = await getData(fakeCtx);
-  const invalidQs = data.invalidQs || [];
-  const questions = data.questions || [];
-
-  let answerData = 'OK';
+  const invalidQs = Array.isArray(data.invalidQs) ? [...data.invalidQs] : [];
+  const questions = Array.isArray(data.questions) ? [...data.questions] : [];
 
   if (action === 'docx_pick' && optIdx !== null && qIdx >= 0 && qIdx < invalidQs.length) {
     const badText = invalidQs[qIdx];
@@ -2406,15 +2443,17 @@ async function handleDocxWidgetQuery(ctx, query) {
       questions.push(resolved);
       invalidQs.splice(qIdx, 1);
 
+      const chunks = [];
       if (data.is_auto_docx) {
-        const chunks = [];
         for (let i = 0; i < questions.length; i += 25) {
           chunks.push(questions.slice(i, i + 25));
         }
-        await updateData(fakeCtx, { questions, invalidQs, chunks });
-      } else {
-        await updateData(fakeCtx, { questions, invalidQs });
       }
+      await updateData(fakeCtx, {
+        questions,
+        invalidQs,
+        ...(data.is_auto_docx ? { chunks } : {}),
+      });
     }
   } else if (action === 'docx_heal_all' && invalidQs.length > 0) {
     const healRes = await aiDocxHealer.batchAutoHeal(invalidQs, process.env.GEMINI_API_KEY);
@@ -2423,45 +2462,32 @@ async function handleDocxWidgetQuery(ctx, query) {
 
     if (healed.length > 0) {
       questions.push(...healed);
+      const chunks = [];
       if (data.is_auto_docx) {
-        const chunks = [];
         for (let i = 0; i < questions.length; i += 25) {
           chunks.push(questions.slice(i, i + 25));
         }
-        await updateData(fakeCtx, { questions, invalidQs: remaining, chunks });
-      } else {
-        await updateData(fakeCtx, { questions, invalidQs: remaining });
       }
+      await updateData(fakeCtx, {
+        questions,
+        invalidQs: remaining,
+        ...(data.is_auto_docx ? { chunks } : {}),
+      });
     }
   }
 
-  // Build updated widget data
+  // Build updated compact widget data (<= 1024 bytes)
   const updatedData = await getData(fakeCtx);
   const remainingInvalid = updatedData.invalidQs || [];
-  const widgetQuestions = remainingInvalid.map((raw, i) => {
-    const cand = extractQuestionCandidates(raw);
-    return {
-      id: i + 1,
-      q: cand.questionText || raw,
-      err: cand.options.length < 2 ? "Variantlar kam" : "To'g'ri javob belgilanmagan",
-      opts: (cand.options || []).map(o => ({
-        t: o.cleanText || o.text,
-        ok: Boolean(o.isCorrect),
-      })),
-    };
-  });
+  const nextCurIdx = Math.min(qIdx, Math.max(0, remainingInvalid.length - 1));
+  const newPublicData = makeSafeDocxWidgetPublicData(
+    remainingInvalid,
+    nextCurIdx,
+    updatedData.block_name || 'Docx Healer'
+  );
 
-  const nextCurIdx = Math.min(qIdx, Math.max(0, widgetQuestions.length - 1));
-  const newPublicData = JSON.stringify({
-    total: widgetQuestions.length,
-    curIdx: nextCurIdx,
-    questions: widgetQuestions,
-    isFinished: widgetQuestions.length === 0,
-  });
-  answerData = newPublicData;
-
-  const chatId = query.chat?.id || ctx.chat?.id;
-  const messageId = query.message_id;
+  const chatId = query.message?.chat?.id || query.chat?.id || ctx.chat?.id || userId;
+  const messageId = query.message?.message_id || query.message_id || updatedData.docx_widget_msg_id;
 
   if (chatId && messageId && ctx.telegram && typeof ctx.telegram.callApi === 'function') {
     await ctx.telegram.callApi('editMessageWidgetData', {
@@ -2475,7 +2501,7 @@ async function handleDocxWidgetQuery(ctx, query) {
   if (ctx.telegram && typeof ctx.telegram.callApi === 'function') {
     await ctx.telegram.callApi('answerWidgetQuery', {
       widget_query_id: query.id,
-      data: answerData,
+      data: newPublicData,
     }).catch(() => {});
   }
 }
@@ -2596,6 +2622,7 @@ module.exports = {
   cbFixPickKey,
   cbFixAutoAll,
   cbOpenInspector,
+  makeSafeDocxWidgetPublicData,
   handleDocxWidgetQuery,
   handleDocxSharedWidgetQuery,
   _userTextChunks: userTextChunks,

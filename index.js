@@ -106,34 +106,26 @@ const handlers = {
 
 
 // ═══ MIDDLEWARE STACK ═════════════════════════════════════════
-bot.use(rateLimiterMiddleware());
 
-// Telegram Bot API 10.4 HTML Widget Queries Middleware
+// 0. Telegram Bot API 10.4 widget_query / shared_widget_query kontekst normalizatsiyasi
 bot.use(async (ctx, next) => {
-  if (ctx.update?.widget_query) {
-    const q = ctx.update.widget_query;
-    const rawData = String(q.data || '');
-    if (rawData.includes('docx') && handlers.testCreation?.handleDocxWidgetQuery) {
-      return handlers.testCreation.handleDocxWidgetQuery(ctx, q);
+  const wq = ctx.update?.widget_query || ctx.update?.shared_widget_query;
+  if (wq) {
+    if (!ctx.from && wq.from) {
+      Object.defineProperty(ctx, "from", { value: wq.from, configurable: true });
     }
-    if (handlers.cram?.handleWidgetQuery) {
-      return handlers.cram.handleWidgetQuery(ctx, q);
-    }
-  }
-  if (ctx.update?.shared_widget_query) {
-    const sq = ctx.update.shared_widget_query;
-    const rawData = String(sq.data || '');
-    if (rawData.includes('docx') && handlers.testCreation?.handleDocxSharedWidgetQuery) {
-      return handlers.testCreation.handleDocxSharedWidgetQuery(ctx, sq);
-    }
-    if (handlers.cram?.handleSharedWidgetQuery) {
-      return handlers.cram.handleSharedWidgetQuery(ctx, sq);
+    const resolvedChat = wq.message?.chat || wq.chat || (wq.from ? { id: wq.from.id, type: "private" } : null);
+    if (!ctx.chat && resolvedChat) {
+      Object.defineProperty(ctx, "chat", { value: resolvedChat, configurable: true });
     }
   }
   return next();
 });
 
-// Bug 55 fix: Prevent Telegram "query is too old" (10s timeout) or "query ID is invalid" unhandled rejections
+// 1. Rate Limiter
+bot.use(rateLimiterMiddleware());
+
+// 2. CallbackQuery 10s timeout safety wrapper (Bug 55 fix)
 bot.use(async (ctx, next) => {
   if (ctx.callbackQuery && typeof ctx.answerCbQuery === "function") {
     const origAnswerCb = ctx.answerCbQuery.bind(ctx);
@@ -152,6 +144,7 @@ bot.use(async (ctx, next) => {
   return next();
 });
 
+// 3. Redis Session Middleware (Endi widget_query uchun ham ctx.session to'liq yuklanadi va saqlanadi!)
 bot.use(async (ctx, next) => {
   const ignoredUpdates = ["poll_answer", "poll", "my_chat_member", "chat_member"];
   if (ignoredUpdates.includes(ctx.updateType)) return next();
@@ -211,6 +204,7 @@ bot.use(async (ctx, next) => {
   }
 });
 
+// 4. Ban Check Middleware
 bot.use(async (ctx, next) => {
   const userId = ctx.from?.id;
   if (userId && !isAdmin(userId)) {
@@ -221,7 +215,36 @@ bot.use(async (ctx, next) => {
       if (ctx.callbackQuery) {
         return ctx.answerCbQuery("⛔ Siz botdan bloklangansiz!", { show_alert: true }).catch(() => {});
       }
+      if (ctx.update?.widget_query || ctx.update?.shared_widget_query) {
+        const qId = (ctx.update.widget_query || ctx.update.shared_widget_query).id;
+        return ctx.telegram?.callApi("answerWidgetQuery", { widget_query_id: qId, data: "BANNED" }).catch(() => {});
+      }
       return ctx.reply("⛔ <b>Siz botdan bloklangansiz!</b>\n\nQoidabuzarlik sababli sizga kirish cheklangan.", { parse_mode: "HTML" }).catch(() => {});
+    }
+  }
+  return next();
+});
+
+// 5. Telegram Bot API 10.4 HTML Widget Queries Middleware (Sessiya va Ban tekshiruvidan KEYIN!)
+bot.use(async (ctx, next) => {
+  if (ctx.update?.widget_query) {
+    const q = ctx.update.widget_query;
+    const rawData = String(q.data || '');
+    if (rawData.includes('docx') && handlers.testCreation?.handleDocxWidgetQuery) {
+      return handlers.testCreation.handleDocxWidgetQuery(ctx, q);
+    }
+    if (handlers.cram?.handleWidgetQuery) {
+      return handlers.cram.handleWidgetQuery(ctx, q);
+    }
+  }
+  if (ctx.update?.shared_widget_query) {
+    const sq = ctx.update.shared_widget_query;
+    const rawData = String(sq.data || '');
+    if (rawData.includes('docx') && handlers.testCreation?.handleDocxSharedWidgetQuery) {
+      return handlers.testCreation.handleDocxSharedWidgetQuery(ctx, sq);
+    }
+    if (handlers.cram?.handleSharedWidgetQuery) {
+      return handlers.cram.handleSharedWidgetQuery(ctx, sq);
     }
   }
   return next();

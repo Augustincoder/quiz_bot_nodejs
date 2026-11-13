@@ -160,6 +160,9 @@ async function initAndStartTest(
     status: "preparing",
     transitionLock: null,
     questionState: "PREPARING",
+    isMarathon: Boolean(testData?.isMarathon),
+    marathonBlocks: Array.isArray(testData?.marathonBlocks) ? testData.marathonBlocks : [],
+    currentBlockIdx: Number(testData?.currentBlockIdx) || 0,
   });
 
   if (chatType === "private") {
@@ -533,29 +536,41 @@ async function cbUgcSubj(ctx) {
   await showUgcSubjectBlocks(ctx, subjectId);
 }
 
+/**
+ * Centralized active test check to prevent duplicate test runs and state corruption.
+ * @param {object} ctx
+ * @param {number|string} chatId
+ * @returns {Promise<boolean>} true if conflict exists and response was sent, false otherwise
+ */
+async function checkActiveTestConflict(ctx, chatId) {
+  const existing = await sessionService.getActiveTest(chatId);
+  if (existing) {
+    if (existing.status === 'preparing') {
+      await sessionService.deleteActiveTest(chatId);
+      return false;
+    }
+    const kb = existing.status === 'paused'
+      ? Markup.inlineKeyboard([
+          [Markup.button.callback("▶️ Davom etish", "resume_test")],
+          [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
+        ])
+      : Markup.inlineKeyboard([
+          [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
+        ]);
+    await ctx.reply(
+      "⚠️ Sizda hozirda faol test mavjud. Avval uni yakunlang yoki to'xtating.",
+      { parse_mode: "HTML", ...kb },
+    );
+    return true;
+  }
+  return false;
+}
+
 async function startUgcTest(ctx, testDb) {
   const chatId = ctx.chat?.id || ctx.from?.id;
   const unlock = await mutex.lock(`start_test:${chatId}`);
   try {
-    const existing = await sessionService.getActiveTest(chatId);
-    if (existing) {
-      if (existing.status === 'preparing') {
-        await sessionService.deleteActiveTest(chatId);
-      } else {
-        const kb = existing.status === 'paused'
-          ? Markup.inlineKeyboard([
-              [Markup.button.callback("▶️ Davom etish", "resume_test")],
-              [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
-            ])
-          : Markup.inlineKeyboard([
-              [Markup.button.callback("🛑 Faol testni to'xtatish", "force_finish")],
-            ]);
-        return ctx.reply(
-          "⚠️ Sizda hozirda faol test mavjud. Avval uni yakunlang yoki to'xtating.",
-          { parse_mode: "HTML", ...kb },
-        );
-      }
-    }
+    if (await checkActiveTestConflict(ctx, chatId)) return;
 
     if (ctx.chat?.type !== "private") {
       const initiatorName = ctx.from.first_name || "Muallif";
@@ -1680,6 +1695,7 @@ module.exports = {
   cbUgcSubj,
   cbAdaptiveRun,
   startUgcTest,
+  checkActiveTestConflict,
   resumeTestFromShelf,
   sendNextQuestion,
   initAndStartTest,

@@ -240,6 +240,50 @@ const escapeHtml = (str) => {
 
 const sanitizeForTelegram = (str) => str ? String(str).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\uFFFD]/g, '') : '';
 
+/**
+ * Calculates Levenshtein distance between two strings with O(min(N, M)) memory footprint.
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
+function getLevenshteinDistance(a, b) {
+  if (a === b) return 0;
+  if (!a) return b ? b.length : 0;
+  if (!b) return a ? a.length : 0;
+
+  if (a.length < b.length) {
+    const tmp = a;
+    a = b;
+    b = tmp;
+  }
+
+  const bLen = b.length;
+  let prevRow = new Int32Array(bLen + 1);
+  let currRow = new Int32Array(bLen + 1);
+
+  for (let j = 0; j <= bLen; j++) {
+    prevRow[j] = j;
+  }
+
+  for (let i = 1; i <= a.length; i++) {
+    currRow[0] = i;
+    const charA = a.charCodeAt(i - 1);
+    for (let j = 1; j <= bLen; j++) {
+      const cost = charA === b.charCodeAt(j - 1) ? 0 : 1;
+      currRow[j] = Math.min(
+        prevRow[j] + 1,
+        currRow[j - 1] + 1,
+        prevRow[j - 1] + cost
+      );
+    }
+    const temp = prevRow;
+    prevRow = currRow;
+    currRow = temp;
+  }
+
+  return prevRow[bLen];
+}
+
 const navKb = (backAction, extraButtons = []) => {
   const rows = [...extraButtons];
   const navRow = [];
@@ -706,6 +750,7 @@ module.exports = {
   downloadFile, isAdmin, adminGuard, buildUserContext,
   getTashkentDate, getTashkentDayOfWeek,
   timeToMinutes, safeCallbackData, naturalSortBlocks,
+  getLevenshteinDistance,
   shuffleArray: (...args) => require('./questionUtils').shuffleArray(...args),
   deepClone: (...args) => require('./questionUtils').deepClone(...args),
 };

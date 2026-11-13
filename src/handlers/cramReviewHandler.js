@@ -8,6 +8,41 @@ const logger = require('../core/logger');
 // Active cram sessions (2 hours TTL to prevent memory leaks)
 const cramSessions = new TTLMap(2 * 60 * 60 * 1000);
 
+/**
+ * Saves cram session into L1 TTLMap and L2 Redis cache.
+ */
+async function saveCramSession(userKey, session) {
+  if (!userKey || !session) return;
+  cramSessions.set(userKey, session);
+  try {
+    const redis = require('../services/redisService');
+    if (redis && typeof redis.set === 'function') {
+      await redis.set(`cram_session:${userKey}`, JSON.stringify(session), 'EX', 7200);
+    }
+  } catch {}
+}
+
+/**
+ * Retrieves cram session from L1 TTLMap, falling back to L2 Redis cache.
+ */
+async function getCramSession(userKey) {
+  if (!userKey) return null;
+  let sess = cramSessions.get(userKey);
+  if (sess) return sess;
+  try {
+    const redis = require('../services/redisService');
+    if (redis && typeof redis.get === 'function') {
+      const raw = await redis.get(`cram_session:${userKey}`);
+      if (raw) {
+        sess = JSON.parse(raw);
+        cramSessions.set(userKey, sess);
+        return sess;
+      }
+    }
+  } catch {}
+  return null;
+}
+
 let _customMemoryDb = null;
 function setMemoryDb(db) {
   _customMemoryDb = db;
@@ -498,18 +533,17 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
     messageId: ctx.callbackQuery?.message?.message_id,
     widgetId: null,
   };
-  cramSessions.set(userKey, session);
+  await saveCramSession(userKey, session);
+
+  const { isWidgetEngineEnabled } = require('../services/widgetService');
+  const canUseNativeWidget = isWidgetEngineEnabled(userId);
 
   // 5. Telegram Bot API 10.4 HTML Widget launcher
   // Spec: https://core.telegram.org/bots/api#sendwidget
-  if (chatId && ctx.chat?.type === 'private' && ctx.telegram && typeof ctx.telegram.callApi === 'function') {
+  if (canUseNativeWidget && chatId && ctx.chat?.type === 'private' && ctx.telegram && typeof ctx.telegram.callApi === 'function') {
     try {
       const inlineWidgetHtml = buildInlineFlashcardWidgetHtml(viewData);
       const safePublicData = makeSafeWidgetPublicData(viewData, subjectName, blockName);
-      const safeChatData = JSON.stringify({
-        userId,
-        cardIdx: viewData.cardIdx || 0,
-      });
 
       // Widget payload: caption is intentionally omitted so the widget appears cleanly
       // without duplicate plain-text question text underneath
@@ -517,7 +551,7 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
         chat_id: chatId,
         html: inlineWidgetHtml,
         public_data: safePublicData,
-        chat_data: safeChatData,
+        chat_data: safePublicData,
         is_shared: true,
         allow_queries: true,
       };
@@ -536,7 +570,7 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
         session.isWidget = true;
         session.messageId = widgetRes.message_id;
         session.widgetId = widgetRes.widget?.id || null;
-        cramSessions.set(userKey, session);
+        await saveCramSession(userKey, session);
 
         // Delete previous menu message to keep chat uncluttered
         if (ctx.callbackQuery?.message) {
@@ -544,6 +578,10 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
         }
       }
     } catch (widgetErr) {
+      try {
+        const featureFlagService = require('../services/featureFlagService');
+        featureFlagService.recordFeatureError('FEATURE_WIDGET_ENGINE', widgetErr);
+      } catch {}
       logger.warn('sendWidget failed, falling back to message text:', {
         error: widgetErr.message,
         code: widgetErr.code || widgetErr.error_code,
@@ -581,13 +619,13 @@ async function cbCramStart(ctx) {
 async function cbCramReveal(ctx) {
   const userId = ctx.from?.id;
   const userKey = userId ? String(userId) : 'default';
-  const session = cramSessions.get(userKey);
+  const session = (await getCramSession(userKey)) || cramSessions.get(userKey);
   if (!session) {
     return ctx.answerCbQuery('⚠️ Sessiya muddati tugagan.', { show_alert: true }).catch(() => {});
   }
 
   session.isRevealed = true;
-  cramSessions.set(userKey, session);
+  await saveCramSession(userKey, session);
 
   const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
   const text = formatFlashcardMessage(viewData, true);
@@ -602,13 +640,13 @@ async function cbCramReveal(ctx) {
 async function cbCramHide(ctx) {
   const userId = ctx.from?.id;
   const userKey = userId ? String(userId) : 'default';
-  const session = cramSessions.get(userKey);
+  const session = (await getCramSession(userKey)) || cramSessions.get(userKey);
   if (!session) {
     return ctx.answerCbQuery('⚠️ Sessiya muddati tugagan.', { show_alert: true }).catch(() => {});
   }
 
   session.isRevealed = false;
-  cramSessions.set(userKey, session);
+  await saveCramSession(userKey, session);
 
   const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
   const text = formatFlashcardMessage(viewData, false);
@@ -624,9 +662,13 @@ async function cbCramHide(ctx) {
 async function cbCramKnown(ctx) {
   const userId = ctx.from?.id;
   const userKey = userId ? String(userId) : 'default';
-  const session = cramSessions.get(userKey);
+  const session = (await getCramSession(userKey)) || cramSessions.get(userKey);
   if (!session) {
     return ctx.answerCbQuery('⚠️ Sessiya muddati tugagan.', { show_alert: true }).catch(() => {});
+  }
+
+  if (session.blitzMode && session.blitzExpiresAt && Date.now() > session.blitzExpiresAt) {
+    session.blitzMode = false;
   }
 
   const data = ctx.callbackQuery?.data || '';
@@ -635,7 +677,7 @@ async function cbCramKnown(ctx) {
 
   processCardAction(session.deck, 'known', cardIdx);
   session.isRevealed = false;
-  cramSessions.set(userKey, session);
+  await saveCramSession(userKey, session);
 
   const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
   const text = formatFlashcardMessage(viewData, false);
@@ -683,9 +725,13 @@ async function cbCramKnown(ctx) {
 async function cbCramRepeat(ctx) {
   const userId = ctx.from?.id;
   const userKey = userId ? String(userId) : 'default';
-  const session = cramSessions.get(userKey);
+  const session = (await getCramSession(userKey)) || cramSessions.get(userKey);
   if (!session) {
     return ctx.answerCbQuery('⚠️ Sessiya muddati tugagan.', { show_alert: true }).catch(() => {});
+  }
+
+  if (session.blitzMode && session.blitzExpiresAt && Date.now() > session.blitzExpiresAt) {
+    session.blitzMode = false;
   }
 
   const data = ctx.callbackQuery?.data || '';
@@ -694,7 +740,7 @@ async function cbCramRepeat(ctx) {
 
   processCardAction(session.deck, 'repeat', cardIdx);
   session.isRevealed = false;
-  cramSessions.set(userKey, session);
+  await saveCramSession(userKey, session);
 
   const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
   const text = formatFlashcardMessage(viewData, false);
@@ -742,11 +788,11 @@ async function cbCramRepeat(ctx) {
 async function cbCramBlitz(ctx) {
   const userId = ctx.from?.id;
   const userKey = userId ? String(userId) : 'default';
-  const session = cramSessions.get(userKey);
+  const session = (await getCramSession(userKey)) || cramSessions.get(userKey);
   if (session) {
     session.blitzMode = true;
     session.blitzExpiresAt = Date.now() + 5 * 60 * 1000;
-    cramSessions.set(userKey, session);
+    await saveCramSession(userKey, session);
   }
   await ctx.answerCbQuery('⚡ 5-daqiqalik Blitz rejimi faollashtirildi!', { show_alert: true }).catch(() => {});
 }
@@ -757,11 +803,17 @@ async function cbCramBlitz(ctx) {
 async function cbCramExit(ctx) {
   const userId = ctx.from?.id;
   const userKey = userId ? String(userId) : 'default';
-  const session = cramSessions.get(userKey);
+  const session = (await getCramSession(userKey)) || cramSessions.get(userKey);
   const subjectKey = session?.subjectKey;
   const testId = session?.testId;
 
   cramSessions.delete(userKey);
+  try {
+    const redis = require('../services/redisService');
+    if (redis && typeof redis.del === 'function') {
+      await redis.del(`cram_session:${userKey}`).catch(() => {});
+    }
+  } catch {}
 
   let returnButton;
   if (subjectKey === 'ugc' && testId) {
@@ -805,7 +857,7 @@ async function handleWidgetQuery(ctx, query) {
 
   const userId = query.from?.id;
   const userKey = userId ? String(userId) : 'default';
-  const session = cramSessions.get(userKey);
+  const session = (await getCramSession(userKey)) || cramSessions.get(userKey);
 
   if (!session) {
     const rawData = String(query.data || '');
@@ -820,6 +872,10 @@ async function handleWidgetQuery(ctx, query) {
   let answerData = 'OK';
 
   if (session) {
+    if (session.blitzMode && session.blitzExpiresAt && Date.now() > session.blitzExpiresAt) {
+      session.blitzMode = false;
+    }
+
     const rawAction = String(query.data || '').trim();
     let action = 'known';
     let targetIdx = null;
@@ -836,14 +892,14 @@ async function handleWidgetQuery(ctx, query) {
 
     processCardAction(session.deck, action, targetIdx);
     session.isRevealed = false;
-    cramSessions.set(userKey, session);
+    await saveCramSession(userKey, session);
 
     const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
     const newPublicDataStr = makeSafeWidgetPublicData(viewData, session.subjectName, session.blockName);
     answerData = newPublicDataStr;
 
-    const chatId = query.chat?.id || ctx.chat?.id;
-    const messageId = query.message_id;
+    const chatId = query.message?.chat?.id || query.chat?.id || session.chatId || ctx.chat?.id;
+    const messageId = query.message?.message_id || query.message_id || session.messageId;
 
     if (chatId && messageId) {
       await ctx.telegram.callApi('editMessageWidgetData', {
@@ -873,7 +929,7 @@ async function handleSharedWidgetQuery(ctx, query) {
 
   const userId = query.from?.id;
   const userKey = userId ? String(userId) : 'default';
-  const session = cramSessions.get(userKey);
+  const session = (await getCramSession(userKey)) || cramSessions.get(userKey);
 
   if (!session) {
     const rawData = String(query.data || '');
@@ -888,6 +944,10 @@ async function handleSharedWidgetQuery(ctx, query) {
   let answerData = 'OK';
 
   if (session) {
+    if (session.blitzMode && session.blitzExpiresAt && Date.now() > session.blitzExpiresAt) {
+      session.blitzMode = false;
+    }
+
     const rawAction = String(query.data || '').trim();
     let action = 'known';
     let targetIdx = null;
@@ -904,7 +964,7 @@ async function handleSharedWidgetQuery(ctx, query) {
 
     processCardAction(session.deck, action, targetIdx);
     session.isRevealed = false;
-    cramSessions.set(userKey, session);
+    await saveCramSession(userKey, session);
 
     const viewData = buildFlashcardViewData(session.deck, session.subjectName, session.blockName);
     const newPublicDataStr = makeSafeWidgetPublicData(viewData, session.subjectName, session.blockName);
@@ -932,19 +992,6 @@ async function handleSharedWidgetQuery(ctx, query) {
  */
 function register(bot) {
   if (!bot || typeof bot.action !== 'function') return;
-
-  // Telegram 10.4 Widget queries middleware
-  if (typeof bot.use === 'function') {
-    bot.use(async (ctx, next) => {
-      if (ctx.update?.widget_query) {
-        return handleWidgetQuery(ctx, ctx.update.widget_query);
-      }
-      if (ctx.update?.shared_widget_query) {
-        return handleSharedWidgetQuery(ctx, ctx.update.shared_widget_query);
-      }
-      return next();
-    });
-  }
 
   bot.action(/^cram_start_(.+)_(.+)$/, cbCramStart);
   bot.action(/^cram_reveal_(\d+)$/, cbCramReveal);

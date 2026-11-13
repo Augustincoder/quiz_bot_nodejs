@@ -3,7 +3,7 @@
 const { Markup } = require('telegraf');
 const dbService = require('../services/dbService');
 const edupageService = require('../services/edupageService');
-const { escapeHtml, States, setState, clearState, safeAnswerCb, safeEdit } = require('../core/utils');
+const { escapeHtml, States, setState, clearState, safeAnswerCb, safeEdit, getLevenshteinDistance } = require('../core/utils');
 
 let VALID_GROUPS = [];
 try {
@@ -24,44 +24,6 @@ try {
 
 function normalize(str) {
   return str.toUpperCase().replace(/[^A-Z0-9*]/g, '');
-}
-
-function getLevenshteinDistance(a, b) {
-  if (a === b) return 0;
-  if (a.length === 0) return b.length;
-  if (b.length === 0) return a.length;
-
-  if (a.length < b.length) {
-    const tmp = a;
-    a = b;
-    b = tmp;
-  }
-
-  const bLen = b.length;
-  let prevRow = new Int32Array(bLen + 1);
-  let currRow = new Int32Array(bLen + 1);
-
-  for (let j = 0; j <= bLen; j++) {
-    prevRow[j] = j;
-  }
-
-  for (let i = 1; i <= a.length; i++) {
-    currRow[0] = i;
-    const charA = a.charCodeAt(i - 1);
-    for (let j = 1; j <= bLen; j++) {
-      const cost = charA === b.charCodeAt(j - 1) ? 0 : 1;
-      currRow[j] = Math.min(
-        prevRow[j] + 1,
-        currRow[j - 1] + 1,
-        prevRow[j - 1] + cost
-      );
-    }
-    const temp = prevRow;
-    prevRow = currRow;
-    currRow = temp;
-  }
-
-  return prevRow[bLen];
 }
 
 async function getAvailableGroups() {
