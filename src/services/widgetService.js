@@ -83,7 +83,10 @@ const SECRET_KEY = crypto.createHash('sha256').update(RAW_SECRET || 'test_widget
 
 const DEFAULT_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-const { decodeHtmlEntities, escapeHtml: coreEscapeHtml } = require('../core/utils');
+const { decodeHtmlEntities, escapeHtml: coreEscapeHtml, TTLMap } = require('../core/utils');
+
+// Bounded in-memory store for large payloads (> 400 bytes) with 60-minute TTL (matching DEFAULT_TTL_MS) to keep WebApp URL < 2048 bytes
+const widgetPayloadStore = new TTLMap(DEFAULT_TTL_MS, 2000);
 
 /**
  * Escapes HTML characters including single quotes for safe embedding in WebApp HTML and attributes.
@@ -110,10 +113,18 @@ function createWidgetToken(userId, type, payload = {}, ttlMs = DEFAULT_TTL_MS) {
   }
 
   const now = Date.now();
+  let effectivePayload = payload && typeof payload === 'object' ? payload : {};
+  const rawPayloadJson = JSON.stringify(effectivePayload);
+  if (rawPayloadJson.length > 400) {
+    const sid = crypto.randomBytes(12).toString('hex');
+    widgetPayloadStore.set(sid, effectivePayload);
+    effectivePayload = { sid };
+  }
+
   const tokenPayload = {
     userId: userId !== undefined && userId !== null ? Number(userId) : 0,
     type: String(type).trim(),
-    payload: payload && typeof payload === 'object' ? payload : {},
+    payload: effectivePayload,
     iat: now,
     exp: now + (typeof ttlMs === 'number' ? ttlMs : DEFAULT_TTL_MS),
   };
@@ -162,10 +173,19 @@ function verifyWidgetToken(token) {
     if (!parsed || typeof parsed !== 'object') return null;
     if (typeof parsed.exp !== 'number' || Date.now() > parsed.exp) return null;
 
+    let payload = parsed.payload || {};
+    if (payload.sid && typeof payload.sid === 'string') {
+      const stored = widgetPayloadStore.get(payload.sid);
+      if (!stored) {
+        return null;
+      }
+      payload = stored;
+    }
+
     return {
       userId: parsed.userId,
       type: parsed.type,
-      payload: parsed.payload || {},
+      payload,
       iat: parsed.iat,
       exp: parsed.exp,
     };
@@ -226,10 +246,11 @@ function renderWidgetHtml(type, data = {}) {
   const title = escapeHtml(data.title || `${normType.charAt(0).toUpperCase() + normType.slice(1)} Widget`);
 
   html = html
-    .replace(/{{DATA_JSON}}/g, safeDataJson)
-    .replace(/{{TITLE}}/g, title)
-    .replace(/{{TYPE}}/g, escapeHtml(normType))
-    .replace(/{{TOKEN}}/g, escapeHtml(data.token || ''));
+    .replace(/{{DATA_JSON}}/g, () => safeDataJson)
+    .replace(/__DATA_PLACEHOLDER__/g, () => safeDataJson)
+    .replace(/{{TITLE}}/g, () => title)
+    .replace(/{{TYPE}}/g, () => escapeHtml(normType))
+    .replace(/{{TOKEN}}/g, () => escapeHtml(data.token || ''));
 
   return html;
 }
@@ -372,9 +393,9 @@ function buildInlineFlashcardWidgetHtml(viewData = {}) {
     tpl = getTemplateContent('flashcardWidget.html');
   }
   if (tpl.includes('/*INITIAL_DATA_PLACEHOLDER*/')) {
-    return tpl.replace('/*INITIAL_DATA_PLACEHOLDER*/', initialData);
+    return tpl.replace(/\/\*INITIAL_DATA_PLACEHOLDER\*\//g, () => initialData);
   }
-  return tpl.replace('window.__WIDGET_DATA__ = {{DATA_JSON}};', `window.__WIDGET_DATA__ = ${initialData};`);
+  return tpl.replace('window.__WIDGET_DATA__ = {{DATA_JSON}};', () => `window.__WIDGET_DATA__ = ${initialData};`);
 }
 
 /**
@@ -430,15 +451,16 @@ function buildInlineDocxHealerWidgetHtml(viewData = {}) {
     tpl = getTemplateContent('docxHealerWidget.html');
   }
   if (tpl.includes('/*INITIAL_DATA_PLACEHOLDER*/')) {
-    return tpl.replace('/*INITIAL_DATA_PLACEHOLDER*/', initialData);
+    return tpl.replace(/\/\*INITIAL_DATA_PLACEHOLDER\*\//g, () => initialData);
   }
-  return tpl.replace('{{DATA_JSON}}', initialData);
+  return tpl.replace(/\{\{DATA_JSON\}\}/g, () => initialData);
 }
 
 module.exports = {
   isValidWebAppUrl,
   createWidgetToken,
   verifyWidgetToken,
+  widgetPayloadStore,
   decodeHtmlEntities,
   escapeHtml,
   renderWidgetHtml,

@@ -338,14 +338,29 @@ async function batchAutoHeal(invalidQuestions, geminiApiKey = null) {
   if (apiKey && remainingInvalid.length > 0) {
     try {
       const { GoogleGenerativeAI } = require('@google/generative-ai');
+      const { sanitizeQuizQuestions } = require('../validators/testValidators');
+      const aiService = require('./aiService');
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite-preview' });
 
-      const textsToFix = remainingInvalid.map(item =>
-        typeof item === 'string' ? item : (item.raw || item.text || '')
-      ).filter(Boolean);
+      const chunkSize = 15;
+      const initialInvalid = [...remainingInvalid];
+      const unhealed = [];
 
-      if (textsToFix.length > 0) {
+      for (let i = 0; i < initialInvalid.length; i += chunkSize) {
+        const chunk = initialInvalid.slice(i, i + chunkSize);
+        const textsToFix = chunk.map(item =>
+          typeof item === 'string' ? item : (item.raw || item.text || '')
+        ).filter(Boolean);
+
+        if (textsToFix.length === 0) continue;
+
+        const limitCheck = aiService.checkAIServiceLimit('generateQuiz');
+        if (!limitCheck.allowed) {
+          unhealed.push(...chunk);
+          continue;
+        }
+
         const prompt = `Quyidagi buzilgan yoki xato formatlangan test savollarini tuzatib, JSON massiv ko'rinishida qaytar:
 Format:
 [
@@ -359,26 +374,37 @@ Format:
 Buzilgan matnlar:
 ${textsToFix.join('\n---\n')}`;
 
-        const res = await model.generateContent(prompt);
-        const text = res?.response?.text?.() || '';
-        const jsonMatch = text.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          if (Array.isArray(parsed)) {
-            parsed.forEach(q => {
-              if (q && q.question && Array.isArray(q.options) && q.options.length >= 2) {
-                healed.push({
-                  question: String(q.question).trim(),
-                  options: q.options.map(o => String(o).trim()),
-                  correct_index: typeof q.correct_index === 'number' ? q.correct_index : 0,
-                });
-              }
-            });
-            // Clear remaining that were resolved by AI
-            remainingInvalid.length = 0;
+        let timer;
+        try {
+          const timeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('AI Docx Healer request timed out after 30s')), 30000);
+            if (timer.unref) timer.unref();
+          });
+          const res = await Promise.race([model.generateContent(prompt), timeoutPromise]);
+          const text = res?.response?.text?.() || '';
+          const jsonMatch = text.match(/\[[\s\S]*\]/);
+          let healedInChunk = 0;
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            const sanitized = sanitizeQuizQuestions(parsed);
+            if (sanitized.length > 0) {
+              healed.push(...sanitized);
+              healedInChunk = sanitized.length;
+              aiService.incrementAIUsage('generateQuiz', true);
+            }
           }
+          if (healedInChunk === 0) {
+            unhealed.push(...chunk);
+          }
+        } catch {
+          aiService.incrementAIUsage('generateQuiz', false);
+          unhealed.push(...chunk);
+        } finally {
+          if (timer) clearTimeout(timer);
         }
       }
+      remainingInvalid.length = 0;
+      remainingInvalid.push(...unhealed);
     } catch (aiErr) {
       logger.warn('[aiDocxHealer] Gemini batch repair failed or skipped: ' + (aiErr?.message || aiErr));
     }

@@ -795,16 +795,24 @@ async function startSubjectAdaptiveRun(ctx, subjectIdOrKey, isOfficial, count = 
 
     if (mistakes.length > 0) {
       const aiService = require('../services/aiService');
+      const aiRateLimiter = require('../services/aiRateLimiter');
+      const { isAdmin } = require('../core/utils');
       const shuffledMistakes = deepClone(mistakes);
       shuffleArray(shuffledMistakes);
 
-      try {
-        const aiQs = await aiService.generateAdaptiveQuiz(data.title, shuffledMistakes, count);
-        if (Array.isArray(aiQs) && aiQs.length > 0) {
-          finalQuestions = aiQs.filter(q => q && q.question && Array.isArray(q.options) && q.options.length >= 2);
+      const limitCheck = await aiRateLimiter.checkUserLimit(ctx.from.id, false, isAdmin(ctx.from.id));
+      if (limitCheck.allowed) {
+        try {
+          const aiQs = await aiService.generateAdaptiveQuiz(data.title, shuffledMistakes, count);
+          if (Array.isArray(aiQs) && aiQs.length > 0) {
+            finalQuestions = aiQs.filter(q => q && q.question && Array.isArray(q.options) && q.options.length >= 2);
+            if (finalQuestions.length > 0) {
+              await aiRateLimiter.recordUserUsage(ctx.from.id).catch(() => {});
+            }
+          }
+        } catch (aiErr) {
+          logger.warn('AI adaptive generation fallback to raw mistakes:', aiErr.message);
         }
-      } catch (aiErr) {
-        logger.warn('AI adaptive generation fallback to raw mistakes:', aiErr.message);
       }
 
       if (!finalQuestions.length) {

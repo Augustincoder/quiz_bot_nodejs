@@ -12,7 +12,9 @@ const {
   getData,
   safeEdit,
   parseSuffix,
+  isAdmin,
 } = require("../../core/utils");
+const aiRateLimiter = require("../../services/aiRateLimiter");
 
 const AI_WARNING_TEXT = `\n\n⚠️ <b>Eslatma:</b> <i>Bu javoblar tezkor AI modellarida tayyorlanmoqda va xatolar ehtimolligi bor. Rasmiy imtihonga tayyorlanayotganlar yoki Pro modellar uchun adminga murojaat qiling:</i> @AvazovM`;
 
@@ -69,11 +71,11 @@ async function cbAiModeQuestions(ctx) {
   setState(ctx, States.CREATE_AI_QUESTIONS);
   await safeEdit(
     ctx,
-    `❓ *Savollardan test yasash*\n\nOchiq savollarni ro'yxat qilib yuboring.` +
+    `❓ <b>Savollardan test yasash</b>\n\nOchiq savollarni ro'yxat qilib yuboring.` +
       AI_WARNING_TEXT +
-      `\n\n_Fikringizdan qaytgan bo'lsangiz, Ortga tugmasini bosing._`,
+      `\n\n<i>Fikringizdan qaytgan bo'lsangiz, Ortga tugmasini bosing.</i>`,
     {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard([
         [Markup.button.callback("🔙 Ortga (AI menyusiga)", "fmt_ai")],
       ]),
@@ -123,6 +125,15 @@ async function cbAiModeImage(ctx) {
 }
 
 async function onAiTextInput(ctx) {
+  const userId = ctx.from?.id;
+  const limitCheck = await aiRateLimiter.checkUserLimit(userId, false, isAdmin(userId));
+  if (!limitCheck.allowed) {
+    return ctx.reply(
+      `📊 <b>AI limitingiz tugadi!</b>\n\nIltimos, birozdan keyin urinib ko'ring yoki adminga murojaat qiling: @AvazovM`,
+      { parse_mode: "HTML" }
+    );
+  }
+
   const text = ctx.message.text;
   const data = await getData(ctx);
 
@@ -143,27 +154,51 @@ async function onAiTextInput(ctx) {
     text,
     data.ai_count,
   );
+  if (generatedQuestions && generatedQuestions.length > 0) {
+    await aiRateLimiter.recordUserUsage(userId).catch(() => {});
+  }
   await processAiResult(ctx, msg.message_id, generatedQuestions);
 }
 
 async function onAiQuestionsInput(ctx) {
+  const userId = ctx.from?.id;
+  const limitCheck = await aiRateLimiter.checkUserLimit(userId, false, isAdmin(userId));
+  if (!limitCheck.allowed) {
+    return ctx.reply(
+      `📊 <b>AI limitingiz tugadi!</b>\n\nIltimos, birozdan keyin urinib ko'ring yoki adminga murojaat qiling: @AvazovM`,
+      { parse_mode: "HTML" }
+    );
+  }
+
   const text = ctx.message.text;
   if (!text || text.length < 10) return ctx.reply("⚠️ Savollarni kiriting.");
-  const msg = await ctx.reply("⏳ *AI javoblar tuzmoqda...*", {
-    parse_mode: "Markdown",
+  const msg = await ctx.reply("⏳ <i>AI javoblar tuzmoqda...</i>", {
+    parse_mode: "HTML",
   });
   const aiService = require("../../services/aiService");
   const generatedQuestions = await aiService.generateOptionsForQuestions(text);
+  if (generatedQuestions && generatedQuestions.length > 0) {
+    await aiRateLimiter.recordUserUsage(userId).catch(() => {});
+  }
   await processAiResult(ctx, msg.message_id, generatedQuestions);
 }
 
 async function onAiImageInput(ctx) {
+  const userId = ctx.from?.id;
+  const limitCheck = await aiRateLimiter.checkUserLimit(userId, false, isAdmin(userId));
+  if (!limitCheck.allowed) {
+    return ctx.reply(
+      `📊 <b>AI limitingiz tugadi!</b>\n\nIltimos, birozdan keyin urinib ko'ring yoki adminga murojaat qiling: @AvazovM`,
+      { parse_mode: "HTML" }
+    );
+  }
+
   const photoArray = ctx.message.photo;
   if (!photoArray || photoArray.length === 0)
     return ctx.reply("⚠️ Iltimos, kitob yoki matnning rasmini yuboring.");
 
-  const msg = await ctx.reply("⏳ *AI rasmni o'qimoqda va test tuzmoqda...*", {
-    parse_mode: "Markdown",
+  const msg = await ctx.reply("⏳ <i>AI rasmni o'qimoqda va test tuzmoqda...</i>", {
+    parse_mode: "HTML",
   });
 
   const photo = photoArray[photoArray.length - 1];
@@ -191,6 +226,10 @@ async function onAiImageInput(ctx) {
       "image/jpeg",
       data.ai_count,
     );
+
+    if (generatedQuestions && generatedQuestions.length > 0) {
+      await aiRateLimiter.recordUserUsage(userId).catch(() => {});
+    }
 
     await processAiResult(ctx, msg.message_id, generatedQuestions);
   } catch (e) {
@@ -243,9 +282,9 @@ async function processAiResult(ctx, msgId, generatedQuestions) {
     ctx.chat.id,
     msgId,
     undefined,
-    `✅ *Savollar qo'shildi!*\n📊 Jami: *${questions.length} ta*\n\n_Yana yuborishingiz yoki yakunlash uchun Ortga qaytishingiz mumkin._`,
+    `✅ <b>Savollar qo'shildi!</b>\n📊 Jami: <b>${questions.length} ta</b>\n\n<i>Yana yuborishingiz yoki yakunlash uchun Ortga qaytishingiz mumkin.</i>`,
     {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard([
         [Markup.button.callback(finishText, finishAction)],
       ]),

@@ -12,6 +12,14 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
 const fileManager = new GoogleAIFileManager(GEMINI_API_KEY);
 
+function withAiTimeout(promise, timeoutMs = 45000) {
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`AI request timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
+}
+
 // ============================================
 // 📊 AI SERVICE INTERNAL RATE LIMITING
 // ============================================
@@ -130,6 +138,8 @@ function incrementAIUsage(functionName, success = true) {
         if (functionName && aiServiceUsage.byFunction.hasOwnProperty(functionName)) {
             aiServiceUsage.byFunction[functionName]++;
         }
+
+        aiRateLimiter.recordUserUsage('system_global').catch(() => {});
         
         logger.info('ai:usage_increment', {
             function: functionName,
@@ -241,7 +251,6 @@ async function explainMistakesBatch(mistakes) {
         logger.warn('ai:request_blocked', { function: 'explainMistakes', reason: limitCheck.reason });
         return limitCheck.message || "⚠️ Xizmat vaqtincha mavjud emas.";
     }
-    aiRateLimiter.recordUserUsage('system_global').catch(() => {});
 
     if (!GEMINI_API_KEY) {
         logger.error('ai:no_api_key');
@@ -259,7 +268,7 @@ async function explainMistakesBatch(mistakes) {
         
         if (mistakes.length > 5) prompt += `\n<i>(Faqat birinchi 5 ta asosiy xatoni tahlil qilindi)</i>`;
 
-        const result = await model.generateContent(prompt);
+        const result = await withAiTimeout(model.generateContent(prompt));
         
         // ✅ Muvaffaqiyatli - usageni oshiramiz
         incrementAIUsage('explainMistakes', true);
@@ -281,14 +290,13 @@ async function generateQuizFromText(text, count) {
         logger.warn('ai:request_blocked', { function: 'generateQuiz', reason: limitCheck.reason });
         return null;
     }
-    aiRateLimiter.recordUserUsage('system_global').catch(() => {});
 
     try {
         const safeText = String(text || '').slice(0, MAX_AI_INPUT_CHARS);
         const prompt = `Matn asosida ${getCountInstruction(count)} variantli test tuz. Faqat JSON formatda qaytar. Boshqa so'z yozma.
         Struktura: [{"question": "Savol?", "options": ["A", "B", "C", "D"], "correct_index": 0}]\n\nMatn:\n${safeText}`;
         
-        const result = await model.generateContent(prompt);
+        const result = await withAiTimeout(model.generateContent(prompt));
         const rawQuestions = extractJSON(result.response.text());
         const questions = sanitizeQuizQuestions(rawQuestions);
         
@@ -311,14 +319,13 @@ async function generateOptionsForQuestions(questionsText) {
     if (!limitCheck.allowed) {
         return null;
     }
-    aiRateLimiter.recordUserUsage('system_global').catch(() => {});
 
     try {
         const safeQuestionsText = String(questionsText || '').slice(0, MAX_AI_INPUT_CHARS);
         const prompt = `Savollar ro'yxatiga 1 to'g'ri va 3 xato variant tuz. Faqat JSON formatda qaytar.
         Struktura: [{"question": "Savol?", "options": ["A", "B", "C", "D"], "correct_index": 0}]\n\nSavollar:\n${safeQuestionsText}`;
         
-        const result = await model.generateContent(prompt);
+        const result = await withAiTimeout(model.generateContent(prompt));
         const rawQuestions = extractJSON(result.response.text());
         const questions = sanitizeQuizQuestions(rawQuestions);
         
@@ -340,14 +347,13 @@ async function analyzeEssay(text) {
     if (!limitCheck.allowed) {
         return limitCheck.message || "⚠️ Xizmat vaqtincha mavjud emas.";
     }
-    aiRateLimiter.recordUserUsage('system_global').catch(() => {});
 
     try {
         const safeText = String(text || '').slice(0, MAX_AI_INPUT_CHARS);
         const prompt = `Sen til o'qituvchisisan. O'quvchi senga matn yubordi. Grammatik, mantiqiy xatolarni top, tushuntir va 100 ballik tizimda bahola.
         DIQQAT! Javobni FAKAT Telegram HTML formatida yoz! (Qalin uchun <b>matn</b>, qiya uchun <i>matn</i> ishlating. Hech qanday yulduzcha ** ishlatma!)\n\nO'quvchi matni:\n"${safeText}"`;
 
-        const result = await model.generateContent(prompt);
+        const result = await withAiTimeout(model.generateContent(prompt));
         
         incrementAIUsage('analyzeEssay', true);
         
@@ -368,7 +374,6 @@ async function generateQuizFromImage(localFilePath, mimeType, count) {
         logger.warn('ai:image_request_blocked', { reason: limitCheck.reason });
         return null;
     }
-    aiRateLimiter.recordUserUsage('system_global').catch(() => {});
 
     try {
         const prompt = `Sen professional o'qituvchisan. Ushbu rasmdagi matnni diqqat bilan o'qi va tahlil qil.
@@ -387,7 +392,7 @@ async function generateQuizFromImage(localFilePath, mimeType, count) {
         if (stat && stat.size < 4 * 1024 * 1024) {
             // High-speed RAM path: send base64 buffer directly without Google File API upload/delete overhead
             const buffer = await fs.promises.readFile(localFilePath);
-            result = await model.generateContent([
+            result = await withAiTimeout(model.generateContent([
                 {
                     inlineData: {
                         data: buffer.toString('base64'),
@@ -395,14 +400,14 @@ async function generateQuizFromImage(localFilePath, mimeType, count) {
                     },
                 },
                 { text: prompt },
-            ]);
+            ]));
         } else {
             const uploadResponse = await fileManager.uploadFile(localFilePath, { 
                 mimeType: mimeType, 
                 displayName: "Test Image" 
             });
             uploadedFileName = uploadResponse.file.name;
-            result = await model.generateContent([
+            result = await withAiTimeout(model.generateContent([
                 {
                     fileData: {
                         mimeType: uploadResponse.file.mimeType,
@@ -410,7 +415,7 @@ async function generateQuizFromImage(localFilePath, mimeType, count) {
                     },
                 },
                 { text: prompt },
-            ]);
+            ]));
         }
         
         let questions = null;
@@ -442,7 +447,6 @@ async function generateAdaptiveQuiz(subject, mistakes, count) {
     if (!limitCheck.allowed) {
         return null;
     }
-    aiRateLimiter.recordUserUsage('system_global').catch(() => {});
 
     try {
         const targetMistakes = mistakes.slice(0, 20); 
@@ -456,7 +460,7 @@ async function generateAdaptiveQuiz(subject, mistakes, count) {
         Javobing QAT'IY faqat JSON formatda bo'lsin.
         Struktura: [{"question": "Yangi savol?", "options": ["A", "B", "C", "D"], "correct_index": 0}]`;
 
-        const result = await model.generateContent(prompt);
+        const result = await withAiTimeout(model.generateContent(prompt));
         const rawQuestions = extractJSON(result.response.text());
         const questions = sanitizeQuizQuestions(rawQuestions);
         
@@ -488,5 +492,6 @@ module.exports = {
     
     // Ichki funksiyalar (agar boshqa joydan kerak bo'lsa)
     checkAIServiceLimit,
-    incrementAIUsage
+    incrementAIUsage,
+    withAiTimeout
 };

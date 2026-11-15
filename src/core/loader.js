@@ -37,14 +37,20 @@ async function loadAllTests() {
       let subjDir = path.join(DATA_DIR, subj);
       
       // Fallback check
-      if (!fs.existsSync(subjDir) || !fs.readdirSync(subjDir).some((f) => f.endsWith(".json"))) {
+      if (!fs.existsSync(subjDir)) {
         const altDir = path.join(process.cwd(), "src", "data", subj);
         if (fs.existsSync(altDir)) subjDir = altDir;
       }
 
       if (!fs.existsSync(subjDir)) continue;
 
-      const files = fs.readdirSync(subjDir).filter((f) => f.endsWith(".json"));
+      let files = [];
+      try {
+        const rawFiles = await fs.promises.readdir(subjDir);
+        files = rawFiles.filter((f) => f.endsWith(".json"));
+      } catch {
+        continue;
+      }
       if (!files.length) continue;
 
       if (!botModule.memoryDb[subj]) botModule.memoryDb[subj] = {};
@@ -56,7 +62,8 @@ async function loadAllTests() {
         const testId = Number(match[1]);
         const filePath = path.join(subjDir, file);
         try {
-            const rawData = JSON.parse(fs.readFileSync(filePath, "utf8"));
+            const rawContent = await fs.promises.readFile(filePath, "utf8");
+            const rawData = JSON.parse(rawContent);
             let questions = rawData;
             let range = `1-${Array.isArray(rawData) ? rawData.length : (rawData.questions?.length || 0)}`;
             let blockName = rawData.block_name || `Blok ${rawData.test_id || testId}`;

@@ -421,11 +421,11 @@ async function prewarmAllTimetables(telegram, options = {}) {
           continue;
         }
 
-        await Promise.all(ALL_THEMES.map(async (theme) => {
-          if (workerState.shouldStop) return;
+        for (const theme of ALL_THEMES) {
+          if (workerState.shouldStop) break;
           if (stopHourTashkent != null && isTashkentCutoffReached(stopHourTashkent)) {
             logger.info(`⏰ Nightly pre-warm cutoff reached during theme processing (${stopHourTashkent}:00 Asia/Tashkent). Stopping.`);
-            return;
+            break;
           }
 
           workerState.currentTheme = theme;
@@ -439,7 +439,7 @@ async function prewarmAllTimetables(telegram, options = {}) {
             const existingFileId = existing?.file_id || existing?.fileId;
             if (existing && existingFileId && existing.schedule_hash === scheduleHash) {
               workerState.skipped++;
-              return;
+              continue;
             }
 
             // Generate missing or outdated theme
@@ -447,7 +447,7 @@ async function prewarmAllTimetables(telegram, options = {}) {
             let imageBuffer = await imageService.generateScheduleImage(groupName, rawSchedule, theme);
             if (!imageBuffer) {
               workerState.failed++;
-              return;
+              continue;
             }
 
             // Upload to Telegram Storage Channel CDN
@@ -485,7 +485,10 @@ async function prewarmAllTimetables(telegram, options = {}) {
             workerState.failed++;
             logger.error(`Error processing pre-warm for ${groupName} [${theme}]`, { error: jobErr.message });
           }
-        }));
+
+          // Gentle pause between themes to avoid spike
+          await sleep(150);
+        }
 
         // Pacing pause to protect Render RAM/CPU and Telegram Rate Limits
         await sleep(delayMs);

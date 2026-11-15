@@ -5,6 +5,7 @@ const mutex = require("../core/mutex");
 const { SUBJECTS } = require("../config/config");
 const dbService = require("../services/dbService");
 const aiService = require("../services/aiService");
+const aiRateLimiter = require("../services/aiRateLimiter");
 const sessionService = require("../services/sessionService");
 const {
   getBlocksKeyboard,
@@ -704,8 +705,7 @@ async function cbStopTest(ctx) {
     try {
       const { cancelSessionTimer } = require("./coreQuiz");
       await cancelSessionTimer(session, chatId);
-      const { quizTimerQueue } = require("../jobs/queues");
-      quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then((j) => j && j.remove()).catch(() => {});
+      // Clean up active BullMQ timeout: quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`) handled via cancelSessionTimer
     } catch {
       /* silent */
     }
@@ -832,8 +832,7 @@ async function cbPauseShelf(ctx) {
     try {
       const { cancelSessionTimer } = require("./coreQuiz");
       await cancelSessionTimer(session, chatId);
-      const { quizTimerQueue } = require("../jobs/queues");
-      quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`).then(j => j && j.remove()).catch(() => {});
+      // Clean up active BullMQ timeout: quizTimerQueue.getJob(`timeout:${chatId}:${session.qIdx}`) handled via cancelSessionTimer
     } catch {
       /* silent */
     }
@@ -1402,6 +1401,13 @@ async function cbAiExplainMistakes(ctx) {
     );
   }
   const chatId = ctx.from?.id || ctx.chat?.id;
+  const userId = ctx.from?.id;
+  const { isAdmin } = require("../core/utils");
+  const limitCheck = await aiRateLimiter.checkUserLimit(userId, false, isAdmin(userId));
+  if (!limitCheck.allowed) {
+    return ctx.answerCbQuery("📊 AI tahlil limitingiz tugagan. Iltimos, keyinroq urinib ko'ring.", { show_alert: true }).catch(() => {});
+  }
+
   const mistakes = (await lastMistakesCache.get(chatId)) || [];
   if (!mistakes || mistakes.length === 0) {
     return ctx.answerCbQuery("⚠️ Xatoliklar topilmadi yoki vaqti tugagan!", { show_alert: true }).catch(() => { });
@@ -1418,6 +1424,9 @@ async function cbAiExplainMistakes(ctx) {
 
   try {
     const explanation = await aiService.explainMistakesBatch(currentMistakes);
+    if (explanation && !explanation.startsWith("⚠️") && !explanation.startsWith("🤖 Kechirasiz")) {
+      await aiRateLimiter.recordUserUsage(userId).catch(() => {});
+    }
     await safeEdit(
       ctx,
       `🤖 <b>AI Tutor Tahlili (Sahifa: ${page + 1}):</b>\n\n${explanation}`,

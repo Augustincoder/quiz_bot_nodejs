@@ -104,26 +104,35 @@ async function cbAdaptiveRun(ctx) {
     let validQuestions = [];
 
     if (mistakes.length > 0) {
-      const msg = await ctx.reply(
-        `⏳ <i>AI "${subjName}" fanidan sizning zaif joylaringiz asosida ${count} ta maxsus savol tuzmoqda...</i> 🧠`,
-        { parse_mode: 'HTML' },
-      );
-
       const shuffled  = shuffleArray(mistakes);
-      try {
-        const questions = await aiService.generateAdaptiveQuiz(subjName, shuffled, count);
-        validQuestions = (questions || []).filter(q =>
-          q && q.question && Array.isArray(q.options) && q.options.length >= 2
+      const { isAdmin } = require('../core/utils');
+      const aiRateLimiter = require('../services/aiRateLimiter');
+      const limitCheck = await aiRateLimiter.checkUserLimit(ctx.from.id, false, isAdmin(ctx.from.id));
+
+      if (limitCheck.allowed) {
+        const msg = await ctx.reply(
+          `⏳ <i>AI "${subjName}" fanidan sizning zaif joylaringiz asosida ${count} ta maxsus savol tuzmoqda...</i> 🧠`,
+          { parse_mode: 'HTML' },
         );
-      } catch (aiErr) {
-        console.warn('AI generation error, using raw mistakes:', aiErr.message);
+
+        try {
+          const questions = await aiService.generateAdaptiveQuiz(subjName, shuffled, count);
+          validQuestions = (questions || []).filter(q =>
+            q && q.question && Array.isArray(q.options) && q.options.length >= 2
+          );
+          if (validQuestions.length > 0) {
+            await aiRateLimiter.recordUserUsage(ctx.from.id).catch(() => {});
+          }
+        } catch (aiErr) {
+          console.warn('AI generation error, using raw mistakes:', aiErr.message);
+        }
+
+        await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
       }
 
       if (!validQuestions.length) {
         validQuestions = shuffled.slice(0, count);
       }
-
-      await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
     } else {
       // Diagnostic test from available subject questions
       let subjectPool = [];

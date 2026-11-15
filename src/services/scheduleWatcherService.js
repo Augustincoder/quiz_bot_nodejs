@@ -842,7 +842,7 @@ async function checkScheduleChanges(forceOrOptions = false) {
     // Map all alerted hashes and active snapshots from Redis
     const alertedHashesMap = new Map();
     const activeSnapshotsMap = new Map();
-    if (redis) {
+    if (redis && typeof redis.pipeline === 'function') {
       try {
         const activeNorms = Array.from(usersByGroupNorm.keys());
         if (activeNorms.length > 0) {
@@ -852,15 +852,17 @@ async function checkScheduleChanges(forceOrOptions = false) {
             pipeline.get(`cache:schedule:active_snapshot:${n}`);
           }
           const results = await pipeline.exec();
-          for (let i = 0; i < activeNorms.length; i++) {
-            const hashRes = results[i * 2];
-            const snapRes = results[i * 2 + 1];
-            const n = activeNorms[i];
-            if (!hashRes[0] && hashRes[1]) alertedHashesMap.set(n, hashRes[1]);
-            if (!snapRes[0] && snapRes[1]) {
-              try {
-                activeSnapshotsMap.set(n, JSON.parse(snapRes[1]));
-              } catch {}
+          if (Array.isArray(results)) {
+            for (let i = 0; i < activeNorms.length; i++) {
+              const hashRes = results[i * 2];
+              const snapRes = results[i * 2 + 1];
+              const n = activeNorms[i];
+              if (hashRes && !hashRes[0] && hashRes[1]) alertedHashesMap.set(n, hashRes[1]);
+              if (snapRes && !snapRes[0] && snapRes[1]) {
+                try {
+                  activeSnapshotsMap.set(n, JSON.parse(snapRes[1]));
+                } catch {}
+              }
             }
           }
         }
@@ -1255,11 +1257,14 @@ async function deliverNoteReminder(bot, note, subscribers, titleHeader) {
 
   if (note.is_group_shared && note.group_name) {
     const targetNorm = normalizeGroupName(note.group_name);
-    const groupUsers = await db.getUsersByClassName(note.group_name).catch(() => []);
-    const fromDb = (groupUsers || []).map(u => Number(u.telegram_id)).filter(Boolean);
     const fromSubs = (subscribers || [])
       .filter(u => normalizeGroupName(u.group_name) === targetNorm)
       .map(u => Number(u.telegram_id));
+    let fromDb = [];
+    if (fromSubs.length === 0) {
+      const groupUsers = await db.getUsersByClassName(note.group_name).catch(() => []);
+      fromDb = (groupUsers || []).map(u => Number(u.telegram_id)).filter(Boolean);
+    }
     recipients = Array.from(new Set([...fromDb, ...fromSubs, Number(note.creator_id)]));
   }
 

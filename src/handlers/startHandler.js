@@ -64,8 +64,6 @@ async function cmdStart(ctx) {
     try {
       const { cancelSessionTimer } = require('./coreQuiz');
       await cancelSessionTimer(session, chatId);
-      const { quizTimerQueue } = require('../jobs/queues');
-      await quizTimerQueue.getJob(`timeout:${chatId}:${session?.qIdx}`).then(j => j && j.remove()).catch(() => {});
     } catch {}
     
     // Testni o'chirish o'rniga javonga saqlaymiz (faqat boshlangan va preparing bo'lmagan testlar)

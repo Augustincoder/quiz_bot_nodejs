@@ -860,11 +860,19 @@ async function cbAdminStats(ctx) {
   const loading = await ctx.reply('⏳ Batafsil statistika tayyorlanmoqda...');
 
   try {
-    const totalUsers = await dbService.getUserCount();
-    const count  = totalUsers;
+    const aggStats = typeof dbService.getAggregatedAdminStats === 'function'
+      ? await dbService.getAggregatedAdminStats()
+      : null;
 
-    // ✅ FIX: Reuse dashboard stats + subject breakdown in single pass
-    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    let count = aggStats?.totalUsers || 0;
+    let activeUsers = aggStats?.activeUsers || 0;
+    let totalTests = aggStats?.totalTests || 0;
+    let totalCorrect = aggStats?.totalCorrect || 0;
+    let totalWrong = aggStats?.totalWrong || 0;
+
+    if (!aggStats) {
+      count = await dbService.getUserCount();
+    }
 
     // Initialize subject buckets
     const bySubject = {};
@@ -872,17 +880,27 @@ async function cbAdminStats(ctx) {
       bySubject[k] = { count: 0, correct: 0, wrong: 0 };
     });
 
-    let activeUsers = 0, totalTests = 0, totalCorrect = 0, totalWrong = 0;
-
-    if (count) {
+    if (aggStats?.bySubject && Object.keys(aggStats.bySubject).length > 0) {
+      // Fast path: use PostgreSQL aggregated subject stats with zero RAM overhead
+      for (const [k, d] of Object.entries(aggStats.bySubject)) {
+        bySubject[k] = d;
+      }
+    } else if (count) {
+      // Offline / fallback path: compute in-memory
+      const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
       const allStats = await dbService.getAllUserStats();
+
+      // If aggStats wasn't available, aggregate everything manually; otherwise only aggregate bySubject
+      const needsFullAgg = !aggStats;
 
       for (const stat of allStats) {
         const history = Array.isArray(stat.history) ? stat.history : [];
         if (!history.length) {
-          totalCorrect += stat.total_correct || 0;
-          totalWrong   += stat.total_wrong   || 0;
-          totalTests   += stat.tests_completed || 0;
+          if (needsFullAgg) {
+            totalCorrect += stat.total_correct || 0;
+            totalWrong   += stat.total_wrong   || 0;
+            totalTests   += stat.tests_completed || 0;
+          }
           continue;
         }
 
@@ -893,8 +911,10 @@ async function cbAdminStats(ctx) {
 
           const c = h.correct || 0;
           const w = h.wrong   || 0;
-          totalCorrect += c;
-          totalWrong   += w;
+          if (needsFullAgg) {
+            totalCorrect += c;
+            totalWrong   += w;
+          }
 
           const bucket = bySubject[h.subject];
           if (bucket) {
@@ -904,8 +924,10 @@ async function cbAdminStats(ctx) {
           }
         }
 
-        if (isActive) activeUsers++;
-        totalTests += history.length;
+        if (needsFullAgg) {
+          if (isActive) activeUsers++;
+          totalTests += history.length;
+        }
       }
     }
 

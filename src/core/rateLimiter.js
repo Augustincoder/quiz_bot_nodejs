@@ -27,6 +27,14 @@ function rateLimiterMiddleware() {
     // Admin bypass
     if (isAdmin(userId)) return next();
 
+    // Skip ordinary group chatter so individual students talking doesn't waste Redis queries
+    if (ctx.chat?.type && ctx.chat.type !== 'private') {
+      const text = (ctx.message?.text || '').trim();
+      if (!ctx.callbackQuery && !text.startsWith('/') && !ctx.update?.widget_query && !ctx.update?.shared_widget_query) {
+        return next();
+      }
+    }
+
     // Determine limit based on update type
     const isCallback = !!ctx.callbackQuery;
     const limit = isCallback ? CALLBACK_LIMIT : MESSAGE_LIMIT;

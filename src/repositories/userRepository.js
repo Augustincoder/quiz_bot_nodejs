@@ -309,24 +309,39 @@ async function getAggregatedAdminStats() {
 
   if (isPostgresAvailable()) {
     try {
-      // Xavfsiz SQL: history maydoni string, json yoki jsonb bo'lishidan qat'i nazar xato bermaydi
+      // Xavfsiz SQL: sevenDaysAgo va todayStart asosida active_users va todayTests aniq hisoblanadi
       const sql = `
         SELECT 
           (SELECT COUNT(*) FROM users) AS total_users,
           COUNT(*) FILTER (
-            WHERE updated_at >= NOW() - INTERVAL '7 days'
-               OR (
-                 history IS NOT NULL 
-                 AND history::text != '[]' 
-                 AND history::text != 'null'
-               )
+            WHERE jsonb_typeof(
+              CASE 
+                WHEN history IS NOT NULL AND history::text != '' AND history::text != 'null' THEN history::jsonb 
+                ELSE '[]'::jsonb 
+              END
+            ) = 'array'
+              AND jsonb_array_length(
+                CASE 
+                  WHEN history IS NOT NULL AND history::text != '' AND history::text != 'null' THEN history::jsonb 
+                  ELSE '[]'::jsonb 
+                END
+              ) > 0
+              AND COALESCE(
+                (
+                  (CASE 
+                    WHEN history IS NOT NULL AND history::text != '' AND history::text != 'null' THEN history::jsonb 
+                    ELSE '[]'::jsonb 
+                  END)->0->>'timestamp'
+                )::bigint, 
+                0
+              ) >= $1
           ) AS active_users,
           COALESCE(SUM(tests_completed), 0) AS total_tests,
           COALESCE(SUM(total_correct), 0) AS total_correct,
           COALESCE(SUM(total_wrong), 0) AS total_wrong
         FROM user_stats;
       `;
-      const res = await pgQuery(sql);
+      const res = await pgQuery(sql, [sevenDaysAgo]);
       clearDbError();
       const row = res.rows[0] || {};
       const totalUsers = parseInt(row.total_users || 0, 10);
@@ -337,14 +352,50 @@ async function getAggregatedAdminStats() {
       const totalAnswers = totalCorrect + totalWrong;
       const avgScore = totalAnswers > 0 ? Math.round((totalCorrect / totalAnswers) * 100) : 0;
 
+      let bySubject = null;
+      let todayTestsCount = 0;
+      try {
+        const subjSql = `
+          SELECT 
+            elem->>'subject' AS subject,
+            COUNT(*) AS cnt,
+            COUNT(*) FILTER (WHERE COALESCE((elem->>'timestamp')::bigint, 0) >= $1) AS today_cnt,
+            COALESCE(SUM( NULLIF(elem->>'correct', '')::int ), 0) AS corr,
+            COALESCE(SUM( NULLIF(elem->>'wrong', '')::int ), 0) AS wrng
+          FROM user_stats,
+          LATERAL jsonb_array_elements(
+            CASE 
+              WHEN history IS NOT NULL AND history::text != '' AND history::text != 'null' AND jsonb_typeof(history::jsonb) = 'array' THEN history::jsonb 
+              ELSE '[]'::jsonb 
+            END
+          ) AS elem
+          WHERE elem->>'subject' IS NOT NULL
+          GROUP BY elem->>'subject';
+        `;
+        const subjRes = await pgQuery(subjSql, [todayStart]);
+        bySubject = {};
+        for (const r of subjRes.rows) {
+          const s = r.subject;
+          todayTestsCount += parseInt(r.today_cnt || 0, 10);
+          bySubject[s] = {
+            count: parseInt(r.cnt || 0, 10),
+            correct: parseInt(r.corr || 0, 10),
+            wrong: parseInt(r.wrng || 0, 10),
+          };
+        }
+      } catch (subjErr) {
+        logger.debug('bySubject SQL aggregation fallback:', { error: subjErr.message });
+      }
+
       return {
         totalUsers,
         activeUsers,
         totalTests,
-        todayTests: 0,
+        todayTests: todayTestsCount,
         avgScore,
         totalCorrect,
         totalWrong,
+        bySubject,
       };
     } catch (pgErr) {
       logger.error('getAggregatedAdminStats pg error:', { error: pgErr.message });
@@ -408,6 +459,11 @@ async function getAggregatedAdminStats() {
 async function registerUser(userId, fullName, username) {
   const uid = String(userId);
   try {
+    localBlockedUsers.delete(uid);
+    if (redis) {
+      await redis.del(`user_blocked:${uid}`).catch(() => {});
+    }
+
     const seenKey = `user_registered:${uid}`;
     const alreadyRegistered = await redis.get(seenKey);
     if (alreadyRegistered) return;
@@ -563,7 +619,7 @@ async function getBroadcastRecipients() {
 async function getAllUserNames() {
   if (isPostgresAvailable()) {
     try {
-      const res = await pgQuery('SELECT telegram_id, full_name FROM users');
+      const res = await pgQuery('SELECT telegram_id, full_name FROM users ORDER BY created_at DESC LIMIT 2000');
       clearDbError();
       return res.rows;
     } catch (pgErr) {
@@ -811,10 +867,11 @@ async function markUserBlocked(userId, isBlocked = true) {
 
   try {
     if (redis) {
-      await redis.set(`user_blocked:${uid}`, isBlocked ? '1' : '0', 'EX', 86400 * 7).catch(() => {});
-    }
-    if (isPostgresAvailable()) {
-      await pgQuery('UPDATE users SET is_banned = $1 WHERE telegram_id = $2', [isBlocked, uid]).catch(() => {});
+      if (isBlocked) {
+        await redis.set(`user_blocked:${uid}`, '1', 'EX', 86400 * 7).catch(() => {});
+      } else {
+        await redis.del(`user_blocked:${uid}`).catch(() => {});
+      }
     }
     logger.debug('Updated user blocked status', { userId: uid, isBlocked });
   } catch (err) {
@@ -830,21 +887,7 @@ async function isUserBlocked(userId) {
       if (cached !== null) return cached === '1';
     }
     if (localBlockedUsers.has(uid)) return true;
-
-    if (isPostgresAvailable()) {
-      try {
-        const res = await pgQuery('SELECT is_banned FROM users WHERE telegram_id = $1 LIMIT 1', [uid]);
-        if (res.rows.length) {
-          const isBlocked = res.rows[0].is_banned === true;
-          if (redis) {
-            await redis.set(`user_blocked:${uid}`, isBlocked ? '1' : '0', 'EX', 3600).catch(() => {});
-          }
-          return isBlocked;
-        }
-      } catch {}
-    }
-
-    return localBlockedUsers.has(uid);
+    return false;
   } catch {
     return localBlockedUsers.has(uid);
   }

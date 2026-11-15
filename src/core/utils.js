@@ -11,20 +11,24 @@ class TTLMap {
     this._map = new Map();
     this._ttl = ttlMs;
     this._maxSize = maxSize;
+    this._lastSweepAt = Date.now();
     this._sweepInterval = setInterval(() => this.sweep(), Math.min(ttlMs, 5 * 60 * 1000));
     if (this._sweepInterval.unref) this._sweepInterval.unref();
   }
   set(key, value) {
+    const now = Date.now();
     if (this._map.has(key)) {
       this._map.delete(key);
     } else if (this._map.size >= this._maxSize) {
-      this.sweep();
+      if (now - this._lastSweepAt > 60000) {
+        this.sweep(now);
+      }
       if (this._map.size >= this._maxSize) {
         const oldestKey = this._map.keys().next().value;
         if (oldestKey !== undefined) this._map.delete(oldestKey);
       }
     }
-    this._map.set(key, { value, expiresAt: Date.now() + this._ttl });
+    this._map.set(key, { value, expiresAt: now + this._ttl });
   }
   get(key) {
     const entry = this._map.get(key);
@@ -33,6 +37,9 @@ class TTLMap {
       this._map.delete(key);
       return undefined;
     }
+    // Refresh LRU order in O(1)
+    this._map.delete(key);
+    this._map.set(key, entry);
     return entry.value;
   }
   has(key) {
@@ -51,6 +58,7 @@ class TTLMap {
     this._map.clear();
   }
   sweep(now = Date.now()) {
+    this._lastSweepAt = now;
     for (const [k, entry] of this._map.entries()) {
       if (now > entry.expiresAt) this._map.delete(k);
     }
@@ -103,11 +111,13 @@ const LEADERBOARD_TTL  = 120_000;
 const setState = (ctx, stateName) => {
   if (!ctx.session) ctx.session = {};
   ctx.session.state = stateName;
+  ctx._sessionDirty = true;
 };
 const clearState = (ctx) => {
   if (!ctx.session) ctx.session = {};
   ctx.session.state = null;
   ctx.session.data = {};
+  ctx._sessionDirty = true;
   const userId = ctx.from?.id;
   if (userId) {
     try {

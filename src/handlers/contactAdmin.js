@@ -8,7 +8,7 @@ const logger = require('../core/logger');
 const {
   States, setState, clearState, updateData, getData, safeAnswerCb,
   safeEdit, escapeHtml, buildUserContext,
-  backToMainKb, sanitizeForTelegram, isAdmin, adminGuard, isMainMenuButton
+  backToMainKb, sanitizeForTelegram, isAdmin, adminGuard, isMainMenuButton, parseSuffix
 } = require('../core/utils');
 
 // ============================================
@@ -703,8 +703,8 @@ async function cbCancelUserTest(ctx) {
       `✅ <b>TEST TO'XTATILDI!</b>\n` +
       `━━━━━━━━━━━━━━━━━━━━\n\n` +
       `👤 User ID: <code>${userId}</code>\n` +
-      `📝 Test turi: ${session.subject || '—'}\n` +
-      `📊 Savol: ${session.currentQuestion || 0}/${session.totalQuestions || 0}\n\n` +
+      `📝 Test turi: ${session.subjectKey || session.subject || '—'}\n` +
+      `📊 Savol: ${session.qIdx !== undefined ? session.qIdx + 1 : (session.currentQuestion || 0)}/${session.sessionQuestions?.length || session.totalQuestions || 0}\n\n` +
       `<i>Foydalanuvchiga xabar yuborildi.</i>`,
       { parse_mode: 'HTML' }
     );
@@ -965,18 +965,6 @@ async function cbConfirmBan(ctx) {
       { parse_mode: 'HTML' }
     );
   }
-}
-
-// ============================================
-// 🛠 HELPER FUNCTIONS
-// ============================================
-
-/**
- * Parse suffix from callback data
- */
-function parseSuffix(data, prefix) {
-  if (!data || !data.startsWith(prefix)) return '';
-  return data.slice(prefix.length);
 }
 
 // ============================================

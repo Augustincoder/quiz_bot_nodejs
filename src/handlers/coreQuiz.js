@@ -865,38 +865,39 @@ async function cbMyGroupQuizResult(ctx, testSession = null) {
     }
   } catch {}
 
-  const sendOptions = {
-    parse_mode: "HTML",
-    ephemeral_message_parameters: {
-      target_user_id: userId,
-    },
-    ephemeralMessageParameters: {
-      userId: userId,
-    },
-  };
-  if (replyMarkup) {
-    sendOptions.reply_markup = replyMarkup;
-  }
+  const alertSummary = `📊 O'rin: ${analysis.rankStr} (${analysis.percentile}) | ✅ ${analysis.correct} | ❌ ${analysis.wrong}\n\n${analysis.ghostCoachAdvice}`.replace(/<[^>]*>/g, "");
 
   try {
+    const ephemeralOpts = {
+      parse_mode: "HTML",
+      ephemeral_message_parameters: {
+        target_user_id: userId,
+      },
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+    };
+
     if (ctx.telegram?.sendMessage && chatId) {
-      await ctx.telegram.sendMessage(chatId, analysis.text, sendOptions);
-    } else if (typeof ctx.reply === "function") {
-      await ctx.reply(analysis.text, sendOptions);
+      await ctx.telegram.sendMessage(chatId, analysis.text, ephemeralOpts);
+      await ctx.answerCbQuery().catch(() => {});
+      return;
     }
-    await ctx.answerCbQuery().catch(() => {});
   } catch (err) {
-    // Fallback: alert popup with summary or direct private message
-    const alertSummary = `📊 O'rin: ${analysis.rankStr} (${analysis.percentile}) | ✅ ${analysis.correct} | ❌ ${analysis.wrong}\n\n${analysis.ghostCoachAdvice}`.replace(/<[^>]*>/g, "");
-    try {
-      await ctx.answerCbQuery(alertSummary.slice(0, 195), { show_alert: true });
-    } catch (e2) {
-      if (ctx.telegram?.sendMessage) {
+    // Real Telegram guruhlarida web_app tugma guruhga yuborilganda BUTTON_TYPE_INVALID beradi.
+    // Shu sababli to'liq tahlil va 3D WebApp tugmasini foydalanuvchining shaxsiy lichkasiga (userId) yuboramiz:
+    let sentToDm = false;
+    if (ctx.telegram?.sendMessage && userId && String(chatId) !== String(userId)) {
+      try {
         await ctx.telegram.sendMessage(userId, analysis.text, {
           parse_mode: "HTML",
-          reply_markup: replyMarkup,
-        }).catch(() => {});
-      }
+          ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+        });
+        sentToDm = true;
+      } catch {}
+    }
+    if (sentToDm) {
+      await ctx.answerCbQuery("📊 Batafsil tahlil va 3D Shohsupa shaxsiy xabaringizga (lichkaga) yuborildi!", { show_alert: true }).catch(() => {});
+    } else {
+      await ctx.answerCbQuery(alertSummary.slice(0, 195), { show_alert: true }).catch(() => {});
     }
   }
 }
@@ -1411,7 +1412,14 @@ async function handlePollAnswer(pollAnswer, telegram) {
           await telegram.stopPoll(chatId, session.msgId);
         } catch {}
 
-        setTimeout(() => sendNextQuestion(chatId, telegram), 1000);
+        const expectedNextIdx = session.qIdx;
+        setTimeout(async () => {
+          const freshSession = await sessionService.getActiveTest(chatId);
+          if (!freshSession || freshSession.finished || freshSession.status === 'paused') return;
+          if (freshSession.qIdx !== expectedNextIdx) return;
+          freshSession.questionState = "ACTIVE";
+          await sendNextQuestion(chatId, telegram);
+        }, 1000);
       }
     } finally {
       unlockGroup();

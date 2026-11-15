@@ -60,15 +60,15 @@ async function onDocxFile(ctx) {
 
   if (!doc.file_name.endsWith(".docx") || doc.mime_type !== validMime) {
     return ctx.reply(
-      "⚠️ *Xavfsizlik tizimi:* Faqat toza `.docx` (Word) formatidagi fayllar qabul qilinadi.",
-      { parse_mode: "Markdown" },
+      "⚠️ <b>Xavfsizlik tizimi:</b> Faqat toza <code>.docx</code> (Word) formatidagi fayllar qabul qilinadi.",
+      { parse_mode: "HTML" },
     );
   }
 
   if (doc.file_size > MAX_FILE_SIZE) {
     return ctx.reply(
-      "⚠️ *Fayl hajmi juda katta!* Iltimos, xotirani ortiqcha zo'riqtirmaslik uchun 2 MB gacha bo'lgan fayl yuklang.",
-      { parse_mode: "Markdown" },
+      "⚠️ <b>Fayl hajmi juda katta!</b> Iltimos, xotirani ortiqcha zo'riqtirmaslik uchun 2 MB gacha bo'lgan fayl yuklang.",
+      { parse_mode: "HTML" },
     );
   }
 
@@ -105,9 +105,9 @@ async function onDocxFile(ctx) {
         ctx.chat.id,
         statusMsg.message_id,
         undefined,
-        "❌ *Fayldan hech qanday savol topilmadi!*\n\nIltimos, Word fayl to'g'ri formatda ekanligini tekshirib, *boshqa fayl yuboring* (Men yana fayl kutyapman 👇).",
+        "❌ <b>Fayldan hech qanday savol topilmadi!</b>\n\nIltimos, Word fayl to'g'ri formatda ekanligini tekshirib, <b>boshqa fayl yuboring</b> (Men yana fayl kutyapman 👇).",
         {
-          parse_mode: "Markdown",
+          parse_mode: "HTML",
           ...Markup.inlineKeyboard([
             [
               Markup.button.callback(
@@ -129,7 +129,7 @@ async function onDocxFile(ctx) {
       let finalValidQs = validQs;
       if (validQs.length > MAX_QUESTIONS) {
         finalValidQs = validQs.slice(0, MAX_QUESTIONS);
-        limitMsg = `\n\n⚠️ *Limit himoyasi:* Tizim barqarorligini saqlash maqsadida fayldan faqat dastlabki ${MAX_QUESTIONS} ta savol qabul qilindi!`;
+        limitMsg = `\n\n⚠️ <b>Limit himoyasi:</b> Tizim barqarorligini saqlash maqsadida fayldan faqat dastlabki ${MAX_QUESTIONS} ta savol qabul qilindi!`;
       }
 
       const chunks = [];
@@ -196,7 +196,7 @@ async function onDocxFile(ctx) {
 
       if (validQs.length > 50) {
         finalQs = validQs.slice(0, 50);
-        limitMsg = `\n\n⚠️ *Limit:* Bitta blok uchun maksimal 50 ta savol olindi. Kattaroq fayllar uchun asosiy menyudagi *"Avto-yuklash"* tugmasidan foydalaning.`;
+        limitMsg = `\n\n⚠️ <b>Limit:</b> Bitta blok uchun maksimal 50 ta savol olindi. Kattaroq fayllar uchun asosiy menyudagi <b>"Avto-yuklash"</b> tugmasidan foydalaning.`;
       }
 
       const questions = [...(data.questions || []), ...finalQs];
@@ -209,8 +209,8 @@ async function onDocxFile(ctx) {
         .deleteMessage(ctx.chat.id, statusMsg.message_id)
         .catch(() => {});
       await ctx.reply(
-        `✅ *Fayl muvaffaqiyatli o'qildi!* (Qo'shildi: ${finalQs.length} ta)${limitMsg}`,
-        { parse_mode: "Markdown" },
+        `✅ <b>Fayl muvaffaqiyatli o'qildi!</b> (Qo'shildi: ${finalQs.length} ta)${limitMsg}`,
+        { parse_mode: "HTML" },
       );
 
       const wizardFlow = require("./wizardFlow");
@@ -356,9 +356,9 @@ async function cbAutoDocx(ctx) {
 
   await safeEdit(
     ctx,
-    `⚙️ *Qaysi usulda o'qiymiz?*\n\nWord fayldagi testlarda to'g'ri javob qanday belgilangan?\n\n🎯 *# bilan:* To'g'ri javob oldida # belgisi bor.\n🥇 *1-javob:* Har doim A (birinchi) variant to'g'ri.`,
+    `⚙️ <b>Qaysi usulda o'qiymiz?</b>\n\nWord fayldagi testlarda to'g'ri javob qanday belgilangan?\n\n🎯 <b># bilan:</b> To'g'ri javob oldida # belgisi bor.\n🥇 <b>1-javob:</b> Har doim A (birinchi) variant to'g'ri.`,
     {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard([
         [
           Markup.button.callback(

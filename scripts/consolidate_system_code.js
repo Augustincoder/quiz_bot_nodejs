@@ -118,6 +118,8 @@ const sections = [
       'src/widgets/views/docxHealerWidget.html',
       'src/widgets/views/flashcardWidget.html',
       'src/widgets/views/podiumWidget.html',
+      'src/widgets/views/inlineDocxHealer.html',
+      'src/widgets/views/inlineFlashcard.html',
     ],
   },
 ];

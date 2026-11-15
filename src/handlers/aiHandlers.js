@@ -75,58 +75,8 @@ function checkGlobalLimit() {
 /**
  * User-level rate limit tekshirish
  */
-function checkUserLimit(userId, isPremium = false, isAdmin = false) {
-    if (isAdmin && USER_LIMITS.ADMIN_UNLIMITED) {
-        return { allowed: true };
-    }
-
-    const now = Date.now();
-    const userLimit = userRateLimit.get(userId);
-
-    const dailyMax = isPremium ? USER_LIMITS.PREMIUM_USER_DAILY : USER_LIMITS.FREE_USER_DAILY;
-    const hourlyMax = USER_LIMITS.FREE_USER_HOURLY;
-
-    if (!userLimit) {
-        // Birinchi marta foydalanayotgan user
-        userRateLimit.set(userId, {
-            dailyCount: 1,
-            hourlyCount: 1,
-            dailyResetTime: now + 24 * 60 * 60 * 1000, // 24 soat
-            hourlyResetTime: now + 60 * 60 * 1000      // 1 soat
-        });
-        aiRateLimiter.recordUserUsage(userId).catch(() => {});
-        return { allowed: true };
-    }
-
-    // Hourly reset
-    if (now > userLimit.hourlyResetTime) {
-        userLimit.hourlyCount = 0;
-        userLimit.hourlyResetTime = now + 60 * 60 * 1000;
-    }
-
-    // Daily reset
-    if (now > userLimit.dailyResetTime) {
-        userLimit.dailyCount = 0;
-        userLimit.dailyResetTime = now + 24 * 60 * 60 * 1000;
-    }
-
-    // Check limits
-    if (userLimit.hourlyCount >= hourlyMax) {
-        const minutesLeft = Math.ceil((userLimit.hourlyResetTime - now) / 60000);
-        return { allowed: false, reason: 'hourly_limit', minutesLeft };
-    }
-
-    if (userLimit.dailyCount >= dailyMax) {
-        const hoursLeft = Math.ceil((userLimit.dailyResetTime - now) / 3600000);
-        return { allowed: false, reason: 'daily_user_limit', hoursLeft };
-    }
-
-    // Increment counters
-    userLimit.dailyCount++;
-    userLimit.hourlyCount++;
-    aiRateLimiter.recordUserUsage(userId).catch(() => {});
-
-    return { allowed: true, remaining: dailyMax - userLimit.dailyCount };
+async function checkUserLimit(userId, isPremium = false, isAdmin = false) {
+    return await aiRateLimiter.checkUserLimit(userId, isPremium, isAdmin);
 }
 
 /**
@@ -146,15 +96,12 @@ async function cbAiTutorMenu(ctx) {
     try {
         await ctx.answerCbQuery().catch(() => { });
 
-        const text = `🤖 *AI Tutor — Shaxsiy O'quv Yordamchingiz*
-
-Sun'iy Intellekt sizga ikki xil yo'lda yordam beradi:
-
-🧠 *Smart Quiz* — Matn yoki rasmdan avtomatik test tuzib beradi
-📝 *Insho Tahlili* — Yozgan matningizni tekshirib, baho va maslahat beradi
-
-━━━━━━━━━━━━━━━━
-*Qaysi xizmatdan foydalanmoqchisiz?*`;
+        const text = `🤖 <b>AI Tutor — Shaxsiy O'quv Yordamchingiz</b>\n\n` +
+            `Sun'iy Intellekt sizga ikki xil yo'lda yordam beradi:\n\n` +
+            `🧠 <b>Smart Quiz</b> — Matn yoki rasmdan avtomatik test tuzib beradi\n` +
+            `📝 <b>Insho Tahlili</b> — Yozgan matningizni tekshirib, baho va maslahat beradi\n\n` +
+            `━━━━━━━━━━━━━━━━\n` +
+            `<b>Qaysi xizmatdan foydalanmoqchisiz?</b>`;
 
         const buttons = [
             [Markup.button.callback('🧠 Smart Quiz (Matn/Rasmdan test)', 'fmt_ai')],
@@ -162,7 +109,7 @@ Sun'iy Intellekt sizga ikki xil yo'lda yordam beradi:
             [Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')]
         ];
 
-        await safeEdit(ctx, text, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
+        await safeEdit(ctx, text, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
     } catch (e) {
         console.error(e);
     }
@@ -175,28 +122,24 @@ async function cbAiEssayInit(ctx) {
         setState(ctx, States.AI_ESSAY_ANALYSIS);
 
         const userId = ctx.from.id;
-        const userLimit = userRateLimit.get(userId);
         const isPremium = false; // Bu yerda premium statusni tekshiring
         const dailyMax = isPremium ? USER_LIMITS.PREMIUM_USER_DAILY : USER_LIMITS.FREE_USER_DAILY;
-        const remaining = userLimit ? dailyMax - userLimit.dailyCount : dailyMax;
+        const limitInfo = await aiRateLimiter.checkUserLimit(userId, isPremium, checkIsAdmin(userId));
+        const remaining = limitInfo.remaining !== undefined ? Math.min(dailyMax, limitInfo.remaining) : dailyMax;
 
-        const text = `📝 *Insho / Tarjima Tahlili*
-
-Yozgan matningizni (IELTS essay, maqola, tarjima yoki boshqa yozma ish) shu chatga yuboring.
-
-🤖 *AI Tutor quyidagilarni tahlil qiladi:*
-• ✍️ Grammatik xatolar va ularni tuzatish
-• 📚 So'z boyligi (Vocabulary) darajasi
-• 🏗 Matn tuzilmasi va mantiqiy ketma-ketlik
-• 💯 100 ballik tizimda umumiy baho
-
-━━━━━━━━━━━━━━━━
-💡 _Kamida 2–3 gapdan iborat matn yuboring. Uzunroq matn — batafsilroq tahlil!_
-
-📊 *Sizning limitingiz:* ${remaining}/${dailyMax} (bugun)`;
+        const text = `📝 <b>Insho / Tarjima Tahlili</b>\n\n` +
+`Yozgan matningizni (IELTS essay, maqola, tarjima yoki boshqa yozma ish) shu chatga yuboring.\n\n` +
+`🤖 <b>AI Tutor quyidagilarni tahlil qiladi:</b>\n` +
+`• ✍️ Grammatik xatolar va ularni tuzatish\n` +
+`• 📚 So'z boyligi (Vocabulary) darajasi\n` +
+`• 🏗 Matn tuzilmasi va mantiqiy ketma-ketlik\n` +
+`• 💯 100 ballik tizimda umumiy baho\n\n` +
+`━━━━━━━━━━━━━━━━\n` +
+`💡 <i>Kamida 2–3 gapdan iborat matn yuboring. Uzunroq matn — batafsilroq tahlil!</i>\n\n` +
+`📊 <b>Sizning limitingiz:</b> ${remaining}/${dailyMax} (bugun)`;
 
         await safeEdit(ctx, text, {
-            parse_mode: 'Markdown',
+            parse_mode: 'HTML',
             ...Markup.inlineKeyboard([
                 [Markup.button.callback('🔙 Orqaga', 'ai_tutor_menu')],
                 [Markup.button.callback('🏠 Asosiy Menyu', 'back_to_main')],
@@ -212,9 +155,10 @@ async function cbAiEssayMenu(ctx) {
     setState(ctx, States.AI_ESSAY_ANALYSIS);
     
     const userId = ctx.from.id;
-    const userLimit = userRateLimit.get(userId);
+    const isPremium = false;
     const dailyMax = USER_LIMITS.FREE_USER_DAILY;
-    const remaining = userLimit ? dailyMax - userLimit.dailyCount : dailyMax;
+    const limitInfo = await aiRateLimiter.checkUserLimit(userId, isPremium, checkIsAdmin(userId));
+    const remaining = limitInfo.remaining !== undefined ? Math.min(dailyMax, limitInfo.remaining) : dailyMax;
 
     await safeEdit(
         ctx,
@@ -250,35 +194,35 @@ async function onEssayInput(ctx) {
         if (!globalCheck.allowed) {
             if (globalCheck.reason === 'daily_limit') {
                 return ctx.reply(
-                    "⚠️ *Kunlik limit to'ldi!*\n\n" +
+                    "⚠️ <b>Kunlik limit to'ldi!</b>\n\n" +
                     "Tizim bugun maksimal so'rovlar soniga yetdi. Iltimos, ertaga qayta urinib ko'ring.\n\n" +
                     "Premium foydalanuvchilar uchun: @AvazovM",
-                    { parse_mode: 'Markdown' }
+                    { parse_mode: 'HTML' }
                 );
             } else if (globalCheck.reason === 'monthly_limit') {
                 return ctx.reply(
-                    "⚠️ *Oylik limit to'ldi!*\n\nKeyingi oy uchun admindan yangi kvota so'rang: @AvazovM",
-                    { parse_mode: 'Markdown' }
+                    "⚠️ <b>Oylik limit to'ldi!</b>\n\nKeyingi oy uchun admindan yangi kvota so'rang: @AvazovM",
+                    { parse_mode: 'HTML' }
                 );
             }
         }
 
         // 🔒 User-level limitni tekshirish
-        const userCheck = checkUserLimit(userId, isPremium, isAdminUser);
+        const userCheck = await checkUserLimit(userId, isPremium, isAdminUser);
         if (!userCheck.allowed) {
             if (userCheck.reason === 'hourly_limit') {
                 return ctx.reply(
-                    `⏳ *Soatlik limit tugadi!*\n\n` +
+                    `⏳ <b>Soatlik limit tugadi!</b>\n\n` +
                     `Keyingi so'rovni ${userCheck.minutesLeft} daqiqadan keyin yuborishingiz mumkin.\n\n` +
                     `💎 Ko'proq limit uchun: @AvazovM`,
-                    { parse_mode: 'Markdown' }
+                    { parse_mode: 'HTML' }
                 );
             } else if (userCheck.reason === 'daily_user_limit') {
                 return ctx.reply(
-                    `📊 *Bugungi limitingiz tugadi!*\n\n` +
+                    `📊 <b>Bugungi limitingiz tugadi!</b>\n\n` +
                     `Keyingi tekshiruvni ${userCheck.hoursLeft} soatdan keyin amalga oshirishingiz mumkin.\n\n` +
                     `💎 Premium foydalanuvchilar kuniga 50 tagacha tekshiruv oladi: @AvazovM`,
-                    { parse_mode: 'Markdown' }
+                    { parse_mode: 'HTML' }
                 );
             }
         }
@@ -288,8 +232,9 @@ async function onEssayInput(ctx) {
         try {
             const analysis = await aiService.analyzeEssay(text);
 
-            // ✅ Muvaffaqiyatli so'rov — global usageni oshiramiz
+            // ✅ Muvaffaqiyatli so'rov — usageni oshiramiz
             incrementGlobalUsage();
+            await aiRateLimiter.recordUserUsage(userId).catch(() => {});
 
             const remaining = userCheck.remaining !== undefined ? userCheck.remaining : '∞';
             const footer = `\n\n📊 Qolgan limitingiz: ${remaining}\n${AI_WARNING_TEXT}`;

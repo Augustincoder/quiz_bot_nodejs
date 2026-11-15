@@ -201,12 +201,6 @@ async function onAiTestsText(ctx) {
   if (!rawInput) return;
   const adminId = ctx.from?.id;
   
-  // 🔒 Rate limit tekshiruvi
-  const limitCheck = checkAdminAILimit(adminId);
-  if (!limitCheck.allowed) {
-    return ctx.reply(limitCheck.message, { parse_mode: 'HTML' });
-  }
-
   // Matn va sonni ajratib olish:
   let count = 'auto';
   let studyText = rawInput;
@@ -223,6 +217,12 @@ async function onAiTestsText(ctx) {
 
   if (studyText.length < 10 || studyText.toLowerCase() === 'auto') {
     return ctx.reply("⚠️ Matn juda qisqa. Iltimos, test tuzish uchun yetarli o'quv matnini (kamida 10 ta belgi) yuboring.");
+  }
+
+  // 🔒 Rate limit tekshiruvi (faqat matn to'g'ri bo'lgandagina hisoblanadi)
+  const limitCheck = checkAdminAILimit(adminId);
+  if (!limitCheck.allowed) {
+    return ctx.reply(limitCheck.message, { parse_mode: 'HTML' });
   }
   
   if (activeAdminAiUsers.has(adminId)) {
@@ -273,6 +273,7 @@ async function onAiTestsText(ctx) {
 // ============================================
 
 async function onAiTestsImage(ctx) {
+  const adminId = ctx.from.id;
   const photo = ctx.message.photo;
   if (!photo) {
     // Agar "auto" deb yozgan bo'lsa
@@ -289,8 +290,12 @@ async function onAiTestsImage(ctx) {
     return ctx.reply("⚠️ Iltimos, rasm yuboring yoki 'auto' deb yozing.");
   }
   
+  if (activeAdminAiUsers.has(adminId)) {
+    return ctx.reply("⏳ <b>Generatsiya davom etmoqda...</b>\n\nOldingi so'rov yakunlanishini kuting.", { parse_mode: 'HTML' });
+  }
+
   // 🔒 Rate limit tekshiruvi
-  const limitCheck = checkAdminAILimit(ctx.from.id);
+  const limitCheck = checkAdminAILimit(adminId);
   if (!limitCheck.allowed) {
     return ctx.reply(limitCheck.message, { parse_mode: 'HTML' });
   }
@@ -311,6 +316,7 @@ async function onAiTestsImage(ctx) {
     { parse_mode: 'HTML' }
   );
   
+  activeAdminAiUsers.add(adminId);
   try {
     // Rasmni temporary faylga yuklab olish
     const fileLink = await ctx.telegram.getFileLink(photo[photo.length - 1].file_id);
@@ -349,6 +355,8 @@ async function onAiTestsImage(ctx) {
     logger.error('onAiTestsImage error:', { error: e.message });
     await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, undefined, "❌ Xatolik yuz berdi.");
     clearState(ctx);
+  } finally {
+    activeAdminAiUsers.delete(adminId);
   }
 }
 
@@ -375,10 +383,15 @@ async function onAiTestsAdaptiveUser(ctx) {
 }
 
 async function onAiTestsAdaptiveCount(ctx) {
+  const adminId = ctx.from.id;
   const text = ctx.message.text;
+
+  if (activeAdminAiUsers.has(adminId)) {
+    return ctx.reply("⏳ <b>Generatsiya davom etmoqda...</b>\n\nOldingi so'rov yakunlanishini kuting.", { parse_mode: 'HTML' });
+  }
   
   // 🔒 Rate limit tekshiruvi
-  const limitCheck = checkAdminAILimit(ctx.from.id);
+  const limitCheck = checkAdminAILimit(adminId);
   if (!limitCheck.allowed) {
     return ctx.reply(limitCheck.message, { parse_mode: 'HTML' });
   }
@@ -399,6 +412,7 @@ async function onAiTestsAdaptiveCount(ctx) {
     { parse_mode: 'HTML' }
   );
   
+  activeAdminAiUsers.add(adminId);
   try {
     // Foydalanuvchi statistikasidan xatolarni olish
     const userStats = await dbService.getUserStats(userId);
@@ -437,6 +451,8 @@ async function onAiTestsAdaptiveCount(ctx) {
     console.error('onAiTestsAdaptiveCount error:', e.message);
     await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, undefined, "❌ Xatolik yuz berdi.");
     clearState(ctx);
+  } finally {
+    activeAdminAiUsers.delete(adminId);
   }
 }
 

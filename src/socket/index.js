@@ -71,7 +71,7 @@ function initSocket(httpServer) {
 
         socket.emit("room:state", {
           roomCode: room.roomCode,
-          players: Array.from(room.players.values()),
+          players: roomManager.serializePlayers(room),
           mode: 'kahoot',
           status: room.status,
           currentIndex: room.currentIndex,
@@ -80,11 +80,11 @@ function initSocket(httpServer) {
         if (wasReconnecting) {
           io.to(roomCode).emit("room:player_reconnected", {
             userId: idToJoin,
-            players: Array.from(room.players.values())
+            players: roomManager.serializePlayers(room)
           });
         } else {
           io.to(roomCode).emit("room:player_joined", {
-            players: Array.from(room.players.values())
+            players: roomManager.serializePlayers(room)
           });
         }
       } catch (error) {
@@ -166,6 +166,8 @@ function initSocket(httpServer) {
     // --- Kahoot Game Logic ---
     socket.on("kahoot:answer_submit", async ({ roomCode, answerIndex }) => {
         if (!isValidRoomCode(roomCode)) return;
+        const parsedIdx = typeof answerIndex === 'number' ? answerIndex : parseInt(String(answerIndex), 10);
+        if (!Number.isInteger(parsedIdx) || parsedIdx < 0 || parsedIdx > 10) return;
         // Synchronous lookup from in-memory Map (Bug 39 fix: zero async tick delay)
         const room = roomManager.rooms?.get(roomCode);
         if (!room || room.status !== 'action') return;
@@ -173,9 +175,9 @@ function initSocket(httpServer) {
 
         // Atomic synchronous guard against double-submit (Bug 39 fix)
         if (room.kahootAnswers.has(userId)) return;
-        room.kahootAnswers.set(userId, answerIndex);
+        room.kahootAnswers.set(userId, parsedIdx);
 
-        if (String(answerIndex) === String(room.currentAnswer)) {
+        if (String(parsedIdx) === String(room.currentAnswer)) {
             const player = room.players.get(userId);
             if (player) player.score += 10;
         }
@@ -234,7 +236,7 @@ function initSocket(httpServer) {
                 });
               }
               io.to(room.roomCode).emit("room:player_left", {
-                players: updatedRoom?.players ? Array.from(updatedRoom.players.values()) : []
+                players: updatedRoom ? roomManager.serializePlayers(updatedRoom) : []
               });
             }
           }, 10000);
@@ -242,7 +244,7 @@ function initSocket(httpServer) {
 
           io.to(room.roomCode).emit("room:player_disconnected", {
             userId,
-            players: Array.from(room.players.values())
+            players: roomManager.serializePlayers(room)
           });
         }
       }

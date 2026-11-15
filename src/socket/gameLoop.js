@@ -89,10 +89,11 @@ function showLeaderboard(roomCode, room) {
   if (room.leaderboardTimer) { clearTimeout(room.leaderboardTimer); room.leaderboardTimer = null; }
 
   const io = getIoInstance();
+  const serializedLeaderboard = roomManager.serializePlayers(room).sort((a,b) => b.score - a.score);
   io.to(roomCode).emit('game:leaderboard', { 
     correctAnswer: room.currentAnswer,
     explanation: room.currentExplanation,
-    leaderboard: Array.from(room.players.values()).sort((a,b) => b.score - a.score)
+    leaderboard: serializedLeaderboard
   });
 
   // Auto-advance fallback (prevents game freeze if an AFK/disconnected player never sends ack)
@@ -109,7 +110,7 @@ function showLeaderboard(roomCode, room) {
 async function handleGameEnd(roomCode, room) {
     const io = getIoInstance();
     room.status = 'ended';
-    const finalLeaderboard = Array.from(room.players.values()).sort((a,b) => b.score - a.score);
+    const finalLeaderboard = roomManager.serializePlayers(room).sort((a,b) => b.score - a.score);
     
     if (isPostgresAvailable()) {
         await Promise.allSettled(finalLeaderboard.map(async (player) => {

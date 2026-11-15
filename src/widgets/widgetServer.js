@@ -38,6 +38,7 @@ function sweepCaches() {
     widgetIpLimiter.sweep();
     widgetAiHealLimiter.sweep();
     widgetUserQueryLimiter.sweep();
+    if (widgetService.widgetPayloadStore) widgetService.widgetPayloadStore.sweep();
   } catch {}
 }
 

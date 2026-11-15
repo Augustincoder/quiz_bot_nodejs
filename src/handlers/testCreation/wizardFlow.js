@@ -72,13 +72,13 @@ async function cbCreateTest(ctx) {
   if (userSubjects.length > 5) {
     const totalPages = Math.ceil(userSubjects.length / 5);
     const validPage = Math.max(0, Math.min(page, totalPages - 1));
-    pageInfo = `\n\n_Sahifa: ${validPage + 1} / ${totalPages}_`;
+    pageInfo = `\n\n<i>Sahifa: ${validPage + 1} / ${totalPages}</i>`;
   }
 
   await safeEdit(
     ctx,
-    `✏️ *Test Yaratish*\n\nO'z shaxsiy testingizni yarating va do'stlaringiz bilan ulashing!\n\n💡 *Qanday ishlaydi:*\n1️⃣ Fan va blok nomini kiriting\n2️⃣ Savollarni matn, Word fayl, yoki AI orqali qo'shing\n3️⃣ Tayyor testni havola orqali ulashing\n\n👇 Boshlash uchun fan tanlang yoki yangi yarating:${pageInfo}`,
-    { parse_mode: "Markdown", ...Markup.inlineKeyboard(buttons) }
+    `✏️ <b>Test Yaratish</b>\n\nO'z shaxsiy testingizni yarating va do'stlaringiz bilan ulashing!\n\n💡 <b>Qanday ishlaydi:</b>\n1️⃣ Fan va blok nomini kiriting\n2️⃣ Savollarni matn, Word fayl, yoki AI orqali qo'shing\n3️⃣ Tayyor testni havola orqali ulashing\n\n👇 Boshlash uchun fan tanlang yoki yangi yarating:${pageInfo}`,
+    { parse_mode: "HTML", ...Markup.inlineKeyboard(buttons) }
   );
 }
 
@@ -98,9 +98,9 @@ async function cbCtNew(ctx) {
 async function promptBlockNameOrAutoDocx(ctx, subject) {
   await safeEdit(
     ctx,
-    `✅ Fan: *${escapeMarkdown(subject)}*\n\n📍 *[2/3] Bosqich: Blok yaratish*\n\n━━━━━━━━━━━━━━━━\n📝 Ushbu fan uchun yangi blok nomini yozing (Masalan: *1-Mavzu, Kardiologiya*).\n\n📄 Yoki butun boshli test bazasini Word (.docx) orqali avtomatik qismlarga bo'lib yuklamoqchi bo'lsangiz, quyidagi tugmani bosing:`,
+    `✅ Fan: <b>${escapeHtml(subject)}</b>\n\n📍 <b>[2/3] Bosqich: Blok yaratish</b>\n\n━━━━━━━━━━━━━━━━\n📝 Ushbu fan uchun yangi blok nomini yozing (Masalan: <i>1-Mavzu, Kardiologiya</i>).\n\n📄 Yoki butun boshli test bazasini Word (.docx) orqali avtomatik qismlarga bo'lib yuklamoqchi bo'lsangiz, quyidagi tugmani bosing:`,
     {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard([
         [
           Markup.button.callback(
@@ -206,20 +206,20 @@ async function showDraftDashboard(ctx) {
   const subject = data.subject || "🤖 AI Smart Quiz";
   const blockName = data.block_name || "1-Blok";
 
-  let text = `📚 *Fan:* ${escapeMarkdown(subject)}\n`;
-  text += `📝 *Blok:* ${escapeMarkdown(blockName)}\n`;
-  text += `🛒 *Savatdagi savollar:* ${qCount} ta\n`;
+  let text = `📚 <b>Fan:</b> ${escapeHtml(subject)}\n`;
+  text += `📝 <b>Blok:</b> ${escapeHtml(blockName)}\n`;
+  text += `🛒 <b>Savatdagi savollar:</b> ${qCount} ta\n`;
   if (invalidCount > 0) {
-    text += `⚠️ *Xato formatdagi savollar:* ${invalidCount} ta\n`;
+    text += `⚠️ <b>Xato formatdagi savollar:</b> ${invalidCount} ta\n`;
   }
   text += `\n`;
 
   const buttons = [];
 
   if (qCount === 0 && invalidCount === 0) {
-    text += `_Savat bo'sh. Qaysi usulda savol qo'shmoqchisiz? O'zingizga qulayini tanlang:_`;
+    text += `<i>Savat bo'sh. Qaysi usulda savol qo'shmoqchisiz? O'zingizga qulayini tanlang:</i>`;
   } else {
-    text += `_Yana savol qo'shishingiz mumkin. Yoki jarayonni yakunlang:_`;
+    text += `<i>Yana savol qo'shishingiz mumkin. Yoki jarayonni yakunlang:</i>`;
   }
 
   buttons.push([
@@ -253,12 +253,12 @@ async function showDraftDashboard(ctx) {
 
   if (ctx.callbackQuery) {
     await safeEdit(ctx, text, {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard(buttons),
     });
   } else {
     await ctx.reply(text, {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard(buttons),
     });
   }
@@ -309,9 +309,9 @@ async function cbFmt(ctx) {
 
   if (fmt === "quiz") {
     setState(ctx, States.CREATE_QUESTIONS);
-    const text = `📊 *Telegram Quiz*\n\n📎 Pastdagi qisqich belgisini bosib, *Poll -> Quiz* orqali savollaringizni bittalab yuboring.\n\n_Bu rejimdasiz! Savollarni ketma-ket yuboravering._`;
+    const text = `📊 <b>Telegram Quiz</b>\n\n📎 Pastdagi qisqich belgisini bosib, <b>Poll -> Quiz</b> orqali savollaringizni bittalab yuboring.\n\n<i>Bu rejimdasiz! Savollarni ketma-ket yuboravering.</i>`;
     return safeEdit(ctx, text, {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard([
         [Markup.button.callback(backText, backAction)],
       ]),
@@ -321,9 +321,9 @@ async function cbFmt(ctx) {
   if (fmt === "text" || fmt === "docx") {
     await safeEdit(
       ctx,
-      `⚙️ *Qaysi usulda o'qiymiz?*\n\nSavollarda to'g'ri javob qanday belgilangan?\n\n🎯 *# bilan:* To'g'ri javob oldida # belgisi bor.\n🥇 *1-javob:* Har doim A (birinchi) variant to'g'ri qilib yozilgan.`,
+      `⚙️ <b>Qaysi usulda o'qiymiz?</b>\n\nSavollarda to'g'ri javob qanday belgilangan?\n\n🎯 <b># bilan:</b> To'g'ri javob oldida # belgisi bor.\n🥇 <b>1-javob:</b> Har doim A (birinchi) variant to'g'ri qilib yozilgan.`,
       {
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
         ...Markup.inlineKeyboard([
           [
             Markup.button.callback(
@@ -386,22 +386,22 @@ async function cbParseModeSelect(ctx) {
 
   if (fmt === "docx" && data.is_auto_docx) {
     setState(ctx, States.CREATE_QUESTIONS);
-    text = `📄 *Avto-Word Rejimi*\n\nIltimos, tayyor Word (.docx) faylni shu chatga yuboring. Tizim uni o'qib, har 25 ta savolni avtomatik ravishda alohida bloklarga ajratadi.\n\n_Boshqa fayl tanlash yoki fikringizdan qaytsangiz, Ortga tugmasini bosing._`;
+    text = `📄 <b>Avto-Word Rejimi</b>\n\nIltimos, tayyor Word (.docx) faylni shu chatga yuboring. Tizim uni o'qib, har 25 ta savolni avtomatik ravishda alohida bloklarga ajratadi.\n\n<i>Boshqa fayl tanlash yoki fikringizdan qaytsangiz, Ortga tugmasini bosing.</i>`;
     backBtn = [
       Markup.button.callback("🔙 Ortga (Format tanlashga)", "auto_docx"),
     ];
   } else if (fmt === "docx") {
     setState(ctx, States.CREATE_QUESTIONS);
-    text = `📄 *Word (.docx) Formati*\n\nWord faylini shu chatga tashlang.\n\n⚠️ *Limit:* Bitta blok uchun faqat 50 ta savol qabul qilinadi.\n_Yirik bazalar uchun Orqaga qaytib, "Avto-yuklash" tugmasidan foydalaning!_`;
+    text = `📄 <b>Word (.docx) Formati</b>\n\nWord faylini shu chatga tashlang.\n\n⚠️ <b>Limit:</b> Bitta blok uchun faqat 50 ta savol qabul qilinadi.\n<i>Yirik bazalar uchun Orqaga qaytib, "Avto-yuklash" tugmasidan foydalaning!</i>`;
     backBtn = [Markup.button.callback(backText, backAction)];
   } else if (fmt === "text") {
     setState(ctx, States.CREATE_QUESTIONS);
-    text = `✍️ *Matn Formati*\n\nSavollarni quyidagi shablon asosida yozib, yuboring:\n\nSavol matni?\n#To'g'ri javob (yoki 1-javob)\nNoto'g'ri javob\n\n_Bu rejimdasiz! Xohlagancha xabar yuborishingiz mumkin._`;
+    text = `✍️ <b>Matn Formati</b>\n\nSavollarni quyidagi shablon asosida yozib, yuboring:\n\nSavol matni?\n#To'g'ri javob (yoki 1-javob)\nNoto'g'ri javob\n\n<i>Bu rejimdasiz! Xohlagancha xabar yuborishingiz mumkin.</i>`;
     backBtn = [Markup.button.callback(backText, backAction)];
   }
 
   await safeEdit(ctx, text, {
-    parse_mode: "Markdown",
+    parse_mode: "HTML",
     ...Markup.inlineKeyboard([backBtn]),
   });
 }
@@ -434,16 +434,16 @@ async function showCreationStatusMenu(ctx) {
     ]);
   buttons.push([Markup.button.callback("❌ Bekor qilish", "cancel_creation")]);
 
-  const text = `📊 *Holat Hisoboti*\n\n✅ Qabul qilingan savollar: *${validCount} ta*\n⚠️ Xato formatdagi savollar: *${invalidCount} ta*\n\nQuyidagi menyudan amaliyotni tanlang:`;
+  const text = `📊 <b>Holat Hisoboti</b>\n\n✅ Qabul qilingan savollar: <b>${validCount} ta</b>\n⚠️ Xato formatdagi savollar: <b>${invalidCount} ta</b>\n\nQuyidagi menyudan amaliyotni tanlang:`;
 
   if (ctx.callbackQuery) {
     await safeEdit(ctx, text, {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard(buttons),
     });
   } else {
     await ctx.reply(text, {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       ...Markup.inlineKeyboard(buttons),
     });
   }
@@ -602,9 +602,9 @@ async function cbCancelCreation(ctx) {
   if (qCount > 0 && ctx.callbackQuery?.data !== "confirm_cancel_creation") {
     return safeEdit(
       ctx,
-      `⚠️ *Diqqat!*\n\nSavatingizda *${qCount} ta* saqlanmagan savol bor. Agar bekor qilsangiz, barcha mehnatingiz o'chib ketadi.\n\nHaqiqatan ham bekor qilmoqchimisiz?`,
+      `⚠️ <b>Diqqat!</b>\n\nSavatingizda <b>${qCount} ta</b> saqlanmagan savol bor. Agar bekor qilsangiz, barcha mehnatingiz o'chib ketadi.\n\nHaqiqatan ham bekor qilmoqchimisiz?`,
       {
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
         ...Markup.inlineKeyboard([
           [Markup.button.callback("🗑 Ha, barchasini o'chirish", "confirm_cancel_creation")],
           [Markup.button.callback("🔙 Yo'q, Panelga qaytish", "back_to_dashboard")]

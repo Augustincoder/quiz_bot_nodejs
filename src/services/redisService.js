@@ -23,8 +23,16 @@ if (!process.env.REDIS_URL) {
 
   dummy.get = async (k) => inMemoryStore.get(k) ?? null;
   dummy.getBuffer = async (k) => inMemoryStore.get(k) ?? null;
+  dummy.ttl = async (k) => 3600;
   dummy.set = async (k, v, ...args) => {
     clearKeyTimer(k);
+    if (!inMemoryStore.has(k) && inMemoryStore.size >= 5000) {
+      const oldestKey = inMemoryStore.keys().next().value;
+      if (oldestKey !== undefined) {
+        clearKeyTimer(oldestKey);
+        inMemoryStore.delete(oldestKey);
+      }
+    }
     inMemoryStore.set(k, String(v));
     if (args.length >= 2) {
       const mode = String(args[0]).toUpperCase();
@@ -46,6 +54,26 @@ if (!process.env.REDIS_URL) {
       if (inMemoryStore.delete(k)) count++;
     }
     return count;
+  };
+  dummy.pipeline = dummy.multi = () => {
+    const queue = [];
+    const chain = {
+      get: (k) => { queue.push(async () => [null, await dummy.get(k)]); return chain; },
+      set: (k, v, ...args) => { queue.push(async () => [null, await dummy.set(k, v, ...args)]); return chain; },
+      del: (...k) => { queue.push(async () => [null, await dummy.del(...k)]); return chain; },
+      incr: (k) => { queue.push(async () => [null, await dummy.incr(k)]); return chain; },
+      pexpire: (k, ms) => { queue.push(async () => [null, await dummy.pexpire(k, ms)]); return chain; },
+      expire: (k, sec) => { queue.push(async () => [null, await dummy.expire(k, sec)]); return chain; },
+      ttl: (k) => { queue.push(async () => [null, await dummy.ttl(k)]); return chain; },
+      exec: async () => {
+        const results = [];
+        for (const op of queue) {
+          results.push(await op());
+        }
+        return results;
+      }
+    };
+    return chain;
   };
   dummy.keys = async (pattern = '*') => {
     const all = Array.from(inMemoryStore.keys());

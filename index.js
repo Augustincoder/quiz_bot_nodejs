@@ -149,6 +149,14 @@ bot.use(async (ctx, next) => {
   const ignoredUpdates = ["poll_answer", "poll", "my_chat_member", "chat_member"];
   if (ignoredUpdates.includes(ctx.updateType)) return next();
 
+  // Skip ordinary group text chatter to avoid Redis session reads/writes on every message
+  if (ctx.chat?.type && ctx.chat.type !== 'private') {
+    const text = (ctx.message?.text || '').trim();
+    if (!ctx.callbackQuery && !text.startsWith('/') && !ctx.update?.widget_query && !ctx.update?.shared_widget_query) {
+      return next();
+    }
+  }
+
   const userId = ctx.from?.id || ctx.chat?.id;
   if (!userId) return next();
 
@@ -177,7 +185,7 @@ bot.use(async (ctx, next) => {
       const isEmpty = !sess || (!sess.state && (!sess.data || Object.keys(sess.data).length === 0));
 
       if (isEmpty) {
-        if (originalSessionStr !== '{"state":null,"data":{}}') {
+        if (originalSessionStr !== '{"state":null,"data":{}}' || ctx._lastSyncedSessionStr || ctx._sessionDirty) {
           await redisConnection.del(key);
         }
       } else {
@@ -227,6 +235,18 @@ bot.use(async (ctx, next) => {
   if (userId && !isAdmin(userId)) {
     const text = (ctx.message?.text || '').trim();
     const isStart = text.startsWith('/start');
+
+    // Skip ordinary group chat chatter from ban checks to prevent bot from interacting
+    if (ctx.chat?.type && ctx.chat.type !== 'private') {
+      if (!ctx.callbackQuery && !text.startsWith('/') && !ctx.update?.widget_query && !ctx.update?.shared_widget_query) {
+        return next();
+      }
+    }
+
+    if (isStart) {
+      dbService.markUserBlocked(userId, false).catch(() => {});
+    }
+
     const isBanned = await dbService.isUserBanned(userId, isStart);
     if (isBanned) {
       if (ctx.callbackQuery) {
@@ -235,6 +255,9 @@ bot.use(async (ctx, next) => {
       if (ctx.update?.widget_query || ctx.update?.shared_widget_query) {
         const qId = (ctx.update.widget_query || ctx.update.shared_widget_query).id;
         return ctx.telegram?.callApi("answerWidgetQuery", { widget_query_id: qId, data: "BANNED" }).catch(() => {});
+      }
+      if (ctx.chat?.type && ctx.chat.type !== 'private') {
+        return; // Silently ignore banned user in group
       }
       return ctx.reply("⛔ <b>Siz botdan bloklangansiz!</b>\n\nQoidabuzarlik sababli sizga kirish cheklangan.", { parse_mode: "HTML" }).catch(() => {});
     }

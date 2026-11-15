@@ -123,6 +123,29 @@ class RoomManager {
   }
 
   /**
+   * Safe serialization of players for Socket.IO emits without circular refs or timer leaks
+   */
+  serializePlayers(room) {
+    if (!room || !room.players) return [];
+    return Array.from(room.players.values()).map(p => {
+      const uid = String(p.userId || p.id);
+      const hasAnswered = Boolean(room.kahootAnswers && room.kahootAnswers.has(uid));
+      return {
+        userId: p.userId || p.id,
+        id: p.id || p.userId,
+        displayName: p.displayName || p.name || 'Player',
+        name: p.name || p.displayName || 'Player',
+        score: p.score || 0,
+        streak: p.streak || 0,
+        isReady: !!p.isReady,
+        answered: hasAnswered || !!p.answered,
+        connected: !p.disconnected,
+        disconnected: !!p.disconnected,
+      };
+    });
+  }
+
+  /**
    * Cleans up dead, abandoned, or zombie rooms and frees associated timers/state
    */
   cleanupDeadRooms(now = Date.now()) {
@@ -138,4 +161,7 @@ class RoomManager {
   }
 }
 
-module.exports = new RoomManager();
+const defaultRoomManager = new RoomManager();
+defaultRoomManager.serializePlayers = defaultRoomManager.serializePlayers.bind(defaultRoomManager);
+module.exports = defaultRoomManager;
+module.exports.RoomManager = RoomManager;

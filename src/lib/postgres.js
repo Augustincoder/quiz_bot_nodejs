@@ -45,6 +45,9 @@ if (!databaseUrl) {
       max: parseInt(process.env.DB_POOL_MAX, 10) || 20,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000, // 5s connection timeout
+      query_timeout: 10000,
+      statement_timeout: 10000,
+      keepAlive: true,
     });
 
     pool.on('error', (err) => {
@@ -88,15 +91,22 @@ async function query(text, params = []) {
  * Execute a block of queries inside an atomic transaction (BEGIN ... COMMIT / ROLLBACK)
  */
 async function withTransaction(callback) {
-  if (!pool) throw new Error('PostgreSQL pool is not initialized');
+  if (!pool || !databaseUrl) {
+    throw new Error('PostgreSQL pool is not initialized');
+  }
+  if (!postgresBreaker.canAttempt()) {
+    throw new Error('CircuitBreaker:postgres is OPEN (PostgreSQL temporarily unavailable)');
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const result = await callback(client);
     await client.query('COMMIT');
+    postgresBreaker.recordSuccess();
     return result;
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    postgresBreaker.recordFailure(err);
     throw err;
   } finally {
     client.release();

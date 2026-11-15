@@ -151,15 +151,15 @@ async function processBatchedTextQuestions(ctx, fullText) {
     }
     buttons.push([Markup.button.callback(finishText, finishAction)]);
 
-    let statusMsg = `✅ *${newQs.length} ta savol qo'shildi!*\n\nYana savol yuborishingiz mumkin.\n_Joriy formatda yig'ilganlar: ${format_added} ta_`;
+    let statusMsg = `✅ <b>${newQs.length} ta savol qo'shildi!</b>\n\nYana savol yuborishingiz mumkin.\n<i>Joriy formatda yig'ilganlar: ${format_added} ta</i>`;
     if (newInvalids.length > 0) {
-      statusMsg += `\n⚠️ *Xato formatdagi savollar:* ${newInvalids.length} ta`;
+      statusMsg += `\n⚠️ <b>Xato formatdagi savollar:</b> ${newInvalids.length} ta`;
     }
 
     await ctx.reply(
       statusMsg,
       {
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
         ...Markup.inlineKeyboard(buttons),
       },
     );
@@ -171,9 +171,9 @@ async function processBatchedTextQuestions(ctx, fullText) {
     }
 
     await ctx.reply(
-      `⚠️ *${newInvalids.length} ta savolda format xatosi aniqlandi!*\nSavollar saqlanmadi (masalan, to'g'ri javob oldida # belgisi yo'q yoki variantlar yetarli emas).`,
+      `⚠️ <b>${newInvalids.length} ta savolda format xatosi aniqlandi!</b>\nSavollar saqlanmadi (masalan, to'g'ri javob oldida # belgisi yo'q yoki variantlar yetarli emas).`,
       {
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
         ...Markup.inlineKeyboard([
           [
             Markup.button.callback(
@@ -323,9 +323,9 @@ async function onQuestionMessage(ctx) {
       : "🔙 Panelga qaytish (Yakunlash)";
 
     await ctx.reply(
-      `✅ *${newQs.length} ta savol qo'shildi!*\n\nYana savol yuborishingiz mumkin.\n_Joriy formatda yig'ilganlar: ${format_added} ta_`,
+      `✅ <b>${newQs.length} ta savol qo'shildi!</b>\n\nYana savol yuborishingiz mumkin.\n<i>Joriy formatda yig'ilganlar: ${format_added} ta</i>`,
       {
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
         ...Markup.inlineKeyboard([
           [
             Markup.button.callback(

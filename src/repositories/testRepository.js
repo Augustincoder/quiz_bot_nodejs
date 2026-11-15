@@ -346,7 +346,6 @@ async function invalidateSubjectCache(subjectId, creatorId) {
     if (subjectId) {
       const sid = parseInt(subjectId, 10);
       subjectL1Cache.delete(sid);
-      userTestL1Cache.delete(sid);
       subjectBlocksL1Cache.delete(sid);
     }
     if (creatorId) {
@@ -357,7 +356,6 @@ async function invalidateSubjectCache(subjectId, creatorId) {
     if (subjectId) {
       promises.push(redis.del(`cache:subject:${subjectId}`).catch(() => {}));
       promises.push(redis.del(`cache:subject_blocks:${subjectId}`).catch(() => {}));
-      promises.push(redis.del(`cache:user_test:${subjectId}`).catch(() => {}));
     }
     if (creatorId) {
       promises.push(redis.del(`cache:user_subjects:${creatorId}`).catch(() => {}));
@@ -572,6 +570,8 @@ async function deleteUserTest(testId, creatorId) {
       try {
         await pgQuery('DELETE FROM user_tests WHERE id = $1 AND creator_id = $2', [tid, String(creatorId)]);
         clearDbError();
+        userTestL1Cache.delete(tid);
+        userSubjectsL1Cache.delete(String(creatorId));
         await redis.del(`cache:user_test:${tid}`).catch(() => {});
         if (existing?.subject_id) {
           await invalidateSubjectCache(existing.subject_id, creatorId);
@@ -599,6 +599,8 @@ async function updateUserTestQuestions(testId, creatorId, newQuestions) {
       try {
         await pgQuery('UPDATE user_tests SET questions = $1 WHERE id = $2 AND creator_id = $3', [JSON.stringify(newQuestions), tid, String(creatorId)]);
         clearDbError();
+        userTestL1Cache.delete(tid);
+        userSubjectsL1Cache.delete(String(creatorId));
         await redis.del(`cache:user_test:${tid}`).catch(() => {});
         if (existing?.subject_id) {
           await invalidateSubjectCache(existing.subject_id, creatorId);
@@ -624,9 +626,12 @@ async function getUserShelf(userId) {
 
 async function updateUserShelf(userId, shelf) {
   const uid = String(userId);
-  try {
-    if (isPostgresAvailable()) {
-      try {
+  const prevPromise = userRepository.userStatsQueues.get(uid) || Promise.resolve();
+
+  const currentPromise = (async () => {
+    try { await prevPromise; } catch {}
+    try {
+      if (isPostgresAvailable()) {
         await pgQuery(`
           INSERT INTO user_stats (user_id, shelf)
           VALUES ($1, $2)
@@ -636,14 +641,21 @@ async function updateUserShelf(userId, shelf) {
         clearDbError();
         await redis.del(`cache:user_stats:${uid}`).catch(() => {});
         return true;
-      } catch (pgErr) {
-        logger.error('updateUserShelf pg error:', { error: pgErr.message });
       }
+      return false;
+    } catch (e) {
+      logger.error('Javonni yangilashda xato:', { userId: uid, error: e.message });
+      return false;
     }
-    return false;
-  } catch (e) {
-    logger.error('Javonni yangilashda xato:', { userId: uid, error: e.message });
-    return false;
+  })();
+
+  userRepository.userStatsQueues.set(uid, currentPromise);
+  try {
+    return await currentPromise;
+  } finally {
+    if (userRepository.userStatsQueues.get(uid) === currentPromise) {
+      userRepository.userStatsQueues.delete(uid);
+    }
   }
 }
 
