@@ -5,9 +5,7 @@ const { Pool } = require('pg');
 const { CircuitBreaker } = require('../core/circuitBreaker');
 const logger = require('../core/logger');
 
-// Northflank internal default URL (port 5432 inside Northflank cluster network)
-const DEFAULT_NF_URL = 'postgresql://_24c4d3f3b7552851:_43bd4eabf61d7974c2374fef2c8f3b@primary.quiz-bot-database--hqhlj8nqhyp9.addon.code.run:5432/_62d18dea4e8b?sslmode=require&uselibpqcompat=true';
-const databaseUrl = process.env.DATABASE_URL || DEFAULT_NF_URL;
+const databaseUrl = process.env.DATABASE_URL ? String(process.env.DATABASE_URL).trim() : '';
 
 let pool = null;
 
@@ -18,40 +16,50 @@ const postgresBreaker = new CircuitBreaker({
 });
 
 function isPostgresAvailable() {
-  if (!pool) return false;
+  if (!pool || !databaseUrl) return false;
   return postgresBreaker.canAttempt();
 }
 
-try {
-  let normalizedUrl = databaseUrl;
-  if (normalizedUrl.includes('sslmode=require') && !normalizedUrl.includes('uselibpqcompat=true')) {
-    normalizedUrl += (normalizedUrl.includes('?') ? '&' : '?') + 'uselibpqcompat=true';
-  }
-
-  const needsSsl = normalizedUrl.includes('sslmode=require') || 
-                   normalizedUrl.includes('addon.code.run') || 
-                   normalizedUrl.includes('northflank.app');
-
+if (!databaseUrl) {
+  logger.warn('DATABASE_URL is not set in environment. PostgreSQL disabled; running in offline/in-memory mode.');
   pool = new Pool({
-    connectionString: normalizedUrl,
-    ssl: needsSsl ? { rejectUnauthorized: false } : false,
-    max: parseInt(process.env.DB_POOL_MAX, 10) || 20,
+    connectionTimeoutMillis: 5000,
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000, // 5s connection timeout
   });
+  pool.on('error', () => {});
+} else {
+  try {
+    let normalizedUrl = databaseUrl;
+    if (normalizedUrl.includes('sslmode=require') && !normalizedUrl.includes('uselibpqcompat=true')) {
+      normalizedUrl += (normalizedUrl.includes('?') ? '&' : '?') + 'uselibpqcompat=true';
+    }
 
-  pool.on('error', (err) => {
-    logger.error('Unexpected error on idle PostgreSQL client:', { error: err.message });
-  });
-} catch (err) {
-  logger.error('PostgreSQL Pool initialization failed:', { error: err.message });
+    const rejectUnauthorized = process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true';
+    const needsSsl = normalizedUrl.includes('sslmode=require') || 
+                     normalizedUrl.includes('addon.code.run') || 
+                     normalizedUrl.includes('northflank.app');
+
+    pool = new Pool({
+      connectionString: normalizedUrl,
+      ssl: needsSsl ? { rejectUnauthorized, ca: process.env.DB_SSL_CA || undefined } : false,
+      max: parseInt(process.env.DB_POOL_MAX, 10) || 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000, // 5s connection timeout
+    });
+
+    pool.on('error', (err) => {
+      logger.error('Unexpected error on idle PostgreSQL client:', { error: err.message });
+    });
+  } catch (err) {
+    logger.error('PostgreSQL Pool initialization failed:', { error: err.message });
+  }
 }
 
 /**
  * Execute a parameterized SQL query with CircuitBreaker protection & metrics
  */
 async function query(text, params = []) {
-  if (!pool) {
+  if (!pool || !databaseUrl) {
     throw new Error('PostgreSQL pool is not initialized');
   }
 

@@ -2,9 +2,16 @@
 
 const crypto = require('crypto');
 
-// Secret key derivation (stable across restarts, overridable via SHARE_LINK_SECRET)
-const RAW_SECRET = process.env.SHARE_LINK_SECRET || process.env.BOT_TOKEN || 'quiz_bot_share_secret_salt_v1';
-const SECRET_KEY = crypto.createHash('sha256').update(RAW_SECRET).digest();
+// Secret key derivation (stable across restarts, overridable via SHARE_LINK_SECRET or derived from BOT_TOKEN)
+const RAW_SECRET = process.env.SHARE_LINK_SECRET ||
+  (process.env.BOT_TOKEN ? crypto.createHmac('sha256', 'share_v1').update(process.env.BOT_TOKEN).digest('hex') : '') ||
+  (process.env.NODE_ENV === 'test' ? 'test_share_secret_salt_v1' : '');
+
+if (!RAW_SECRET && process.env.NODE_ENV !== 'test') {
+  throw new Error('CRITICAL: Neither SHARE_LINK_SECRET nor BOT_TOKEN is configured for secure shareService.');
+}
+
+const SECRET_KEY = crypto.createHash('sha256').update(RAW_SECRET || 'test_share_secret_salt_v1').digest();
 
 /**
  * Encodes a test or subject ID into a secure, deterministic, tamper-proof token using AES-256-GCM.

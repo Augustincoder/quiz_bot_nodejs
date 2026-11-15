@@ -4,7 +4,7 @@ const db = require('../services/dbService');
 const scheduleService = require('../services/scheduleService');
 const edupageService = require('../services/edupageService');
 const pendingStore = require('../core/pendingStore');
-const { escapeHtml, truncateText, safeCallbackData, clearState, isAdmin } = require('../core/utils');
+const { escapeHtml, truncateText, safeCallbackData, clearState, isAdmin, isMainMenuButton } = require('../core/utils');
 
 
 const NOTE_STATE_TTL = 15 * 60 * 1000; // 15 daqiqa
@@ -541,17 +541,10 @@ async function handleNoteWizardInput(ctx, next) {
 
   const text = (ctx.message?.text || '').trim();
   const isCommand = text.startsWith('/');
-  const mainMenuButtons = [
-    '📅 Bugungi jadval', '🖼 Haftalik jadval', '🏢 Bo\'sh xonalar', '🏢 Bo‘sh xonalar',
-    '⚙️ Guruhni sozlash', '🔙 Asosiy menyu',
-    '📅 Dars jadvali', '🧪 Testlar', '🤖 AI Yordamchi', '👤 Profil', '📊 Statistika',
-    '🔍 Guruh qidirish', '🏢 Bo\'sh xonalar', '📚 Rasmiy Testlar', '📝 O\'z Testlarim',
-    '🔙 Ortga', '🏠 Asosiy Menyu', '❌ Bekor qilish', '🏠 Bosh menyu'
-  ];
-  const isMainMenuButton = mainMenuButtons.includes(text);
+  const isMenu = isMainMenuButton(text);
 
   // Cancel wizard if user sends another bot command or taps main menu button
-  if (isCommand || isMainMenuButton) {
+  if (isCommand || isMenu) {
     await pendingStore.del(`note_wiz:${userId}`);
     return next();
   }

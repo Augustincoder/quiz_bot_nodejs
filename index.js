@@ -32,7 +32,7 @@ const scheduleWatcher = require("./src/services/scheduleWatcherService");
 const watchdogService = require("./src/services/watchdogService");
 const { BOT_TOKEN } = require("./src/config/config");
 const dbService = require("./src/services/dbService");
-const { getState, States, isAdmin, clearState, resetUserFlows, getTashkentDayOfWeek } = require("./src/core/utils");
+const { getState, States, isAdmin, clearState, resetUserFlows, getTashkentDayOfWeek, isMainMenuButton } = require("./src/core/utils");
 const { rateLimiterMiddleware } = require("./src/core/rateLimiter");
 const { initSocket } = require("./src/socket");
 
@@ -184,18 +184,35 @@ bot.use(async (ctx, next) => {
         const newSessionStr = JSON.stringify(sess);
         const baseSessionStr = ctx._lastSyncedSessionStr || originalSessionStr;
         if (baseSessionStr !== newSessionStr) {
-          // Concurrent updates merge check (Bug #19 fix)
-          const latestRedisStr = await redisConnection.get(key).catch(() => null);
-          if (latestRedisStr && latestRedisStr !== baseSessionStr) {
-            try {
-              const latestSess = JSON.parse(latestRedisStr);
-              sess.data = { ...(latestSess.data || {}), ...(sess.data || {}) };
-              if (sess.state === JSON.parse(baseSessionStr).state && latestSess.state) {
-                sess.state = latestSess.state;
+          // Senior-level Atomic CAS Session Write (1 RTT in normal flow, merges only on conflict)
+          if (typeof redisConnection.eval === 'function') {
+            const luaCas = `
+              local cur = redis.call('GET', KEYS[1])
+              if (not cur) or (cur == ARGV[1]) then
+                redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+                return 'OK'
+              else
+                return cur
+              end
+            `;
+            const casRes = await redisConnection.eval(luaCas, 1, key, baseSessionStr, newSessionStr, 86400).catch(() => null);
+            if (casRes && casRes !== 'OK') {
+              try {
+                const latestSess = JSON.parse(casRes);
+                sess.data = { ...(latestSess.data || {}), ...(sess.data || {}) };
+                if (sess.state === JSON.parse(baseSessionStr).state && latestSess.state) {
+                  sess.state = latestSess.state;
+                }
+                await redisConnection.set(key, JSON.stringify(sess), "EX", 86400);
+              } catch {
+                await redisConnection.set(key, newSessionStr, "EX", 86400);
               }
-            } catch {}
+            } else if (!casRes) {
+              await redisConnection.set(key, newSessionStr, "EX", 86400);
+            }
+          } else {
+            await redisConnection.set(key, newSessionStr, "EX", 86400);
           }
-          await redisConnection.set(key, JSON.stringify(sess), "EX", 86400);
         }
       }
     } catch (err) {
@@ -475,29 +492,25 @@ bot.on("message", async (ctx, next) => {
     if (!passedThrough) return;
   }
 
+  // Admin direct reply routing (handles admin replying to forwarded contact messages)
+  const userId = ctx.from?.id;
+  if (isAdmin(userId) && ctx.message?.reply_to_message && handlers.contact?.handleContactMessages) {
+    return handlers.contact.handleContactMessages(ctx, next);
+  }
+
   const state = getState(ctx);
   if (!state) return next();
 
   const text = (ctx.message?.text || '').trim();
   const isCommand = text.startsWith('/');
-  const mainMenuButtons = [
-    '📅 Bugungi jadval', '🖼 Haftalik jadval', '🏢 Bo\'sh xonalar', '🏢 Bo‘sh xonalar',
-    '⚙️ Guruhni sozlash', '🔙 Asosiy menyu',
-    '📅 Dars jadvali', '🧪 Testlar', '🤖 AI Yordamchi', '👤 Profil', '📊 Statistika',
-    '🔍 Guruh qidirish', '🏢 Bo\'sh xonalar', '📚 Rasmiy Testlar', '📝 O\'z Testlarim',
-    '🔙 Ortga', '🏠 Asosiy Menyu', '❌ Bekor qilish', '🏠 Bosh menyu',
-    '📂 O\'z Testlarim',
-  ];
-  const isMainMenuButton = mainMenuButtons.includes(text);
+  const isMenu = isMainMenuButton(text);
 
   // Bug 48 fix: Stale wizard state bleed prevention
   // If user enters a command or menu button, immediately clear pending wizard state and let command/menu run
-  if (isCommand || isMainMenuButton) {
+  if (isCommand || isMenu) {
     await resetUserFlows(ctx.from?.id, ctx);
     return next();
   }
-
-  const userId = ctx.from?.id;
 
   // Admin states guard
   const isAdminState =

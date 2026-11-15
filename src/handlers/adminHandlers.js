@@ -180,52 +180,9 @@ async function getAdminDashboardStats(forceRefresh = false) {
   };
 
   try {
-    const totalUsers = await dbService.getUserCount();
-    if (!totalUsers) return defaults;
-
-    const allStats = await dbService.getAllUserStats();
-
-    let activeUsers  = 0;
-    let totalTests   = 0;
-    let todayTests   = 0;
-    let totalCorrect = 0;
-    let totalWrong   = 0;
-
-    for (const stat of allStats) {
-      const history = stat.history;
-      if (!Array.isArray(history) || !history.length) {
-        totalCorrect += stat.total_correct || 0;
-        totalWrong   += stat.total_wrong   || 0;
-        totalTests   += stat.tests_completed || 0;
-        continue;
-      }
-
-      let isActive    = false;
-      let todayCount  = 0;
-
-      for (const h of history) {
-        const ts = h.timestamp ? (typeof h.timestamp === 'string' ? new Date(h.timestamp).getTime() : h.timestamp) : 0;
-        if (!isActive && ts > sevenDaysAgo) isActive = true;
-        if (ts > todayStart) todayCount++;
-        totalCorrect += h.correct || 0;
-        totalWrong   += h.wrong   || 0;
-      }
-
-      if (isActive) activeUsers++;
-      totalTests += history.length;
-      todayTests += todayCount;
-    }
-
-    const totalAnswers = totalCorrect + totalWrong;
-    const result = {
-      totalUsers,
-      activeUsers,
-      totalTests,
-      todayTests,
-      avgScore    : totalAnswers ? Math.round((totalCorrect / totalAnswers) * 100) : 0,
-      totalCorrect,
-      totalWrong,
-    };
+    const result = typeof dbService.getAggregatedAdminStats === 'function'
+      ? await dbService.getAggregatedAdminStats()
+      : defaults;
 
     cacheSet(CACHE_KEY, result);
     return result;

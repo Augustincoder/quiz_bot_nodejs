@@ -10,6 +10,36 @@ const router = express.Router();
 
 const widgetIpLimiter = new TTLMap(60 * 1000, 5000);
 const widgetAiHealLimiter = new TTLMap(60 * 1000, 2000);
+const widgetUserQueryLimiter = new TTLMap(10 * 1000, 5000); // 10 sec window, max 5000 users
+
+async function checkWidgetUserRateLimit(userId) {
+  if (!userId) return true;
+  const windowMs = 10000;
+  const maxRequests = 30; // 30 req / 10 sec per user
+  try {
+    const redis = require('../services/redisService');
+    if (redis && typeof redis.incr === 'function') {
+      const key = `rl:widget:user:${userId}`;
+      const count = await redis.incr(key);
+      if (count === 1) {
+        await redis.pexpire(key, windowMs);
+      }
+      return count <= maxRequests;
+    }
+  } catch {}
+
+  const current = (widgetUserQueryLimiter.get(userId) || 0) + 1;
+  widgetUserQueryLimiter.set(userId, current);
+  return current <= maxRequests;
+}
+
+function sweepCaches() {
+  try {
+    widgetIpLimiter.sweep();
+    widgetAiHealLimiter.sweep();
+    widgetUserQueryLimiter.sweep();
+  } catch {}
+}
 
 function widgetRateLimiter(req, res, next) {
   const ip = req.ip || req.connection?.remoteAddress || 'unknown';
@@ -444,6 +474,11 @@ router.post(['/query', '/widget/query'], async (req, res) => {
     return res.status(401).json({ ok: false, error: 'Invalid or expired widget token' });
   }
 
+  const isAllowed = await checkWidgetUserRateLimit(verified.userId);
+  if (!isAllowed) {
+    return res.status(429).json({ ok: false, error: 'Too many queries. Please slow down.' });
+  }
+
   try {
     const result = await executeQueryAction(verified, action, data);
     return res.json({ ok: true, data: result });
@@ -456,3 +491,4 @@ router.post(['/query', '/widget/query'], async (req, res) => {
 module.exports = router;
 module.exports.registerQueryHandler = registerQueryHandler;
 module.exports.executeQueryAction = executeQueryAction;
+module.exports.sweepCaches = sweepCaches;

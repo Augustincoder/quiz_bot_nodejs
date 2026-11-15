@@ -8,7 +8,7 @@ const logger = require('../core/logger');
 const {
   States, setState, clearState, updateData, getData, safeAnswerCb,
   safeEdit, escapeHtml, buildUserContext,
-  backToMainKb, sanitizeForTelegram, isAdmin, adminGuard
+  backToMainKb, sanitizeForTelegram, isAdmin, adminGuard, isMainMenuButton
 } = require('../core/utils');
 
 // ============================================
@@ -122,14 +122,10 @@ async function handleContactMessages(ctx, next) {
   if (state !== States.USER_CONTACT) return next();
 
   const isCommand = rawText.startsWith('/');
-  const isMenuButton = [
-    '📅 Dars jadvali', '🧪 Testlar', '🤖 AI Yordamchi', '👤 Profil', '📊 Statistika',
-    '🔍 Guruh qidirish', '🏢 Bo\'sh xonalar', '📚 Rasmiy Testlar', '📝 O\'z Testlarim',
-    '🔙 Ortga', '🏠 Asosiy Menyu', '❌ Bekor qilish'
-  ].some(btn => rawText.includes(btn));
+  const isMenu = isMainMenuButton(rawText);
 
   // Bug 48 fix: Stale wizard state bleed prevention
-  if (isCommand || isMenuButton) {
+  if (isCommand || isMenu) {
     clearState(ctx);
     return next();
   }
@@ -1002,9 +998,7 @@ function register(bot) {
   bot.action(/^ban_user_/, adminGuard(cbBanUser));
   bot.action(/^confirm_ban_/, adminGuard(cbConfirmBan));
   
-  // ─── Message handler ─────────────────────────────
-  // ⚠️ MUHIM: Bu handler eng oxirida bo'lishi kerak
-  bot.on('message', handleContactMessages);
+  // Note: bot.on('message') is unified centrally in index.js to prevent dual middleware collision
 }
 
 module.exports = { 

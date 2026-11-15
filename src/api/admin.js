@@ -13,10 +13,25 @@ const dbService = require('../services/dbService');
 const router = express.Router();
 const adminRateLimitMap = new TTLMap(60 * 1000, 5000); // 1 minute window, max 5000 tracked IPs
 
-function adminRateLimiter(req, res, next) {
+async function adminRateLimiter(req, res, next) {
   const ip = req.ip || req.connection?.remoteAddress || 'unknown';
-  const current = (adminRateLimitMap.get(ip) || 0) + 1;
-  adminRateLimitMap.set(ip, current);
+  let current = 0;
+  try {
+    const redis = require('../services/redisService');
+    if (redis && typeof redis.incr === 'function') {
+      const key = `rl:admin:ip:${ip}`;
+      current = await redis.incr(key);
+      if (current === 1) {
+        await redis.pexpire(key, 60000);
+      }
+    } else {
+      throw new Error('Redis offline');
+    }
+  } catch {
+    current = (adminRateLimitMap.get(ip) || 0) + 1;
+    adminRateLimitMap.set(ip, current);
+  }
+
   if (current > 60) {
     logger.warn('Admin API rate limit exceeded', { ip, count: current });
     return res.status(429).json({ error: 'Too many requests. Please try again later.' });

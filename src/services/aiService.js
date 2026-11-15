@@ -1,10 +1,12 @@
 'use strict';
 
+const fs = require('fs');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { GEMINI_API_KEY }     = require('../config/config');
 const { GoogleAIFileManager } = require("@google/generative-ai/server");
 const logger                 = require('../core/logger');
 const { sanitizeQuizQuestions } = require('../validators/testValidators');
+const aiRateLimiter          = require('./aiRateLimiter');
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
@@ -29,11 +31,11 @@ let aiServiceUsage = {
     },
     // Har bir funksiya uchun alohida counter
     byFunction: {
-        explainMistakes: 100,
-        generateQuiz: 100,
-        analyzeEssay: 100,
-        generateFromImage: 100,
-        adaptiveQuiz: 100
+        explainMistakes: 0,
+        generateQuiz: 0,
+        analyzeEssay: 0,
+        generateFromImage: 0,
+        adaptiveQuiz: 0
     }
 };
 
@@ -239,6 +241,7 @@ async function explainMistakesBatch(mistakes) {
         logger.warn('ai:request_blocked', { function: 'explainMistakes', reason: limitCheck.reason });
         return limitCheck.message || "⚠️ Xizmat vaqtincha mavjud emas.";
     }
+    aiRateLimiter.recordUserUsage('system_global').catch(() => {});
 
     if (!GEMINI_API_KEY) {
         logger.error('ai:no_api_key');
@@ -278,6 +281,7 @@ async function generateQuizFromText(text, count) {
         logger.warn('ai:request_blocked', { function: 'generateQuiz', reason: limitCheck.reason });
         return null;
     }
+    aiRateLimiter.recordUserUsage('system_global').catch(() => {});
 
     try {
         const safeText = String(text || '').slice(0, MAX_AI_INPUT_CHARS);
@@ -307,6 +311,7 @@ async function generateOptionsForQuestions(questionsText) {
     if (!limitCheck.allowed) {
         return null;
     }
+    aiRateLimiter.recordUserUsage('system_global').catch(() => {});
 
     try {
         const safeQuestionsText = String(questionsText || '').slice(0, MAX_AI_INPUT_CHARS);
@@ -335,6 +340,7 @@ async function analyzeEssay(text) {
     if (!limitCheck.allowed) {
         return limitCheck.message || "⚠️ Xizmat vaqtincha mavjud emas.";
     }
+    aiRateLimiter.recordUserUsage('system_global').catch(() => {});
 
     try {
         const safeText = String(text || '').slice(0, MAX_AI_INPUT_CHARS);
@@ -362,35 +368,59 @@ async function generateQuizFromImage(localFilePath, mimeType, count) {
         logger.warn('ai:image_request_blocked', { reason: limitCheck.reason });
         return null;
     }
+    aiRateLimiter.recordUserUsage('system_global').catch(() => {});
 
     try {
-        const uploadResponse = await fileManager.uploadFile(localFilePath, { 
-            mimeType: mimeType, 
-            displayName: "Test Image" 
-        });
-        
         const prompt = `Sen professional o'qituvchisan. Ushbu rasmdagi matnni diqqat bilan o'qi va tahlil qil.
         Shu rasmdagi ma'lumotlar asosida ${getCountInstruction(count)} variantli test tuz.
         Javobing QAT'IY ravishda faqat quyidagi JSON formatida bo'lishi shart. Boshqa izoh yozma!
         Struktura: [{"question": "Savol matni?", "options": ["A", "B", "C", "D"], "correct_index": 0}]`;
-        
-        const result = await model.generateContent([
-            {
-                fileData: {
-                    mimeType: uploadResponse.file.mimeType,
-                    fileUri: uploadResponse.file.uri,
+
+        let stat = null;
+        try {
+            stat = await fs.promises.stat(localFilePath);
+        } catch {}
+
+        let result;
+        let uploadedFileName = null;
+
+        if (stat && stat.size < 4 * 1024 * 1024) {
+            // High-speed RAM path: send base64 buffer directly without Google File API upload/delete overhead
+            const buffer = await fs.promises.readFile(localFilePath);
+            result = await model.generateContent([
+                {
+                    inlineData: {
+                        data: buffer.toString('base64'),
+                        mimeType: mimeType || 'image/jpeg',
+                    },
                 },
-            },
-            { text: prompt },
-        ]);
+                { text: prompt },
+            ]);
+        } else {
+            const uploadResponse = await fileManager.uploadFile(localFilePath, { 
+                mimeType: mimeType, 
+                displayName: "Test Image" 
+            });
+            uploadedFileName = uploadResponse.file.name;
+            result = await model.generateContent([
+                {
+                    fileData: {
+                        mimeType: uploadResponse.file.mimeType,
+                        fileUri: uploadResponse.file.uri,
+                    },
+                },
+                { text: prompt },
+            ]);
+        }
         
         let questions = null;
         try {
             const rawQuestions = extractJSON(result.response.text());
             questions = sanitizeQuizQuestions(rawQuestions);
         } finally {
-            // Memory/Storage leak ni oldini olish uchun faylni Google API'dan o'chiramiz
-            await fileManager.deleteFile(uploadResponse.file.name).catch(e => logger.error('ai:file_delete_error', { error: e.message }));
+            if (uploadedFileName) {
+                await fileManager.deleteFile(uploadedFileName).catch(e => logger.error('ai:file_delete_error', { error: e.message }));
+            }
         }
         
         incrementAIUsage('generateFromImage', questions !== null && questions.length > 0);
@@ -412,6 +442,7 @@ async function generateAdaptiveQuiz(subject, mistakes, count) {
     if (!limitCheck.allowed) {
         return null;
     }
+    aiRateLimiter.recordUserUsage('system_global').catch(() => {});
 
     try {
         const targetMistakes = mistakes.slice(0, 20); 

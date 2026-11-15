@@ -6,7 +6,7 @@ const dbService = require('../services/dbService');
 const logger = require('../core/logger');
 const {
   States, setState, clearState, safeAnswerCb,
-  safeEdit, escapeHtml, sanitizeForTelegram
+  safeEdit, escapeHtml, sanitizeForTelegram, isMainMenuButton
 } = require('../core/utils');
 
 const CARD_HOLDER = 'Avazov Muhammadamin';
@@ -114,14 +114,10 @@ async function onDonateScreenshot(ctx, next) {
 
   const rawText = (ctx.message.text || '').trim();
   const isCommand = rawText.startsWith('/');
-  const isMenuButton = [
-    '📅 Dars jadvali', '🧪 Testlar', '🤖 AI Yordamchi', '👤 Profil', '📊 Statistika',
-    '🔍 Guruh qidirish', '🏢 Bo\'sh xonalar', '📚 Rasmiy Testlar', '📝 O\'z Testlarim',
-    '🔙 Ortga', '🏠 Asosiy Menyu', '❌ Bekor qilish'
-  ].some((btn) => rawText.includes(btn));
+  const isMenu = isMainMenuButton(rawText);
 
   // Stale wizard state cleanup if user chose to navigate away
-  if (isCommand || isMenuButton) {
+  if (isCommand || isMenu) {
     clearState(ctx);
     return next ? next() : null;
   }

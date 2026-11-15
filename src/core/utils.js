@@ -738,6 +738,34 @@ function safeCallbackData(data, maxBytes = 64) {
   return truncated;
 }
 
+const MAIN_MENU_BUTTONS = Object.freeze([
+  '📅 Bugungi jadval',
+  '🖼 Haftalik jadval',
+  '🏢 Bo\'sh xonalar',
+  '🏢 Bo‘sh xonalar',
+  '⚙️ Guruhni sozlash',
+  '🔙 Asosiy menyu',
+  '📅 Dars jadvali',
+  '🧪 Testlar',
+  '🤖 AI Yordamchi',
+  '👤 Profil',
+  '📊 Statistika',
+  '🔍 Guruh qidirish',
+  '📚 Rasmiy Testlar',
+  '📝 O\'z Testlarim',
+  '📂 O\'z Testlarim',
+  '🔙 Ortga',
+  '🏠 Asosiy Menyu',
+  '❌ Bekor qilish',
+  '🏠 Bosh menyu',
+]);
+
+function isMainMenuButton(text) {
+  if (!text || typeof text !== 'string') return false;
+  const trimmed = text.trim();
+  return MAIN_MENU_BUTTONS.some(btn => trimmed.includes(btn));
+}
+
 module.exports = {
   userNameCache,
   leaderboardCache, LEADERBOARD_TTL, States, STATE_LABELS, TTLMap,
@@ -751,6 +779,7 @@ module.exports = {
   getTashkentDate, getTashkentDayOfWeek,
   timeToMinutes, safeCallbackData, naturalSortBlocks,
   getLevenshteinDistance,
+  MAIN_MENU_BUTTONS, isMainMenuButton,
   shuffleArray: (...args) => require('./questionUtils').shuffleArray(...args),
   deepClone: (...args) => require('./questionUtils').deepClone(...args),
 };

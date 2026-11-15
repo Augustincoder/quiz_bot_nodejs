@@ -43,6 +43,17 @@ function runMemoryHygieneSweep() {
     try {
       const dbService = require('./dbService');
       if (typeof dbService.cleanupDueNotesCache === 'function') dbService.cleanupDueNotesCache(now);
+      if (typeof dbService.sweepL1Caches === 'function') dbService.sweepL1Caches();
+    } catch {}
+
+    try {
+      const edupage = require('./edupageService');
+      if (typeof edupage.sweepCaches === 'function') edupage.sweepCaches();
+    } catch {}
+
+    try {
+      const widgetServer = require('../widgets/widgetServer');
+      if (typeof widgetServer.sweepCaches === 'function') widgetServer.sweepCaches();
     } catch {}
 
     try {

@@ -6,12 +6,7 @@ const path = require('path');
 function resolveUsersStatsPath() {
   const rootPath = path.join(__dirname, '../../data/users_stats.json');
   const srcPath = path.join(__dirname, '../data/users_stats.json');
-  if (fsSync.existsSync(srcPath)) {
-    try {
-      const data = JSON.parse(fsSync.readFileSync(srcPath, 'utf8'));
-      if (Object.keys(data).length > 0) return srcPath;
-    } catch {}
-  }
+  if (fsSync.existsSync(srcPath)) return srcPath;
   if (fsSync.existsSync(rootPath)) return rootPath;
   return srcPath;
 }

@@ -1,6 +1,7 @@
 'use strict';
 const { Markup } = require('telegraf');
 const aiService = require('../services/aiService');
+const aiRateLimiter = require('../services/aiRateLimiter');
 const { States, setState, safeEdit, clearState, backToMainKb, isAdmin: checkIsAdmin, TTLMap } = require('../core/utils');
 
 // ============================================
@@ -93,6 +94,7 @@ function checkUserLimit(userId, isPremium = false, isAdmin = false) {
             dailyResetTime: now + 24 * 60 * 60 * 1000, // 24 soat
             hourlyResetTime: now + 60 * 60 * 1000      // 1 soat
         });
+        aiRateLimiter.recordUserUsage(userId).catch(() => {});
         return { allowed: true };
     }
 
@@ -122,6 +124,7 @@ function checkUserLimit(userId, isPremium = false, isAdmin = false) {
     // Increment counters
     userLimit.dailyCount++;
     userLimit.hourlyCount++;
+    aiRateLimiter.recordUserUsage(userId).catch(() => {});
 
     return { allowed: true, remaining: dailyMax - userLimit.dailyCount };
 }

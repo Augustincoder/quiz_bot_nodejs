@@ -341,11 +341,9 @@ async function onAiTestsImage(ctx) {
         },
       );
     } finally {
-      try {
-        if (filePath && fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-        }
-      } catch {}
+      if (filePath) {
+        await fs.promises.unlink(filePath).catch(() => {});
+      }
     }
   } catch (e) {
     logger.error('onAiTestsImage error:', { error: e.message });
