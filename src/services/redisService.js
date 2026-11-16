@@ -164,12 +164,28 @@ if (!process.env.REDIS_URL) {
   redisConnection = dummy;
 } else {
   const isSecureRedis = process.env.REDIS_URL.startsWith('rediss://');
+
+  const isTransientNetworkError = (err) => {
+    const msg = (err?.message || '').toLowerCase();
+    const code = (err?.code || '').toUpperCase();
+    return ['EPIPE', 'ECONNRESET', 'ETIMEDOUT'].some((target) => code === target || msg.includes(target.toLowerCase())) ||
+      msg.includes('connection is closed');
+  };
+
   const baseOptions = {
     family: 4, // Force IPv4 (avoids IPv6 connection timeouts on Render and cloud hosts)
     connectTimeout: 10000,
-    keepAlive: 10000,
+    keepAlive: 10000, // 10s TCP keep-alive
+    autoResendUnfulfilledCommands: true,
     retryStrategy(times) {
       return Math.min(times * 150, 3000);
+    },
+    reconnectOnError(err) {
+      const targetErrors = ['READONLY', 'ECONNRESET', 'EPIPE', 'ETIMEDOUT'];
+      if (targetErrors.some((code) => err?.message?.includes(code) || err?.code === code)) {
+        return 2; // Reconnect and resend failed command
+      }
+      return false;
     },
   };
 
@@ -187,17 +203,51 @@ if (!process.env.REDIS_URL) {
     maxRetriesPerRequest: 3,
   });
 
-  redisConnection.on('error', (err) => logger.error('❌ Redis Xatosi:', { error: err.message }));
+  redisConnection.on('error', (err) => {
+    if (isTransientNetworkError(err)) {
+      logger.warn('⚠️ Redis vaqtinchalik uzilish (qayta ulanmoqda):', { error: err.message });
+    } else {
+      logger.error('❌ Redis Xatosi:', { error: err.message });
+    }
+  });
+
   redisConnection.on('connect', () => {
     logger.info(`✅ Redis muvaffaqiyatli ulandi! (SSL: ${isSecureRedis ? 'Yoniq' : "O'chiq"})`);
   });
 
+  // Application-level Heartbeat: Ping every 30s to keep cloud proxies and Redis server timeouts active
+  let _heartbeatTimer = setInterval(() => {
+    if (redisConnection && redisConnection.status === 'ready') {
+      redisConnection.ping().catch(() => {});
+    }
+  }, 30000);
+  if (_heartbeatTimer.unref) _heartbeatTimer.unref();
+
+  const originalQuit = redisConnection.quit.bind(redisConnection);
+  redisConnection.quit = async () => {
+    if (_heartbeatTimer) {
+      clearInterval(_heartbeatTimer);
+      _heartbeatTimer = null;
+    }
+    return originalQuit();
+  };
+
   // Dedicated worker connection factory for BullMQ (requires maxRetriesPerRequest: null)
   redisConnection.createWorkerConnection = () => {
-    return new Redis(process.env.REDIS_URL, {
+    const workerClient = new Redis(process.env.REDIS_URL, {
       ...baseOptions,
       maxRetriesPerRequest: null,
     });
+
+    workerClient.on('error', (err) => {
+      if (isTransientNetworkError(err)) {
+        logger.warn('⚠️ Redis Worker vaqtinchalik uzilish (qayta ulanmoqda):', { error: err.message });
+      } else {
+        logger.error('❌ Redis Worker Xatosi:', { error: err.message });
+      }
+    });
+
+    return workerClient;
   };
 }
 

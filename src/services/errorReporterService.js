@@ -27,6 +27,8 @@ const BENIGN_PATTERNS = [
   'have no rights to send a message',
   'replied message not found',
   'Too Many Requests',
+  'write EPIPE',
+  'read ECONNRESET',
 ];
 
 class ErrorReporterService {
