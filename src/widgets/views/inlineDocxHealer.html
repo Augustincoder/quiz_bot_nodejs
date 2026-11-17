@@ -154,7 +154,10 @@ function pickKey(optIdx) {
   };
 
   if (typeof W.request === 'function') {
-    W.request(JSON.stringify(payload)).then(onDone).catch(function() { onDone(null); });
+    W.request(JSON.stringify(payload)).then(onDone).catch(function(err) {
+      console.error('W.request error in pickKey:', err);
+      onDone(null);
+    });
   } else if (typeof W.sendQuery === 'function') {
     W.sendQuery(JSON.stringify(payload));
     setTimeout(function() { onDone(null); }, 220);
@@ -223,7 +226,8 @@ function healAll() {
         heuristicHeal();
       }
       render();
-    }).catch(function() {
+    }).catch(function(err) {
+      console.error('W.request error in healAll:', err);
       heuristicHeal();
       btn.textContent = 'AI Auto-Heal';
       btn.disabled = false;

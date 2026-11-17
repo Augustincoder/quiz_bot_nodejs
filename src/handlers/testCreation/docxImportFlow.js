@@ -637,47 +637,53 @@ async function cbOpenInspector(ctx) {
         total: widgetQuestions.length,
         fileName: data.block_name || 'test.docx',
       });
-      const safePublicData = JSON.stringify({
-        total: widgetQuestions.length,
-        curIdx: 0,
-        title: data.block_name || 'Docx Healer',
-      });
-      const safeChatData = JSON.stringify({
-        userId,
-        curIdx: 0,
-      });
 
-      const widgetPayload = {
-        chat_id: ctx.chat.id,
-        html: inlineDocxHtml,
-        public_data: safePublicData,
-        chat_data: safeChatData,
-        is_shared: true,
-        allow_queries: true,
-      };
+      const compression = widgetService.compressWidgetHtml(inlineDocxHtml);
+      if (!compression.valid) {
+        logger.warn(`[docxImportFlow] Inline docx widget HTML size (${compression.compressedBytes} bytes compressed) exceeds Telegram 4096-byte limit. Falling back directly to WebApp Inspector.`);
+      } else {
+        const safePublicData = JSON.stringify({
+          total: widgetQuestions.length,
+          curIdx: 0,
+          title: data.block_name || 'Docx Healer',
+        });
+        const safeChatData = JSON.stringify({
+          userId,
+          curIdx: 0,
+        });
 
-      const widgetKeyboard = Markup.inlineKeyboard([
-        [
-          Markup.button.callback("✨ AI Avto-Tuzatish", "fix_auto_all"),
-          Markup.button.callback("💾 Yakunlash", "finish_test_creation"),
-        ],
-        [
-          Markup.button.callback("🔙 Menyuga qaytish", data.is_auto_docx ? "show_status_menu" : "back_to_dashboard"),
-        ],
-      ]);
+        const widgetPayload = {
+          chat_id: ctx.chat.id,
+          html: inlineDocxHtml,
+          public_data: safePublicData,
+          chat_data: safeChatData,
+          is_shared: true,
+          allow_queries: true,
+        };
 
-      if (widgetKeyboard?.reply_markup) {
-        widgetPayload.reply_markup = widgetKeyboard.reply_markup;
-      }
+        const widgetKeyboard = Markup.inlineKeyboard([
+          [
+            Markup.button.callback("✨ AI Avto-Tuzatish", "fix_auto_all"),
+            Markup.button.callback("💾 Yakunlash", "finish_test_creation"),
+          ],
+          [
+            Markup.button.callback("🔙 Menyuga qaytish", data.is_auto_docx ? "show_status_menu" : "back_to_dashboard"),
+          ],
+        ]);
 
-      const widgetRes = await ctx.telegram.callApi('sendWidget', widgetPayload);
-      if (widgetRes && widgetRes.message_id) {
-        widgetSent = true;
-        await updateData(ctx, { docx_widget_msg_id: widgetRes.message_id });
-        if (ctx.callbackQuery?.message) {
-          await ctx.deleteMessage().catch(() => {});
+        if (widgetKeyboard?.reply_markup) {
+          widgetPayload.reply_markup = widgetKeyboard.reply_markup;
         }
-        return;
+
+        const widgetRes = await ctx.telegram.callApi('sendWidget', widgetPayload);
+        if (widgetRes && widgetRes.message_id) {
+          widgetSent = true;
+          await updateData(ctx, { docx_widget_msg_id: widgetRes.message_id });
+          if (ctx.callbackQuery?.message) {
+            await ctx.deleteMessage().catch(() => {});
+          }
+          return;
+        }
       }
     } catch (err) {
       const isNotAllowed = String(err?.message || '').includes('INPUT_MEDIA_WIDGET_NOT_ALLOWED');
@@ -685,13 +691,13 @@ async function cbOpenInspector(ctx) {
         if (typeof widgetService.markSendWidgetNotAllowed === 'function') {
           widgetService.markSendWidgetNotAllowed(60 * 60 * 1000);
         }
-        logger.info('Telegram Bot API: native sendWidget is not whitelisted for docxHealer. Seamlessly using WebApp inspector.');
+        logger.warn('Telegram Bot API: native sendWidget is not whitelisted for docxHealer (INPUT_MEDIA_WIDGET_NOT_ALLOWED). Seamlessly using WebApp inspector.');
       } else {
         try {
           const featureFlagService = require('../../services/featureFlagService');
           featureFlagService.recordFeatureError('FEATURE_DOCX_SMART_HEALER', err);
         } catch {}
-        logger.warn('sendWidget for docxHealer failed, falling back to WebApp message:', err.message);
+        logger.warn('sendWidget for docxHealer failed, falling back to WebApp message:', { error: err.message, stack: err.stack });
       }
     }
   }

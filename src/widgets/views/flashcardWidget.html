@@ -427,6 +427,27 @@
       padding: 13px 16px;
       font-size: 13.5px;
     }
+
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+      color: #F8FAFC;
+      padding: 10px 18px;
+      border-radius: 99px;
+      font-size: 12.5px;
+      font-weight: 600;
+      pointer-events: none;
+      opacity: 0;
+      transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 1000;
+      white-space: nowrap;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   </style>
 </head>
 <body>
@@ -536,6 +557,8 @@
       </button>
     </div>
   </div>
+
+  <div class="toast" id="toast"></div>
 
   <script>
     window.__WIDGET_DATA__ = {{DATA_JSON}};
@@ -716,13 +739,40 @@
       }
     }
 
-    function sendWidgetQuery(action, actionData) {
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      if (!t) return;
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => { t.classList.remove('show'); }, 2500);
+    }
+
+    function sendWidgetQuery(action, actionData, cb) {
       const token = '{{TOKEN}}' || data.token;
       fetch('/widget/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token, action, data: actionData })
-      }).catch(() => {});
+      })
+      .then((r) => {
+        if (!r.ok) {
+          return r.json().catch(() => ({})).then((errJson) => {
+            throw new Error(errJson.error || 'Server error ' + r.status);
+          });
+        }
+        return r.json();
+      })
+      .then((res) => {
+        if (res && res.ok === false) {
+          throw new Error(res.error || 'So‘rov muvaffaqiyatsiz');
+        }
+        if (cb) cb(res);
+      })
+      .catch((err) => {
+        console.error('Widget query network/server error:', err);
+        showToast('Xatolik: ' + (err.message || 'Tarmoq xatosi'));
+        if (cb) cb(null);
+      });
     }
 
     // Interactive Touch Drag Physics

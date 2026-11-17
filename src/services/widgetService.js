@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const logger = require('../core/logger');
 
 let featureFlagService = null;
 try {
@@ -68,6 +69,7 @@ function isNativeSendWidgetAllowed() {
 
 function markSendWidgetNotAllowed(ttlMs = 60 * 60 * 1000) {
   sendWidgetNotAllowedUntil = Date.now() + ttlMs;
+  logger.warn(`[widgetService] Native sendWidget marked not allowed until ${new Date(sendWidgetNotAllowedUntil).toISOString()} (Telegram Bot API 10.4 restricted/not allowed)`);
 }
 
 // HMAC Secret Key derivation (uses WIDGET_SECRET, BOT_TOKEN, or secure fallback)
@@ -118,6 +120,15 @@ function createWidgetToken(userId, type, payload = {}, ttlMs = DEFAULT_TTL_MS) {
   if (rawPayloadJson.length > 400) {
     const sid = crypto.randomBytes(12).toString('hex');
     widgetPayloadStore.set(sid, effectivePayload);
+    try {
+      const redis = require('./redisService');
+      if (redis && typeof redis.set === 'function') {
+        const ttlSec = Math.max(60, Math.floor((typeof ttlMs === 'number' ? ttlMs : DEFAULT_TTL_MS) / 1000));
+        redis.set(`widget_payload:${sid}`, rawPayloadJson, 'EX', ttlSec).catch((err) => {
+          logger.debug(`[widgetService] Async Redis widget_payload store error: ${err.message}`);
+        });
+      }
+    } catch {}
     effectivePayload = { sid };
   }
 
@@ -177,6 +188,7 @@ function verifyWidgetToken(token) {
     if (payload.sid && typeof payload.sid === 'string') {
       const stored = widgetPayloadStore.get(payload.sid);
       if (!stored) {
+        logger.warn(`[widgetService] verifyWidgetToken: SID "${payload.sid}" expired or missing from in-memory store for user ${parsed.userId}`);
         return null;
       }
       payload = stored;
@@ -190,6 +202,79 @@ function verifyWidgetToken(token) {
       exp: parsed.exp,
     };
   } catch {
+    return null;
+  }
+}
+
+/**
+ * Asynchronously verifies a widget token, recovering SID from Redis if evicted from memory.
+ *
+ * @param {string} token - The signed token string
+ * @returns {Promise<{ userId: number, type: string, payload: object, iat: number, exp: number } | null>}
+ */
+async function verifyWidgetTokenAsync(token) {
+  const syncResult = verifyWidgetToken(token);
+  if (syncResult) return syncResult;
+
+  if (!token || typeof token !== 'string') return null;
+
+  const dotIdx = token.indexOf('.');
+  if (dotIdx === -1 || token.lastIndexOf('.') !== dotIdx) return null;
+
+  const dataPart = token.slice(0, dotIdx);
+  const sigPart = token.slice(dotIdx + 1);
+
+  if (!dataPart || !sigPart) return null;
+
+  try {
+    const expectedSig = crypto
+      .createHmac('sha256', SECRET_KEY)
+      .update(dataPart)
+      .digest('base64url');
+
+    const sigBuf = Buffer.from(sigPart, 'utf8');
+    const expectedBuf = Buffer.from(expectedSig, 'utf8');
+
+    if (sigBuf.length !== expectedBuf.length) return null;
+    if (!crypto.timingSafeEqual(sigBuf, expectedBuf)) return null;
+
+    const jsonStr = Buffer.from(dataPart, 'base64url').toString('utf8');
+    const parsed = JSON.parse(jsonStr);
+
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (typeof parsed.exp !== 'number' || Date.now() > parsed.exp) return null;
+
+    let payload = parsed.payload || {};
+    if (payload.sid && typeof payload.sid === 'string') {
+      let stored = widgetPayloadStore.get(payload.sid);
+      if (!stored) {
+        try {
+          const redis = require('./redisService');
+          if (redis && typeof redis.get === 'function') {
+            const rawStored = await redis.get(`widget_payload:${payload.sid}`);
+            if (rawStored) {
+              stored = JSON.parse(rawStored);
+              widgetPayloadStore.set(payload.sid, stored);
+            }
+          }
+        } catch {}
+      }
+      if (!stored) {
+        logger.warn(`[widgetService] verifyWidgetTokenAsync: SID "${payload.sid}" not found in Redis or memory`);
+        return null;
+      }
+      payload = stored;
+    }
+
+    return {
+      userId: parsed.userId,
+      type: parsed.type,
+      payload,
+      iat: parsed.iat,
+      exp: parsed.exp,
+    };
+  } catch (err) {
+    logger.warn(`[widgetService] verifyWidgetTokenAsync error: ${err.message}`);
     return null;
   }
 }
@@ -264,6 +349,7 @@ function buildWidgetMessage(type, payload = {}, fallbackText = '', fallbackKeybo
   const isEnabled = isWidgetEngineEnabled(userId);
 
   if (!isEnabled) {
+    logger.warn(`[widgetService] Widget engine is disabled for user ${userId}`);
     const defaultKeyboard = fallbackKeyboard || { inline_keyboard: [] };
     return {
       type,
@@ -295,6 +381,10 @@ function buildWidgetMessage(type, payload = {}, fallbackText = '', fallbackKeybo
   const baseUrl = rawBaseUrl.replace(/\/+$/, '');
   const widgetUrl = `${baseUrl}/widget/${token}`;
   const isUrlValid = isValidWebAppUrl(widgetUrl);
+
+  if (!isUrlValid) {
+    logger.warn(`[widgetService] Generated widget URL "${widgetUrl}" is not a valid HTTPS WebApp URL. WebApp button stripped.`);
+  }
 
   let defaultKeyboard = fallbackKeyboard;
   if (isUrlValid) {
@@ -357,6 +447,11 @@ function buildWidgetMessage(type, payload = {}, fallbackText = '', fallbackKeybo
 function compressWidgetHtml(html) {
   const buf = Buffer.from(html, 'utf8');
   const compressed = zlib.deflateSync(buf, { level: 9 });
+
+  if (compressed.length > 4096) {
+    logger.warn(`[widgetService] HTML widget size (${compressed.length} bytes compressed) exceeds Telegram 4096-byte limit! Fallback to WebApp URL required.`);
+  }
+
   return {
     rawBytes: buf.length,
     compressedBytes: compressed.length,
@@ -460,6 +555,7 @@ module.exports = {
   isValidWebAppUrl,
   createWidgetToken,
   verifyWidgetToken,
+  verifyWidgetTokenAsync,
   widgetPayloadStore,
   decodeHtmlEntities,
   escapeHtml,

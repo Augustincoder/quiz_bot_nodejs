@@ -123,7 +123,8 @@ function triggerAction(direction, act) {
       } else {
         resetCard();
       }
-    }).catch(function() {
+    }).catch(function(err) {
+      console.error('W.request error in triggerAction:', err);
       resetCard();
     });
   } else if (typeof W.sendQuery === 'function') {

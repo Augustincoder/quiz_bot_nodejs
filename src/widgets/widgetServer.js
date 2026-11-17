@@ -52,6 +52,17 @@ function widgetRateLimiter(req, res, next) {
   next();
 }
 
+// CORS & Preflight handling for Telegram WebApp WebView compatibility
+router.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
 router.use(widgetRateLimiter);
 
 // Registry for custom widget action handlers
@@ -423,14 +434,20 @@ function renderErrorPage(title, message) {
 }
 
 // ─── GET /widget/:token ──────────────────────────────────────────
-router.get(['/:token', '/widget/:token'], (req, res) => {
+router.get(['/:token', '/widget/:token'], async (req, res) => {
   const token = req.params.token;
   if (!token) {
+    logger.warn('[widgetServer] GET widget rejected: Missing token');
     return res.status(400).send(renderErrorPage('Xatolik', 'Token ko\'rsatilmadi.'));
   }
 
-  const verified = widgetService.verifyWidgetToken(token);
+  let verified = widgetService.verifyWidgetToken(token);
+  if (!verified && typeof widgetService.verifyWidgetTokenAsync === 'function') {
+    verified = await widgetService.verifyWidgetTokenAsync(token);
+  }
+
   if (!verified) {
+    logger.warn('[widgetServer] GET widget rejected: Invalid or expired widget token', { token: String(token).slice(0, 10) });
     return res.status(403).send(
       renderErrorPage(
         'Havola muddati tugagan',
@@ -443,7 +460,7 @@ router.get(['/:token', '/widget/:token'], (req, res) => {
     res.removeHeader('X-Frame-Options');
     res.setHeader(
       'Content-Security-Policy',
-      "default-src 'self' 'unsafe-inline' 'unsafe-eval' https://telegram.org; img-src 'self' data: https:; frame-ancestors *;"
+      "default-src 'self' 'unsafe-inline' 'unsafe-eval' https://telegram.org; connect-src 'self' https: http:; img-src 'self' data: https:; frame-ancestors *;"
     );
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
 
@@ -457,7 +474,7 @@ router.get(['/:token', '/widget/:token'], (req, res) => {
     const html = widgetService.renderWidgetHtml(verified.type, viewData);
     return res.send(html);
   } catch (err) {
-    logger.error('Widget render error:', { error: err.message, stack: err.stack });
+    logger.error('[widgetServer] Widget render CRITICAL error:', { error: err.message, stack: err.stack });
     return res.status(500).send(renderErrorPage('Xatolik', 'Vidjetni yuklashda texnik xatolik yuz berdi.'));
   }
 });
@@ -467,16 +484,23 @@ router.post(['/query', '/widget/query'], async (req, res) => {
   const { token, action, data } = req.body || {};
 
   if (!token) {
+    logger.warn('[widgetServer] Query rejected: Missing token');
     return res.status(400).json({ ok: false, error: 'Missing token' });
   }
 
-  const verified = widgetService.verifyWidgetToken(token);
+  let verified = widgetService.verifyWidgetToken(token);
+  if (!verified && typeof widgetService.verifyWidgetTokenAsync === 'function') {
+    verified = await widgetService.verifyWidgetTokenAsync(token);
+  }
+
   if (!verified) {
-    return res.status(401).json({ ok: false, error: 'Invalid or expired widget token' });
+    logger.warn('[widgetServer] Query rejected: Invalid or expired widget token', { token: token ? String(token).slice(0, 10) : '' });
+    return res.status(401).json({ ok: false, error: 'Invalid or expired widget token. Please restart bot.' });
   }
 
   const isAllowed = await checkWidgetUserRateLimit(verified.userId);
   if (!isAllowed) {
+    logger.warn('[widgetServer] User rate limit exceeded for widget query', { userId: verified.userId });
     return res.status(429).json({ ok: false, error: 'Too many queries. Please slow down.' });
   }
 
@@ -484,7 +508,12 @@ router.post(['/query', '/widget/query'], async (req, res) => {
     const result = await executeQueryAction(verified, action, data);
     return res.json({ ok: true, data: result });
   } catch (err) {
-    logger.error('Widget query execution error:', { error: err.message });
+    logger.error('[widgetServer] Widget query execution CRITICAL error:', {
+      action,
+      userId: verified.userId,
+      error: err.message,
+      stack: err.stack,
+    });
     return res.status(500).json({ ok: false, error: err.message || 'Internal query error' });
   }
 });

@@ -535,7 +535,7 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
   };
   await saveCramSession(userKey, session);
 
-  const { isWidgetEngineEnabled, isNativeSendWidgetAllowed, markSendWidgetNotAllowed } = require('../services/widgetService');
+  const { isWidgetEngineEnabled, isNativeSendWidgetAllowed, markSendWidgetNotAllowed, compressWidgetHtml } = require('../services/widgetService');
   const isSendWidgetAllowed = typeof isNativeSendWidgetAllowed === 'function' ? isNativeSendWidgetAllowed() : true;
   const canUseNativeWidget = isWidgetEngineEnabled(userId) && isSendWidgetAllowed;
 
@@ -544,38 +544,44 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
   if (canUseNativeWidget && chatId && ctx.chat?.type === 'private' && ctx.telegram && typeof ctx.telegram.callApi === 'function') {
     try {
       const inlineWidgetHtml = buildInlineFlashcardWidgetHtml(viewData);
-      const safePublicData = makeSafeWidgetPublicData(viewData, subjectName, blockName);
+      const compression = typeof compressWidgetHtml === 'function' ? compressWidgetHtml(inlineWidgetHtml) : { valid: true };
 
-      // Widget payload: caption is intentionally omitted so the widget appears cleanly
-      // without duplicate plain-text question text underneath
-      const widgetPayload = {
-        chat_id: chatId,
-        html: inlineWidgetHtml,
-        public_data: safePublicData,
-        chat_data: safePublicData,
-        is_shared: true,
-        allow_queries: true,
-      };
+      if (!compression.valid) {
+        logger.warn(`[cramReviewHandler] Inline flashcard widget HTML size (${compression.compressedBytes} bytes compressed) exceeds Telegram 4096-byte limit. Falling back to interactive text.`);
+      } else {
+        const safePublicData = makeSafeWidgetPublicData(viewData, subjectName, blockName);
 
-      // Native widget action keyboard (underneath the HTML widget bubble)
-      // Uses lightweight action buttons strictly <= 256 bytes to prevent 'reply markup is too long'
-      const widgetKeyboard = getWidgetInlineKeyboard(viewData.cardIdx);
-      if (widgetKeyboard?.reply_markup) {
-        widgetPayload.reply_markup = widgetKeyboard.reply_markup;
-      }
+        // Widget payload: caption is intentionally omitted so the widget appears cleanly
+        // without duplicate plain-text question text underneath
+        const widgetPayload = {
+          chat_id: chatId,
+          html: inlineWidgetHtml,
+          public_data: safePublicData,
+          chat_data: safePublicData,
+          is_shared: true,
+          allow_queries: true,
+        };
 
-      const widgetRes = await ctx.telegram.callApi('sendWidget', widgetPayload);
+        // Native widget action keyboard (underneath the HTML widget bubble)
+        // Uses lightweight action buttons strictly <= 256 bytes to prevent 'reply markup is too long'
+        const widgetKeyboard = getWidgetInlineKeyboard(viewData.cardIdx);
+        if (widgetKeyboard?.reply_markup) {
+          widgetPayload.reply_markup = widgetKeyboard.reply_markup;
+        }
 
-      if (widgetRes && widgetRes.message_id) {
-        widgetSent = true;
-        session.isWidget = true;
-        session.messageId = widgetRes.message_id;
-        session.widgetId = widgetRes.widget?.id || null;
-        await saveCramSession(userKey, session);
+        const widgetRes = await ctx.telegram.callApi('sendWidget', widgetPayload);
 
-        // Delete previous menu message to keep chat uncluttered
-        if (ctx.callbackQuery?.message) {
-          await ctx.deleteMessage().catch(() => {});
+        if (widgetRes && widgetRes.message_id) {
+          widgetSent = true;
+          session.isWidget = true;
+          session.messageId = widgetRes.message_id;
+          session.widgetId = widgetRes.widget?.id || null;
+          await saveCramSession(userKey, session);
+
+          // Delete previous menu message to keep chat uncluttered
+          if (ctx.callbackQuery?.message) {
+            await ctx.deleteMessage().catch(() => {});
+          }
         }
       }
     } catch (widgetErr) {
@@ -584,7 +590,7 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
         if (typeof markSendWidgetNotAllowed === 'function') {
           markSendWidgetNotAllowed(60 * 60 * 1000);
         }
-        logger.info('Telegram Bot API: native sendWidget is not whitelisted for this bot account. Seamlessly falling back to interactive message text.');
+        logger.warn('Telegram Bot API: native sendWidget is not whitelisted for this bot account (INPUT_MEDIA_WIDGET_NOT_ALLOWED). Seamlessly falling back to interactive message text.');
       } else {
         try {
           const featureFlagService = require('../services/featureFlagService');
@@ -593,6 +599,7 @@ async function launchFlashcardReview(ctx, subjectKey, testId, questions = null, 
         logger.warn('sendWidget failed, falling back to message text:', {
           error: widgetErr.message,
           code: widgetErr.code || widgetErr.error_code,
+          stack: widgetErr.stack,
         });
       }
     }

@@ -698,9 +698,25 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: token, action: action, data: actionData })
       })
-      .then(function(r) { return r.json(); })
-      .then(function(res) { if (cb) cb(res); })
-      .catch(function() { if (cb) cb(null); });
+      .then(function(r) {
+        if (!r.ok) {
+          return r.json().catch(function() { return {}; }).then(function(errJson) {
+            throw new Error(errJson.error || 'Server error ' + r.status);
+          });
+        }
+        return r.json();
+      })
+      .then(function(res) {
+        if (res && res.ok === false) {
+          throw new Error(res.error || 'So‘rov muvaffaqiyatsiz');
+        }
+        if (cb) cb(res);
+      })
+      .catch(function(err) {
+        console.error('Widget query network/server error:', err);
+        showToast('Xatolik: ' + (err.message || 'Tarmoq xatosi'));
+        if (cb) cb(null);
+      });
     }
 
     var touchStartX = 0;
