@@ -30,6 +30,13 @@ if (!process.env.REDIS_URL || redisConnection.isDummy) {
     connection: redisConnection.createWorkerConnection(),
     defaultJobOptions,
   });
+  const logger = require('../core/logger');
+  broadcastQueue.on('error', (err) => {
+    logger.warn('BullMQ broadcastQueue connection error:', { error: err.message });
+  });
+  quizTimerQueue.on('error', (err) => {
+    logger.warn('BullMQ quizTimerQueue connection error:', { error: err.message });
+  });
 }
 
 module.exports = { broadcastQueue, quizTimerQueue };

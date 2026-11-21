@@ -36,22 +36,74 @@ async function getLastGroupQuiz(chatId) {
 
 // ─── REDIS-BACKED ACTIVE POLLS VA GROUP CACHE ─────────────────────────────
 // Endi server o'chib yonsa ham hech bir guruh reytingi yo'qolmaydi!
+// Zero Downtime: Redis o'chib qolsa ham in-memory fallback orqali 100% uzluksiz ishlaydi.
+const localActivePolls = new Map();
+const localGroupCache = new Map();
+
 const activePollsCache = {
-  set: async (pollId, data) => await redisConnection.set(`poll_cache:${pollId}`, JSON.stringify(data), "EX", 600), // 10 daqiqa yashaydi
-  get: async (pollId) => {
-    const d = await redisConnection.get(`poll_cache:${pollId}`);
-    return d ? JSON.parse(d) : null;
+  set: async (pollId, data) => {
+    localActivePolls.set(String(pollId), { data, expiresAt: Date.now() + 600 * 1000 });
+    try {
+      await redisConnection.set(`poll_cache:${pollId}`, JSON.stringify(data), "EX", 600);
+    } catch {}
   },
-  delete: async (pollId) => await redisConnection.del(`poll_cache:${pollId}`)
+  get: async (pollId) => {
+    try {
+      const d = await redisConnection.get(`poll_cache:${pollId}`);
+      if (d) return JSON.parse(d);
+    } catch {}
+    const local = localActivePolls.get(String(pollId));
+    if (local && local.expiresAt > Date.now()) return local.data;
+    return null;
+  },
+  delete: async (pollId) => {
+    localActivePolls.delete(String(pollId));
+    try {
+      await redisConnection.del(`poll_cache:${pollId}`);
+    } catch {}
+  }
 };
 
 const groupTestCache = {
-  set: async (chatId, data) => await redisConnection.set(`group_cache:${chatId}`, JSON.stringify(data), "EX", 3600), // 1 soat yashaydi
-  get: async (chatId) => {
-    const d = await redisConnection.get(`group_cache:${chatId}`);
-    return d ? JSON.parse(d) : null;
+  set: async (chatId, data) => {
+    localGroupCache.set(String(chatId), { data, expiresAt: Date.now() + 3600 * 1000 });
+    try {
+      await redisConnection.set(`group_cache:${chatId}`, JSON.stringify(data), "EX", 3600);
+    } catch {}
   },
-  delete: async (chatId) => await redisConnection.del(`group_cache:${chatId}`)
+  get: async (chatId) => {
+    try {
+      const d = await redisConnection.get(`group_cache:${chatId}`);
+      if (d) return JSON.parse(d);
+    } catch {}
+    const local = localGroupCache.get(String(chatId));
+    if (local && local.expiresAt > Date.now()) return local.data;
+    return null;
+  },
+  delete: async (chatId) => {
+    localGroupCache.delete(String(chatId));
+    try {
+      await redisConnection.del(`group_cache:${chatId}`);
+    } catch {}
+  }
+};
+
+// Telegram API sekinlashganda yoki uzilganda stopPoll osilib qolmasligi uchun himoya
+const safeStopPoll = async (telegram, chatId, msgId) => {
+  if (!telegram || !chatId || !msgId) return;
+  try {
+    let timer;
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('stopPoll timeout')), 3500);
+      if (timer?.unref) timer.unref();
+    });
+    await Promise.race([
+      telegram.stopPoll(chatId, msgId),
+      timeoutPromise
+    ]);
+  } catch {
+    /* silent */
+  }
 };
 
 async function cancelSessionTimer(session, chatId) {
@@ -319,22 +371,51 @@ async function sendNextQuestion(chatId, telegram) {
 
       // Retry sendMessage on rate limit (429) or transient network error (BUG-13 fix)
       let sendMsgAttempts = 0;
+      let lastSplitErrMsg = '';
+      let splitSuccess = false;
       while (sendMsgAttempts < 3) {
         sendMsgAttempts++;
         try {
           await telegram.sendMessage(chatId, text, splitOpts);
+          splitSuccess = true;
           break;
         } catch (sErr) {
-          const sMsg = String(sErr?.message || '');
-          if (sMsg.includes('429') || sErr?.parameters?.retry_after) {
+          lastSplitErrMsg = String(sErr?.message || '');
+          if (lastSplitErrMsg.includes('429') || sErr?.parameters?.retry_after) {
             const wait = Math.min((sErr?.parameters?.retry_after || 1) * 1000, 5000);
             await new Promise((r) => setTimeout(r, wait));
-          } else if (/ETIMEDOUT|ECONNRESET|502|503/.test(sMsg)) {
-            await new Promise((r) => setTimeout(r, 1000));
+          } else if (/ETIMEDOUT|ECONNRESET|ECONNREFUSED|502|503|504/.test(lastSplitErrMsg)) {
+            if (sendMsgAttempts < 3) {
+              await new Promise((r) => setTimeout(r, 1000));
+            }
           } else {
             break;
           }
         }
+      }
+
+      if (!splitSuccess && /ETIMEDOUT|ECONNRESET|ECONNREFUSED|502|503|504/.test(lastSplitErrMsg)) {
+        console.warn(`[coreQuiz] Persistent transient network error on split sendMessage for ${chatId} (${lastSplitErrMsg}). Safely pausing test.`);
+        session.status = "paused";
+        session.sendErrors = 0;
+        session.questionState = "ACTIVE";
+        session.transitionLock = null;
+        await sessionService.setActiveTest(chatId, session);
+        await telegram.sendMessage(
+          chatId,
+          `⚠️ <b>Telegram tarmog'ida vaqtinchalik uzilish (502 Bad Gateway / Tarmoq xatosi).</b>\n\n` +
+          `Telegram serverlari bilan aloqa uzilgani sababli test xavfsiz to'xtatildi.\n\n` +
+          `✅ <b>Xavotir olmang:</b> Savol o'tkazib yuborilmadi, ballaringiz va to'xtagan joyingiz to'liq saqlandi.\n\n` +
+          `Telegram barqarorlashgach, quyidagi tugma orqali davom etishingiz mumkin:`,
+          {
+            ...splitOpts,
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback("▶️ Davom etish", "pause_resume")],
+              [Markup.button.callback("🏁 Yakunlash", "pause_finish")],
+            ]),
+          }
+        ).catch(() => {});
+        return;
       }
 
       pollQ = `${progress} To'g'ri variantni belgilang:`.slice(0, 300);
@@ -438,9 +519,36 @@ async function sendNextQuestion(chatId, telegram) {
 
 
 
-        session.sendErrors = (session.sendErrors || 0) + 1;
         const errSendOpts = { parse_mode: "HTML" };
         if (session.messageThreadId) errSendOpts.message_thread_id = session.messageThreadId;
+
+        // Agar muammo Telegram serverida (502, 503, 504, Timeout) bo'lsa, savolni xato deb hisoblamasdan
+        // va keyingisiga kaskadli o'tkazib yubormasdan, testni xavfsiz PAUZA qilamiz!
+        if (isTransientNetwork) {
+          console.warn(`[coreQuiz] Persistent transient network error on sendPoll for ${chatId} (${errMsg}). Safely pausing test without penalizing student.`);
+          session.status = "paused";
+          session.sendErrors = 0;
+          session.questionState = "ACTIVE";
+          session.transitionLock = null;
+          await sessionService.setActiveTest(chatId, session);
+          await telegram.sendMessage(
+            chatId,
+            `⚠️ <b>Telegram tarmog'ida vaqtinchalik uzilish (502 Bad Gateway / Tarmoq xatosi).</b>\n\n` +
+            `Telegram serverlari bilan aloqa uzilgani sababli test xavfsiz to'xtatildi.\n\n` +
+            `✅ <b>Xavotir olmang:</b> Savol o'tkazib yuborilmadi, ballaringiz va to'xtagan joyingiz to'liq saqlandi.\n\n` +
+            `Telegram barqarorlashgach, quyidagi tugma orqali davom etishingiz mumkin:`,
+            {
+              ...errSendOpts,
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback("▶️ Davom etish", "pause_resume")],
+                [Markup.button.callback("🏁 Yakunlash", "pause_finish")],
+              ]),
+            }
+          ).catch(() => { });
+          return;
+        }
+
+        session.sendErrors = (session.sendErrors || 0) + 1;
 
         if (session.sendErrors >= 3) {
           session.status = "paused";
@@ -922,7 +1030,7 @@ async function finishTest(chatId, telegram) {
 
   // BUG-07: Agar ochiq poll qolgan bo'lsa (masalan /stop bosilganda), uni yopamiz
   if (session.msgId) {
-    await telegram.stopPoll(chatId, session.msgId).catch(() => {});
+    await safeStopPoll(telegram, chatId, session.msgId); // telegram.stopPoll(chatId, session.msgId)
   }
 
   await activePollsCache.delete(session.pollId);
@@ -1408,9 +1516,7 @@ async function handlePollAnswer(pollAnswer, telegram) {
         await cancelSessionTimer(session, chatId);
         await activePollsCache.delete(pollId);
         await sessionService.deletePollChat(pollId).catch(() => {});
-        try {
-          await telegram.stopPoll(chatId, session.msgId);
-        } catch {}
+        await safeStopPoll(telegram, chatId, session.msgId);
 
         const expectedNextIdx = session.qIdx;
         setTimeout(async () => {
@@ -1456,11 +1562,7 @@ async function handlePollAnswer(pollAnswer, telegram) {
     userNameCache.set(uId, uName);
 
     session.consecutiveTimeouts = 0;
-    try {
-      await telegram.stopPoll(chatId, session.msgId);
-    } catch {
-      /* silent */
-    }
+    await safeStopPoll(telegram, chatId, session.msgId);
 
     await sessionService.deletePollChat(pollId).catch(() => {});
 
@@ -1508,11 +1610,7 @@ async function questionTimeout(chatId, expectedIdx, pollId, telegram) {
     session.questionState = "TRANSITIONING";
     await sessionService.setActiveTest(chatId, session);
 
-    try {
-      await telegram.stopPoll(chatId, session.msgId);
-    } catch {
-      /* silent */
-    }
+    await safeStopPoll(telegram, chatId, session.msgId);
 
     await sessionService.deletePollChat(pollId).catch(() => {});
 
