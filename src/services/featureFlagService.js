@@ -72,6 +72,16 @@ const KNOWN_CORE_FEATURES = Object.freeze({
     trippedReason: null,
     errorCount: 0,
   },
+  FEATURE_SMART_DOCX_PARSER: {
+    key: 'FEATURE_SMART_DOCX_PARSER',
+    name: 'Smart Adaptive Docx Question Parser & Deduplicator',
+    state: STATES.ADMIN_ONLY,
+    updatedAt: 0,
+    autoKillTriggered: false,
+    trippedAt: null,
+    trippedReason: null,
+    errorCount: 0,
+  },
 });
 
 function createInitialFeatures() {

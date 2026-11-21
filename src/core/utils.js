@@ -524,13 +524,13 @@ const downloadFile = (url, destPath, timeoutMs = 30_000) => new Promise((resolve
   });
 });
 
-async function parseDocxQuestions(filePath, mode = 'hash') {
+async function parseDocxQuestions(filePath, mode = 'hash', options = {}) {
   const mammoth = require('mammoth');
   const result = await mammoth.extractRawText({ path: filePath });
-  return parseTextQuestions(result.value, mode);
+  return parseTextQuestions(result.value, mode, options);
 }
 
-function parseTextQuestions(text, mode = 'hash') {
+function parseLegacyTextQuestions(text, mode = 'hash') {
   const valid = [];
   const invalid = [];
   let rawBlocks = text.includes('+++++') ? text.split(/\+{5,}/) : text.split(/\n\s*\n/);
@@ -658,6 +658,16 @@ function parseTextQuestions(text, mode = 'hash') {
   return { valid, invalid };
 }
 
+function parseTextQuestions(text, mode = 'hash', options = {}) {
+  try {
+    const { parseAdaptiveQuestions } = require('./smartQuestionParser');
+    return parseAdaptiveQuestions(text, mode, options);
+  } catch (err) {
+    logger.error('smartQuestionParser error, falling back to legacy parser:', { error: err.message, stack: err.stack });
+    return parseLegacyTextQuestions(text, mode);
+  }
+}
+
 const isAdmin = (userId) => {
   if (!userId) return false;
   const numId = Number(userId);
@@ -783,6 +793,7 @@ module.exports = {
   navKb, backToMainKb, progressBar, safePercent, grade, parseSuffix,
   safeAnswerCb, safeEdit, safeDelete, stripWebAppButtons,
   getUserName, parseDocxQuestions, parseTextQuestions,
+  parseAdaptiveQuestions: (...args) => require('./smartQuestionParser').parseAdaptiveQuestions(...args),
   escapeHtml, escapeTelegramHtml, decodeHtmlEntities, sanitizeForTelegram,
   truncateText, splitMessage,
   downloadFile, isAdmin, adminGuard, buildUserContext,

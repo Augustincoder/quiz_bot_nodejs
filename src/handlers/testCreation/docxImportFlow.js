@@ -99,6 +99,7 @@ async function onDocxFile(ctx) {
     );
     const validQs = parsed.valid || [];
     const invalidQs = parsed.invalid || [];
+    const duplicateQs = parsed.duplicates || [];
 
     if (validQs.length === 0 && invalidQs.length === 0) {
       return ctx.telegram.editMessageText(
@@ -181,6 +182,7 @@ async function onDocxFile(ctx) {
       await updateData(ctx, {
         chunks,
         invalidQs,
+        duplicates: duplicateQs,
         questions: finalValidQs,
         block_name: autoBlockName,
         start_part: startPart,
@@ -189,7 +191,7 @@ async function onDocxFile(ctx) {
       await ctx.telegram
         .deleteMessage(ctx.chat.id, statusMsg.message_id)
         .catch(() => {});
-      return showAutoDocxStatusMenu(ctx, chunks, invalidQs.length, limitMsg, startPart);
+      return showAutoDocxStatusMenu(ctx, chunks, invalidQs.length, limitMsg, startPart, duplicateQs.length);
     } else {
       let finalQs = validQs;
       let limitMsg = "";
@@ -203,13 +205,15 @@ async function onDocxFile(ctx) {
       await updateData(ctx, {
         questions,
         invalidQs: [...(data.invalidQs || []), ...invalidQs],
+        duplicates: [...(data.duplicates || []), ...duplicateQs],
       });
 
       await ctx.telegram
         .deleteMessage(ctx.chat.id, statusMsg.message_id)
         .catch(() => {});
+      const dupText = duplicateQs.length > 0 ? `\n♻️ Takroriy savollar olib tashlandi: <b>${duplicateQs.length} ta</b>` : "";
       await ctx.reply(
-        `✅ <b>Fayl muvaffaqiyatli o'qildi!</b> (Qo'shildi: ${finalQs.length} ta)${limitMsg}`,
+        `✅ <b>Fayl muvaffaqiyatli o'qildi!</b> (Qo'shildi: ${finalQs.length} ta)${dupText}${limitMsg}`,
         { parse_mode: "HTML" },
       );
 
@@ -235,6 +239,7 @@ async function showAutoDocxStatusMenu(
   invalidCount,
   limitMsg = "",
   startPartOverride,
+  duplicateCount = null,
 ) {
   await updateData(ctx, {
     editing_question_index: undefined,
@@ -242,6 +247,7 @@ async function showAutoDocxStatusMenu(
   });
   const data = await getData(ctx);
   const startPart = startPartOverride || data.start_part || 1;
+  const dupCount = duplicateCount !== null ? duplicateCount : (data.duplicates?.length || 0);
   const buttons = chunks.map((chunk, index) => [
     Markup.button.callback(
       `📁 ${startPart + index}-qism (${chunk.length} ta savol)`,
@@ -262,8 +268,9 @@ async function showAutoDocxStatusMenu(
   buttons.push([Markup.button.callback("❌ Bekor qilish", "cancel_creation")]);
 
   const totalValid = chunks.reduce((a, b) => a + b.length, 0);
+  const dupText = dupCount > 0 ? `\n♻️ Takroriy savollar (filtrlandi): <b>${dupCount} ta</b>` : "";
 
-  const text = `✅ <b>Fayl muvaffaqiyatli o'qildi!</b>\n\n📊 Jami to'g'ri savollar: <b>${totalValid} ta</b>\n⚠️ Xato formatlar: <b>${invalidCount} ta</b>${limitMsg}\n\n<i>Tizim savollaringizni quyidagi qismlarga ajratdi. Ichiga kirib tekshirishingiz mumkin:</i>`;
+  const text = `✅ <b>Fayl muvaffaqiyatli o'qildi!</b>\n\n📊 Jami to'g'ri savollar: <b>${totalValid} ta</b>\n⚠️ Xato formatlar: <b>${invalidCount} ta</b>${dupText}${limitMsg}\n\n<i>Tizim savollaringizni quyidagi qismlarga ajratdi. Ichiga kirib tekshirishingiz mumkin:</i>`;
 
   if (ctx.callbackQuery) {
     await safeEdit(ctx, text, {
